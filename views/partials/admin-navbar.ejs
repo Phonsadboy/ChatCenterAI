@@ -10,6 +10,7 @@
   const roleBadgeLabel = signedInUser ? (roleLabels[signedInUser.role] || 'ผู้ดูแลระบบ') : '';
   const userPermissions = Array.isArray(signedInUser?.permissions) ? signedInUser.permissions : [];
   const canAccess = (permission) => {
+    if (Array.isArray(permission)) return permission.some((entry) => canAccess(entry));
     if (!permission) return true;
     if (!signedInUser) return true;
     if (signedInUser.role === 'superadmin') return true;
@@ -51,7 +52,7 @@
       items: [
         { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge', permission: 'menu:chat' },
         { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders', permission: 'menu:orders' },
-        { page: 'forms', label: 'ฟอร์ม', icon: 'fa-clipboard-list', href: '/admin/forms', permission: 'data-forms:manage' },
+        { page: 'forms', label: 'ฟอร์ม', icon: 'fa-clipboard-list', href: '/admin/forms', permission: 'data-forms:view' },
         { page: 'followup', label: 'ติดตามลูกค้า', icon: 'fa-user-clock', href: '/admin/followup', permission: 'menu:followup' },
         { page: 'broadcast', label: 'บรอดแคสต์', icon: 'fa-bullhorn', href: '/admin/broadcast', permission: 'menu:broadcast' },
         { page: 'facebook-posts', label: 'FB โพสต์/คอมเมนต์', icon: 'fa-comment-dots', href: '/admin/facebook-posts', permission: 'menu:facebook-posts' },

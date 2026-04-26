@@ -1583,10 +1583,26 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    document.getElementById('previewContent').textContent = data.preview || '(ว่างเปล่า)';
-                    document.getElementById('previewDataItemCount').textContent = data.stats.dataItemCount;
-                    document.getElementById('previewCharCount').textContent = data.stats.charCount;
-                    document.getElementById('previewTokenCount').textContent = data.stats.tokenCount;
+                    const previewTargets = [
+                        {
+                            content: document.getElementById('modalPreviewContent'),
+                            dataItemCount: document.getElementById('modalPreviewDataItemCount'),
+                            charCount: document.getElementById('modalPreviewCharCount'),
+                            tokenCount: document.getElementById('modalPreviewTokenCount'),
+                        },
+                        {
+                            content: document.getElementById('workspacePreviewContent'),
+                            dataItemCount: document.getElementById('workspacePreviewDataItemCount'),
+                            charCount: document.getElementById('workspacePreviewCharCount'),
+                            tokenCount: document.getElementById('workspacePreviewTokenCount'),
+                        },
+                    ];
+                    previewTargets.forEach((target) => {
+                        if (target.content) target.content.textContent = data.preview || '(ว่างเปล่า)';
+                        if (target.dataItemCount) target.dataItemCount.textContent = data.stats.dataItemCount;
+                        if (target.charCount) target.charCount.textContent = data.stats.charCount;
+                        if (target.tokenCount) target.tokenCount.textContent = data.stats.tokenCount;
+                    });
                     previewModal.show();
                 } else {
                     showToast(data.error || 'เกิดข้อผิดพลาด', 'error');

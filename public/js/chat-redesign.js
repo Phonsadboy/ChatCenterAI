@@ -512,25 +512,29 @@ class ChatManager {
         const sidebarOverlay = document.getElementById('sidebarOverlay');
         const chatSidebar = document.getElementById('chatSidebar');
 
+        const setChatSidebarOpen = (open) => {
+            if (!chatSidebar) return;
+            chatSidebar.classList.toggle('show', open);
+            sidebarOverlay?.classList.toggle('show', open);
+            chatSidebar.setAttribute('aria-hidden', open ? 'false' : 'true');
+            toggleSidebar?.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) {
+                closeSidebar?.focus({ preventScroll: true });
+            } else if (document.activeElement === closeSidebar) {
+                toggleSidebar?.focus({ preventScroll: true });
+            }
+        };
+
         if (toggleSidebar) {
-            toggleSidebar.addEventListener('click', () => {
-                chatSidebar.classList.add('show');
-                sidebarOverlay.classList.add('show');
-            });
+            toggleSidebar.addEventListener('click', () => setChatSidebarOpen(true));
         }
 
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', () => {
-                chatSidebar.classList.remove('show');
-                sidebarOverlay.classList.remove('show');
-            });
+            closeSidebar.addEventListener('click', () => setChatSidebarOpen(false));
         }
 
         if (sidebarOverlay) {
-            sidebarOverlay.addEventListener('click', () => {
-                chatSidebar.classList.remove('show');
-                sidebarOverlay.classList.remove('show');
-            });
+            sidebarOverlay.addEventListener('click', () => setChatSidebarOpen(false));
         }
 
         const mobileSheetBackdrop = document.getElementById('mobileSheetBackdrop');
@@ -923,7 +927,6 @@ class ChatManager {
             filterPanel.setAttribute('tabindex', '-1');
             filterToggleBtn.addEventListener('click', () => {
                 const isShown = filterPanel.classList.toggle('show');
-                filterPanel.style.display = isShown ? 'block' : 'none';
                 filterToggleBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
                 if (isShown) {
                     filterPanel.focus({ preventScroll: true });
@@ -933,7 +936,6 @@ class ChatManager {
             filterPanel.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     filterPanel.classList.remove('show');
-                    filterPanel.style.display = 'none';
                     filterToggleBtn.setAttribute('aria-expanded', 'false');
                     filterToggleBtn.focus();
                 }
@@ -953,6 +955,8 @@ class ChatManager {
             if (chatSidebar?.classList.contains('show')) {
                 chatSidebar.classList.remove('show');
                 sidebarOverlay?.classList.remove('show');
+                chatSidebar.setAttribute('aria-hidden', 'true');
+                document.getElementById('toggleSidebar')?.setAttribute('aria-expanded', 'false');
             }
 
             const orderSidebar = document.getElementById('orderSidebar');
@@ -1736,7 +1740,7 @@ class ChatManager {
         }
 
         if (chatHeaderActions) {
-            chatHeaderActions.style.display = 'flex';
+            chatHeaderActions.hidden = false;
         }
 
         if (btnRefreshProfile) {
@@ -1890,14 +1894,14 @@ class ChatManager {
         const emptyState = document.getElementById('emptyState');
 
         if (messageInputArea) {
-            messageInputArea.style.display = 'block';
+            messageInputArea.hidden = false;
         }
         if (typeof this.resizeMessageInput === 'function') {
             this.resizeMessageInput();
         }
 
         if (emptyState) {
-            emptyState.style.display = 'none';
+            emptyState.hidden = true;
         }
     }
 
@@ -1908,7 +1912,7 @@ class ChatManager {
         this.userNotesState = { notes: '', updatedAt: null };
 
         const messageInputArea = document.getElementById('messageInputArea');
-        if (messageInputArea) messageInputArea.style.display = 'none';
+        if (messageInputArea) messageInputArea.hidden = true;
 
         const messagesContainer = document.getElementById('messagesContainer');
         if (messagesContainer) {
@@ -2226,11 +2230,15 @@ class ChatManager {
 
         if (show) {
             orderSidebar.classList.add('show');
+            orderSidebar.setAttribute('aria-hidden', 'false');
+            document.getElementById('btnToggleOrders')?.setAttribute('aria-expanded', 'true');
             if (orderSidebarOverlay) {
                 orderSidebarOverlay.classList.add('show');
             }
         } else {
             orderSidebar.classList.remove('show');
+            orderSidebar.setAttribute('aria-hidden', 'true');
+            document.getElementById('btnToggleOrders')?.setAttribute('aria-expanded', 'false');
             if (orderSidebarOverlay) {
                 orderSidebarOverlay.classList.remove('show');
             }
@@ -3319,9 +3327,9 @@ class ChatManager {
 
         if (count > 0) {
             filterBadge.textContent = count;
-            filterBadge.style.display = 'block';
+            filterBadge.hidden = false;
         } else {
-            filterBadge.style.display = 'none';
+            filterBadge.hidden = true;
         }
     }
 

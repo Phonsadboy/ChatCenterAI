@@ -212,6 +212,10 @@ function createInstructionAI2Router(deps = {}) {
     resolveModelForProvider,
     invalidateAllRuntimeCaches,
     notifyPageVisit,
+    requireInstructionCreate = requireAdmin,
+    requireInstructionUpdate = requireAdmin,
+    canAccessInstruction = () => true,
+    buildInstructionActorFields = () => ({}),
   } = deps;
 
   if (!requireAdmin || !connectDB || !getOpenAIApiKeyForBot || !buildLLMClientFromKey || !resolveModelForProvider) {
@@ -219,6 +223,42 @@ function createInstructionAI2Router(deps = {}) {
   }
 
   const router = express.Router();
+
+  const loadInstructionForAccess = async (db, instructionId) => {
+    if (ObjectId.isValid(instructionId)) {
+      return db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
+    }
+    return db.collection("instructions_v2").findOne({ instructionId: String(instructionId || "") });
+  };
+
+  const assertInstructionAccess = (req, res, instruction) => {
+    if (canAccessInstruction(req, instruction)) return true;
+    res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้" });
+    return false;
+  };
+
+  const assertBatchInstructionAccess = async (req, res, db, batch) => {
+    const instructionKey = batch?.instructionObjectId || batch?.instructionId || "";
+    const instruction = instructionKey ? await loadInstructionForAccess(db, instructionKey) : null;
+    if (!instruction) {
+      res.status(404).json({ success: false, error: "ไม่พบ Instruction ของ batch นี้" });
+      return false;
+    }
+    return assertInstructionAccess(req, res, instruction);
+  };
+
+  const requireInstructionParamAccess = async (req, res, next) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const instruction = await loadInstructionForAccess(db, req.params.instructionId);
+      if (!instruction) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      if (!assertInstructionAccess(req, res, instruction)) return;
+      return next();
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  };
 
   const renderInstructionAI2Page = async (req, res) => {
     try {
@@ -248,6 +288,9 @@ function createInstructionAI2Router(deps = {}) {
       const client = await connectDB();
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
+      const instruction = await loadInstructionForAccess(db, req.params.instructionId);
+      if (!instruction) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      if (!assertInstructionAccess(req, res, instruction)) return;
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const inventory = await service.buildInventory(req.params.instructionId);
       res.json({ success: true, inventory });
@@ -256,7 +299,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.post("/api/instruction-ai2/upload-image", requireAdmin, imageUpload.single("image"), async (req, res) => {
+  router.post("/api/instruction-ai2/upload-image", requireAdmin, requireInstructionUpdate, imageUpload.single("image"), async (req, res) => {
     try {
       if (!req.file?.buffer) {
         return res.status(400).json({ success: false, error: "ไม่พบไฟล์รูปภาพ" });
@@ -278,7 +321,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.post("/api/instruction-ai2/instructions/retail-template", requireAdmin, async (req, res) => {
+  router.post("/api/instruction-ai2/instructions/retail-template", requireAdmin, requireInstructionCreate, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -315,6 +358,8 @@ function createInstructionAI2Router(deps = {}) {
         createdAt: now,
         updatedAt: now,
         source: "instruction_ai2",
+        ...buildInstructionActorFields(req, "created"),
+        ...buildInstructionActorFields(req, "updated"),
       };
       const insert = await db.collection("instructions_v2").insertOne(doc);
       const contentHash = computeContentHash({
@@ -352,6 +397,7 @@ function createInstructionAI2Router(deps = {}) {
         ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
         : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
       if (!inst) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      if (!assertInstructionAccess(req, res, inst)) return;
       const logicalId = inst.instructionId || inst._id.toString();
       const versions = await db.collection("instruction_versions")
         .find({ instructionId: logicalId })
@@ -369,7 +415,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.post("/api/instruction-ai2/versions/:instructionId", requireAdmin, async (req, res) => {
+  router.post("/api/instruction-ai2/versions/:instructionId", requireAdmin, requireInstructionUpdate, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -378,6 +424,7 @@ function createInstructionAI2Router(deps = {}) {
         ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
         : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
       if (!inst) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      if (!assertInstructionAccess(req, res, inst)) return;
       const logicalId = inst.instructionId || inst._id.toString();
       const latest = await db.collection("instruction_versions")
         .find({ instructionId: logicalId })
@@ -413,7 +460,7 @@ function createInstructionAI2Router(deps = {}) {
       );
       await db.collection("instructions_v2").updateOne(
         { _id: inst._id },
-        { $set: { version: nextVersion, updatedAt: snapshotAt } },
+        { $set: { version: nextVersion, updatedAt: snapshotAt, ...buildInstructionActorFields(req, "updated") } },
       );
       res.json({ success: true, version: nextVersion, note: snapshot.note, snapshotAt });
     } catch (error) {
@@ -505,7 +552,7 @@ function createInstructionAI2Router(deps = {}) {
     req.on("close", () => state.listeners.delete(res));
   });
 
-  router.post("/api/instruction-ai2/stream", requireAdmin, async (req, res) => {
+  router.post("/api/instruction-ai2/stream", requireAdmin, requireInstructionUpdate, async (req, res) => {
     const requestId = `ai2_req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const startedAt = Date.now();
     let runColl = null;
@@ -673,6 +720,12 @@ function createInstructionAI2Router(deps = {}) {
       if (!instruction) {
         updateState({ status: "error", error: "ไม่พบ Instruction" });
         sendEvent("error", { error: "ไม่พบ Instruction" });
+        finish();
+        return;
+      }
+      if (!canAccessInstruction(req, instruction)) {
+        updateState({ status: "error", error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้" });
+        sendEvent("error", { error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้" });
         finish();
         return;
       }
@@ -1162,11 +1215,14 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.post("/api/instruction-ai2/batches/:batchId/commit", requireAdmin, async (req, res) => {
+  router.post("/api/instruction-ai2/batches/:batchId/commit", requireAdmin, requireInstructionUpdate, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
+      const targetBatch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
+      if (!targetBatch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      if (!(await assertBatchInstructionAccess(req, res, db, targetBatch))) return;
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const result = await service.commitBatch(req.params.batchId, req.session?.user?.username || "admin", {
         confirmationToken: req.body?.confirmationToken || "",
@@ -1189,6 +1245,7 @@ function createInstructionAI2Router(deps = {}) {
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
       if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      if (!(await assertBatchInstructionAccess(req, res, db, batch))) return;
       res.json({
         success: true,
         batch: service.presentBatchForClient(batch),
@@ -1207,6 +1264,7 @@ function createInstructionAI2Router(deps = {}) {
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
       if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      if (!(await assertBatchInstructionAccess(req, res, db, batch))) return;
       const preflight = await service.preflightBatch(batch);
       res.json({ success: true, preflight });
     } catch (error) {
@@ -1371,7 +1429,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/eval/:instructionId", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/eval/:instructionId", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -1383,7 +1441,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/readiness/:instructionId", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/readiness/:instructionId", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -1395,7 +1453,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/recommendations/:instructionId", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/recommendations/:instructionId", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -1407,7 +1465,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/analytics/:instructionId", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/analytics/:instructionId", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -1419,7 +1477,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/analytics/:instructionId/episodes", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/analytics/:instructionId/episodes", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -1431,7 +1489,7 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/analytics/:instructionId/episodes/:episodeId", requireAdmin, async (req, res) => {
+  router.get("/api/instruction-ai2/analytics/:instructionId/episodes/:episodeId", requireAdmin, requireInstructionParamAccess, async (req, res) => {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");

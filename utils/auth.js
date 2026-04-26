@@ -7,6 +7,7 @@ const DEFAULT_SALT_ROUNDS = Number(
   process.env.ADMIN_PASSCODE_SALT_ROUNDS || 12,
 );
 const ADMIN_ROLES = ["agent", "team_leader", "admin", "superadmin"];
+const ADMIN_PERMISSIONS_VERSION = 4;
 const ADMIN_CHAT_CONTEXT_TABS = [
   "overview",
   "tags",
@@ -28,6 +29,7 @@ const ADMIN_PERMISSIONS = [
   "menu:facebook-posts",
   "menu:customer-stats",
   "menu:categories",
+  "dashboard:view",
   "settings:bot",
   "settings:image-library",
   "settings:data-forms",
@@ -37,6 +39,8 @@ const ADMIN_PERMISSIONS = [
   "settings:general",
   "settings:security-filter",
   "settings:api-key",
+  "audit:view",
+  "filter:test",
   "chat:view",
   "chat:send",
   "chat:forms",
@@ -53,19 +57,173 @@ const ADMIN_PERMISSIONS = [
   "chat:purchase-status",
   "chat:profile-refresh",
   "chat:export",
+  "instructions:view",
+  "instructions:create",
+  "instructions:update",
+  "instructions:delete",
+  "instructions:manage",
+  "instructions:import",
+  "instructions:export",
+  "instruction-ai:use",
+  "agent-forge:manage",
+  "api-usage:view",
+  "orders:view",
+  "orders:update",
+  "orders:delete",
+  "orders:export",
+  "orders:print",
+  "broadcast:view",
+  "broadcast:preview",
+  "broadcast:send",
+  "broadcast:cancel",
+  "followup:view",
+  "followup:manage",
+  "followup:assets",
+  "facebook-posts:view",
+  "facebook-posts:sync",
+  "facebook-posts:update",
+  "customer-stats:view",
+  "image-library:view",
+  "image-library:manage",
+  "data-forms:view",
   "data-forms:manage",
+  "data-forms:export",
+  "file-assets:view",
   "file-assets:manage",
+  "notifications:view",
   "notifications:manage",
+  "categories:view",
+  "categories:import",
+  "categories:export",
   "categories:manage",
+  "bots:view",
+  "bots:create",
+  "bots:update",
+  "bots:delete",
+  "bots:secrets",
   "bots:manage",
+  "api-keys:view",
   "api-keys:manage",
 ];
 const ADMIN_PERMISSION_SET = new Set(ADMIN_PERMISSIONS);
 const ADMIN_FULL_PERMISSIONS = Object.freeze([...ADMIN_PERMISSIONS]);
+const STANDARD_PERMISSION_IMPLICATIONS = Object.freeze({
+  "settings:bot": ["bots:view", "bots:create", "bots:update", "bots:delete"],
+  "settings:image-library": ["image-library:view", "image-library:manage"],
+  "settings:data-forms": ["data-forms:view", "data-forms:manage"],
+  "settings:file-library": ["file-assets:view", "file-assets:manage"],
+  "settings:notifications": ["notifications:view", "notifications:manage"],
+  "settings:security-filter": ["audit:view", "filter:test"],
+  "settings:api-key": ["api-keys:view"],
+  "instructions:manage": [
+    "instructions:view",
+    "instructions:create",
+    "instructions:update",
+    "instructions:delete",
+    "instructions:import",
+    "instructions:export",
+  ],
+  "instructions:create": ["instructions:view"],
+  "instructions:update": ["instructions:view"],
+  "instructions:delete": ["instructions:view"],
+  "instructions:import": ["instructions:view"],
+  "instructions:export": ["instructions:view"],
+  "instruction-ai:use": ["instructions:view"],
+  "orders:update": ["orders:view"],
+  "orders:delete": ["orders:view"],
+  "orders:export": ["orders:view"],
+  "orders:print": ["orders:view"],
+  "broadcast:preview": ["broadcast:view"],
+  "broadcast:send": ["broadcast:view"],
+  "broadcast:cancel": ["broadcast:view"],
+  "followup:manage": ["followup:view"],
+  "followup:assets": ["followup:view"],
+  "facebook-posts:sync": ["facebook-posts:view"],
+  "facebook-posts:update": ["facebook-posts:view"],
+  "image-library:manage": ["image-library:view"],
+  "data-forms:manage": ["data-forms:view"],
+  "data-forms:export": ["data-forms:view"],
+  "file-assets:manage": ["file-assets:view"],
+  "notifications:manage": ["notifications:view"],
+  "categories:manage": ["categories:view", "categories:import", "categories:export"],
+  "categories:import": ["categories:view"],
+  "categories:export": ["categories:view"],
+  "bots:create": ["bots:view"],
+  "bots:update": ["bots:view"],
+  "bots:delete": ["bots:view"],
+  "bots:secrets": ["bots:view"],
+  "bots:manage": ["bots:view", "bots:create", "bots:update", "bots:delete"],
+  "api-keys:manage": ["api-keys:view"],
+});
+const LEGACY_PERMISSION_IMPLICATIONS = Object.freeze({
+  "menu:dashboard": [
+    "dashboard:view",
+    "instructions:view",
+    "instructions:manage",
+    "instructions:import",
+    "instructions:export",
+  ],
+  "menu:settings": ["settings:bot", "settings:chat"],
+  "menu:instruction-ai": [
+    "instruction-ai:use",
+    "instructions:view",
+    "instructions:manage",
+    "instructions:import",
+    "instructions:export",
+    "agent-forge:manage",
+  ],
+  "menu:api-usage": ["api-usage:view"],
+  "menu:orders": [
+    "orders:view",
+    "orders:update",
+    "orders:delete",
+    "orders:export",
+    "orders:print",
+  ],
+  "menu:followup": ["followup:view", "followup:manage", "followup:assets"],
+  "menu:broadcast": [
+    "broadcast:view",
+    "broadcast:preview",
+    "broadcast:send",
+    "broadcast:cancel",
+  ],
+  "menu:facebook-posts": [
+    "facebook-posts:view",
+    "facebook-posts:sync",
+    "facebook-posts:update",
+  ],
+  "menu:customer-stats": ["customer-stats:view"],
+  "menu:categories": ["categories:view"],
+  "settings:image-library": ["image-library:view", "image-library:manage"],
+  "settings:data-forms": ["data-forms:view", "data-forms:manage", "data-forms:export"],
+  "settings:file-library": ["file-assets:view", "file-assets:manage"],
+  "settings:notifications": ["notifications:view", "notifications:manage"],
+  "settings:security-filter": ["audit:view", "filter:test"],
+  "settings:api-key": ["api-keys:view"],
+  "chat:orders": ["orders:view"],
+  "instructions:manage": [
+    "instructions:view",
+    "instructions:create",
+    "instructions:update",
+    "instructions:delete",
+    "instructions:import",
+    "instructions:export",
+  ],
+  "data-forms:manage": ["data-forms:view", "data-forms:export"],
+  "file-assets:manage": ["file-assets:view"],
+  "notifications:manage": ["notifications:view"],
+  "categories:manage": ["categories:view", "categories:import", "categories:export"],
+  "bots:manage": ["bots:view", "bots:create", "bots:update", "bots:delete", "bots:secrets"],
+  "api-keys:manage": ["api-keys:view"],
+});
 const TEAM_LEADER_EXCLUDED_DEFAULT_PERMISSIONS = new Set([
   "settings:general",
   "settings:security-filter",
   "settings:api-key",
+  "audit:view",
+  "filter:test",
+  "bots:secrets",
+  "api-keys:view",
   "api-keys:manage",
 ]);
 const AGENT_DEFAULT_PERMISSIONS = Object.freeze([
@@ -107,15 +265,44 @@ function getDefaultPermissionsForRole(role) {
   return [...AGENT_DEFAULT_PERMISSIONS];
 }
 
-function normalizePermissionList(permissions, role, legacyFullAccess = false) {
+function expandPermissionImplications(permissions, implicationMap) {
+  const expanded = uniqueStrings(permissions).filter((permission) =>
+    ADMIN_PERMISSION_SET.has(permission),
+  );
+  const seen = new Set(expanded);
+  for (let index = 0; index < expanded.length; index += 1) {
+    const implied = implicationMap[expanded[index]] || [];
+    implied.forEach((permission) => {
+      if (!ADMIN_PERMISSION_SET.has(permission) || seen.has(permission)) return;
+      seen.add(permission);
+      expanded.push(permission);
+    });
+  }
+  return expanded;
+}
+
+function expandLegacyPermissions(permissions) {
+  return expandPermissionImplications(permissions, LEGACY_PERMISSION_IMPLICATIONS);
+}
+
+function normalizePermissionList(
+  permissions,
+  role,
+  legacyFullAccess = false,
+  legacyPermissionExpansion = false,
+) {
   const normalizedRole = normalizeRole(role);
   if (legacyFullAccess || normalizedRole === "superadmin") {
     return [...ADMIN_FULL_PERMISSIONS];
   }
+  if (!Array.isArray(permissions)) {
+    return getDefaultPermissionsForRole(normalizedRole);
+  }
   const list = uniqueStrings(permissions).filter((permission) =>
     ADMIN_PERMISSION_SET.has(permission),
   );
-  return list.length ? list : getDefaultPermissionsForRole(normalizedRole);
+  const expanded = legacyPermissionExpansion ? expandLegacyPermissions(list) : list;
+  return expandPermissionImplications(expanded, STANDARD_PERMISSION_IMPLICATIONS);
 }
 
 function normalizeInboxKey(value) {
@@ -155,6 +342,35 @@ function normalizeInboxAccess(input, { role = "admin", legacyFullAccess = false 
   };
 }
 
+function normalizeInstructionAccess(input, { role = "admin", legacyFullAccess = false } = {}) {
+  const normalizedRole = normalizeRole(role);
+  const defaultAll =
+    legacyFullAccess ||
+    normalizedRole === "superadmin" ||
+    normalizedRole === "admin" ||
+    normalizedRole === "team_leader";
+  if (!input || typeof input !== "object") {
+    return defaultAll
+      ? { mode: "all", instructionIds: [] }
+      : { mode: "selected", instructionIds: [] };
+  }
+  const mode = input.mode === "all" ? "all" : "selected";
+  if (mode === "all") {
+    return { mode: "all", instructionIds: [] };
+  }
+  const rawIds = Array.isArray(input)
+    ? input
+    : Array.isArray(input.instructionIds)
+      ? input.instructionIds
+      : Array.isArray(input.ids)
+        ? input.ids
+        : [];
+  return {
+    mode: "selected",
+    instructionIds: uniqueStrings(rawIds),
+  };
+}
+
 function normalizeChatLayout(input, role = "admin") {
   const normalizedRole = normalizeRole(role);
   const allowedTabs = new Set(ADMIN_CHAT_CONTEXT_TABS);
@@ -167,18 +383,23 @@ function normalizeChatLayout(input, role = "admin") {
   const mode =
     input.mode === "forms_only" || input.mode === "agent"
       ? "forms_only"
-      : input.mode === "custom"
-        ? "custom"
-        : "full";
+      : input.mode === "overview_only"
+        ? "overview_only"
+        : input.mode === "custom"
+          ? "custom"
+          : "full";
   if (mode === "full") {
     return { mode: "full", allowedTabs: [...ADMIN_CHAT_CONTEXT_TABS] };
+  }
+  if (mode === "overview_only") {
+    return { mode: "overview_only", allowedTabs: ["overview"] };
   }
   const tabs = uniqueStrings(input.allowedTabs).filter((tab) =>
     allowedTabs.has(tab),
   );
   return {
     mode,
-    allowedTabs: tabs.length ? tabs : ["forms"],
+    allowedTabs: mode === "forms_only" && !tabs.length ? ["forms"] : tabs,
   };
 }
 
@@ -186,6 +407,7 @@ function hasExplicitAccessConfig(doc = {}) {
   return Boolean(
     doc.role ||
       Array.isArray(doc.permissions) ||
+      doc.instructionAccess ||
       doc.inboxAccess ||
       doc.chatLayout,
   );
@@ -194,13 +416,20 @@ function hasExplicitAccessConfig(doc = {}) {
 function normalizePasscodeAccessConfig(input = {}, options = {}) {
   const role = normalizeRole(input.role, options.fallbackRole || "admin");
   const legacyFullAccess = Boolean(options.legacyFullAccess);
+  const legacyPermissionExpansion = Boolean(options.legacyPermissionExpansion);
   return {
     role,
+    permissionsVersion: ADMIN_PERMISSIONS_VERSION,
     permissions: normalizePermissionList(
       input.permissions,
       role,
       legacyFullAccess,
+      legacyPermissionExpansion,
     ),
+    instructionAccess: normalizeInstructionAccess(input.instructionAccess, {
+      role,
+      legacyFullAccess,
+    }),
     inboxAccess: normalizeInboxAccess(input.inboxAccess, {
       role,
       legacyFullAccess,
@@ -218,9 +447,13 @@ function buildAdminAccessContext({ role, passcodeDoc } = {}) {
     );
   }
   const legacyFullAccess = passcodeDoc ? !hasExplicitAccessConfig(passcodeDoc) : false;
+  const legacyPermissionExpansion =
+    Boolean(passcodeDoc) &&
+    passcodeDoc.permissionsVersion !== ADMIN_PERMISSIONS_VERSION;
   return normalizePasscodeAccessConfig(passcodeDoc || { role: normalizedRole }, {
     fallbackRole: normalizedRole,
     legacyFullAccess,
+    legacyPermissionExpansion,
   });
 }
 
@@ -267,15 +500,19 @@ function timingSafeEqualString(a, b) {
 function mapPasscodeDoc(doc) {
   if (!doc) return null;
   const legacyFullAccess = !hasExplicitAccessConfig(doc);
+  const legacyPermissionExpansion = doc.permissionsVersion !== ADMIN_PERMISSIONS_VERSION;
   const accessConfig = normalizePasscodeAccessConfig(doc, {
     fallbackRole: doc.role || "admin",
     legacyFullAccess,
+    legacyPermissionExpansion,
   });
   return {
     id: String(doc._id),
     label: doc.label || "",
     role: accessConfig.role,
+    permissionsVersion: ADMIN_PERMISSIONS_VERSION,
     permissions: accessConfig.permissions,
+    instructionAccess: accessConfig.instructionAccess,
     inboxAccess: accessConfig.inboxAccess,
     chatLayout: accessConfig.chatLayout,
     isLegacyAccess: legacyFullAccess,
@@ -294,6 +531,7 @@ async function createPasscode(db, {
   passcode,
   role,
   permissions,
+  instructionAccess,
   inboxAccess,
   chatLayout,
   createdBy,
@@ -314,13 +552,14 @@ async function createPasscode(db, {
   const hashed = await hashPasscode(sanitizedPasscode);
   const now = new Date();
   const accessConfig = normalizePasscodeAccessConfig(
-    { role, permissions, inboxAccess, chatLayout },
+    { role, permissions, instructionAccess, inboxAccess, chatLayout },
     { fallbackRole: role || "admin" },
   );
   const doc = {
     label: sanitizedLabel,
     codeHash: hashed,
     ...accessConfig,
+    permissionsVersion: ADMIN_PERMISSIONS_VERSION,
     isActive: true,
     createdAt: now,
     createdBy: createdBy || null,
@@ -372,6 +611,11 @@ async function updatePasscode(db, id, payload = {}, updatedBy = null) {
       : roleProvided
         ? null
         : existing.permissions,
+    instructionAccess: Object.prototype.hasOwnProperty.call(payload, "instructionAccess")
+      ? payload.instructionAccess
+      : roleProvided
+        ? null
+        : existing.instructionAccess,
     inboxAccess: Object.prototype.hasOwnProperty.call(payload, "inboxAccess")
       ? payload.inboxAccess
       : roleProvided
@@ -389,6 +633,7 @@ async function updatePasscode(db, id, payload = {}, updatedBy = null) {
       fallbackRole: accessInput.role || existing.role || "admin",
     }),
   );
+  update.permissionsVersion = ADMIN_PERMISSIONS_VERSION;
 
   const { value } = await coll.findOneAndUpdate(
     { _id: existing._id },

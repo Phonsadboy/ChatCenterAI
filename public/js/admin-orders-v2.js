@@ -596,11 +596,11 @@
       startDate = endDate;
     } else if (range === '7days') {
       const d = new Date(today);
-      d.setDate(d.getDate() - 7);
+      d.setDate(d.getDate() - 6);
       startDate = formatDateInput(d);
     } else if (range === '30days') {
       const d = new Date(today);
-      d.setDate(d.getDate() - 30);
+      d.setDate(d.getDate() - 29);
       startDate = formatDateInput(d);
     }
 
@@ -1120,22 +1120,36 @@
   }
 
   function showToast(message, type = 'info') {
-    // Simple toast implementation
+    const variant = type === 'error' ? 'danger' : type;
+    const icon = type === 'success' ? 'fa-check-circle'
+      : type === 'error' ? 'fa-times-circle'
+        : type === 'warning' ? 'fa-exclamation-triangle'
+          : 'fa-info-circle';
+    let container = document.querySelector('.app-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'app-toast-container';
+      document.body.appendChild(container);
+    }
     const toast = document.createElement('div');
-    toast.className = `orders-toast orders-toast-${type}`;
-    toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle'}"></i> ${escapeHtml(message)}`;
-    toast.style.cssText = `
-      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
-      background: ${type === 'success' ? '#2D8F6F' : type === 'error' ? '#D2555A' : '#4A6FA5'};
-      color: #fff; padding: 0.75rem 1.25rem; border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 9999;
-      display: flex; align-items: center; gap: 0.5rem;
-      animation: fadeIn 0.2s ease;
+    toast.className = `app-toast app-toast--${variant}`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+      <span class="app-toast__icon"><i class="fas ${icon}"></i></span>
+      <span class="app-toast__body">
+        <span class="app-toast__title">${escapeHtml(message)}</span>
+      </span>
+      <button type="button" class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
     `;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = '0';
+    const close = toast.querySelector('.app-toast__close');
+    const hide = () => {
+      toast.classList.add('hide');
       setTimeout(() => toast.remove(), 200);
+    };
+    close?.addEventListener('click', hide);
+    container.appendChild(toast);
+    setTimeout(() => {
+      hide();
     }, 3000);
   }
 

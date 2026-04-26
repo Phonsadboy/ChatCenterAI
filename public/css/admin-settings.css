@@ -5,6 +5,7 @@
     box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
     margin-bottom: 0.75rem;
     background: var(--card-bg, #fff);
+    transition: all 0.2s ease;
 }
 
 .settings-header {
@@ -117,13 +118,9 @@
 }
 
 /* Additional UI improvements - Compact */
-.card {
-    transition: all 0.2s ease;
-}
-
-.card:hover {
+.settings-card:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.08));
 }
 
 /* Compact Statistics */

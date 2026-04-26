@@ -838,25 +838,30 @@ body.has-admin-layout.page-categories > .container-fluid {
 /* ---- Chat page: hide global nav on mobile so chat owns the viewport ---- */
 @media (max-width: 991.98px) {
   body.has-admin-layout.page-chat .app-topbar,
-  body.has-admin-layout.page-chat .app-mobile-nav {
+  body.has-admin-layout.page-chat .app-mobile-nav,
+  body.has-admin-layout.page-chat2 .app-topbar,
+  body.has-admin-layout.page-chat2 .app-mobile-nav {
     display: none !important;
   }
 
-  body.has-admin-layout.page-chat .app-content {
+  body.has-admin-layout.page-chat .app-content,
+  body.has-admin-layout.page-chat2 .app-content {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
     padding-right: 0 !important;
   }
 
-  body.has-admin-layout.page-chat .app-sidebar-overlay {
+  body.has-admin-layout.page-chat .app-sidebar-overlay,
+  body.has-admin-layout.page-chat2 .app-sidebar-overlay {
     display: none !important;
   }
 }
 
 /* ---- Chat page desktop: preserve chat-redesign.css overflow behaviour ---- */
 @media (min-width: 992px) {
-  body.has-admin-layout.page-chat .app-content {
+  body.has-admin-layout.page-chat .app-content,
+  body.has-admin-layout.page-chat2 .app-content {
     overflow: hidden;
     min-height: 0;
   }

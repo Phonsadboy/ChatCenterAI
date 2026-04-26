@@ -59,6 +59,7 @@
     els.refreshBtn = document.getElementById("formsRefreshBtn");
     els.exportBtn = document.getElementById("formsExportBtn");
     els.exportFormat = document.getElementById("formsExportFormat");
+    els.createLink = document.getElementById("formsCreateLink");
     els.detailOverlay = document.getElementById("formsDetailOverlay");
     els.detailPanel = document.getElementById("formsDetailPanel");
     els.detailClose = document.getElementById("formsDetailClose");
@@ -68,6 +69,7 @@
   }
 
   function bindEvents() {
+    applyPermissionVisibility();
     els.refreshBtn?.addEventListener("click", () => loadForms());
     els.exportBtn?.addEventListener("click", exportSubmissions);
     els.startDate?.addEventListener("change", handleDateFilterChange);
@@ -139,6 +141,21 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeDetail();
     });
+  }
+
+  function canAdmin(permission) {
+    if (!permission) return true;
+    const user = window.adminAuth?.user || null;
+    if (!user) return true;
+    if (user.role === "superadmin") return true;
+    return Array.isArray(user.permissions) && user.permissions.includes(permission);
+  }
+
+  function applyPermissionVisibility() {
+    const canExport = canAdmin("data-forms:export");
+    if (els.exportBtn) els.exportBtn.hidden = !canExport;
+    if (els.exportFormat) els.exportFormat.hidden = !canExport;
+    if (els.createLink) els.createLink.hidden = !canAdmin("data-forms:manage");
   }
 
   function restoreInitialState() {
@@ -721,6 +738,7 @@
   }
 
   function exportSubmissions() {
+    if (!canAdmin("data-forms:export")) return;
     const params = buildSubmissionParams({
       page: "",
       limit: "",

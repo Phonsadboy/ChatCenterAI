@@ -36,31 +36,31 @@
 }
 
 .summary-card {
-    background: white;
-    border-radius: 16px;
+    background: var(--bg-card, #fff);
+    border-radius: var(--radius-lg, 10px);
     padding: 1.25rem;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
     display: flex;
     align-items: center;
     gap: 1rem;
     transition: all 0.3s ease;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border, #E1E5EF);
 }
 
 .summary-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(18, 25, 38, 0.08);
 }
 
 .summary-card.highlight {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
-    border: 1px solid rgba(139, 92, 246, 0.2);
+    background: rgba(var(--primary-rgb, 74, 111, 165), 0.06);
+    border-color: rgba(var(--primary-rgb, 74, 111, 165), 0.22);
 }
 
 .summary-icon {
     width: 52px;
     height: 52px;
-    border-radius: 14px;
+    border-radius: var(--radius-lg, 10px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -126,11 +126,11 @@
 }
 
 .chart-card {
-    background: white;
-    border-radius: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    background: var(--bg-card, #fff);
+    border-radius: var(--radius-lg, 10px);
+    box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border, #E1E5EF);
 }
 
 .chart-header {
@@ -168,16 +168,16 @@
 
 /* Filters Section */
 .filters-section {
-    background: white;
-    border-radius: 12px;
+    background: var(--bg-card, #fff);
+    border-radius: var(--radius-lg, 10px);
     padding: 1rem 1.25rem;
     margin-bottom: 1rem;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
     display: flex;
     gap: 1rem;
     align-items: flex-end;
     flex-wrap: wrap;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border, #E1E5EF);
 }
 
 .filter-group {
@@ -220,11 +220,11 @@
 
 /* Data Table */
 .data-table-card {
-    background: white;
-    border-radius: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    background: var(--bg-card, #fff);
+    border-radius: var(--radius-lg, 10px);
+    box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border, #E1E5EF);
 }
 
 .table {

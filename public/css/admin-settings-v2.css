@@ -679,9 +679,28 @@ input:checked + .toggle-slider:before {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 
-.btn-ghost-sm.text-danger:hover {
-    border-color: var(--color-danger, #D2555A);
+.btn-ghost-sm.is-success {
+    color: var(--color-success, #2D8F6F);
+}
+
+.btn-ghost-sm.is-success:hover {
+    background: rgba(45, 143, 111, 0.1);
+}
+
+.btn-ghost-sm.is-warning {
+    color: var(--color-warning, #DFA94B);
+}
+
+.btn-ghost-sm.is-warning:hover {
+    background: rgba(223, 169, 75, 0.12);
+}
+
+.btn-ghost-sm.is-danger {
     color: var(--color-danger, #D2555A);
+}
+
+.btn-ghost-sm.is-danger:hover {
+    background: rgba(210, 85, 90, 0.12);
 }
 
 /* Buttons - Compact */
@@ -734,6 +753,169 @@ input:checked + .toggle-slider:before {
 .btn-v2-sm {
     padding: 0.2rem 0.6rem;
     font-size: 0.75rem;
+}
+
+/* API Keys v2 table */
+.api-keys-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.api-keys-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--text-main, #1E2430);
+}
+
+.api-keys-table th,
+.api-keys-table td {
+    padding: 0.72rem 0.85rem;
+    border-bottom: 1px solid var(--border, #E1E5EF);
+    vertical-align: middle;
+    font-size: 0.82rem;
+}
+
+.api-keys-table th {
+    color: var(--text-sub, #5C6372);
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    background: var(--bg-body, #F6F7FB);
+}
+
+.api-keys-table th:nth-child(3),
+.api-keys-table th:nth-child(4),
+.api-keys-table th:nth-child(5),
+.api-keys-table td:nth-child(3),
+.api-keys-table td:nth-child(4),
+.api-keys-table td:nth-child(5) {
+    text-align: center;
+}
+
+.api-key-name {
+    display: grid;
+    gap: 0.3rem;
+}
+
+.api-key-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.api-key-badge,
+.api-key-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 22px;
+    padding: 0.16rem 0.5rem;
+    border-radius: var(--radius-pill, 999px);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.api-key-badge.is-primary {
+    background: rgba(74, 111, 165, 0.12);
+    color: var(--color-primary, #4A6FA5);
+}
+
+.api-key-badge.is-neutral {
+    background: var(--bg-body, #F6F7FB);
+    color: var(--text-sub, #5C6372);
+    border: 1px solid var(--border, #E1E5EF);
+}
+
+.api-key-status.is-success {
+    background: rgba(45, 143, 111, 0.12);
+    color: var(--color-success, #2D8F6F);
+}
+
+.api-key-status.is-secondary {
+    background: rgba(139, 146, 163, 0.14);
+    color: var(--text-sub, #5C6372);
+}
+
+.api-key-mask {
+    color: var(--text-sub, #5C6372);
+    font-size: 0.78rem;
+}
+
+.api-key-usage {
+    display: grid;
+    gap: 0.12rem;
+}
+
+.api-key-usage small {
+    color: var(--text-muted, #8B92A3);
+}
+
+.api-key-actions {
+    display: inline-flex;
+    justify-content: flex-end;
+    gap: 0.25rem;
+}
+
+.api-keys-empty {
+    padding: 1.25rem !important;
+    text-align: center;
+    color: var(--text-sub, #5C6372);
+}
+
+.api-keys-empty.is-danger {
+    color: var(--color-danger, #D2555A);
+}
+
+.api-keys-empty__icon {
+    margin-right: 0.5rem;
+}
+
+.api-keys-note {
+    padding: 0.85rem 1rem;
+    border-top: 1px solid var(--border, #E1E5EF);
+    background: var(--bg-body, #F6F7FB);
+    color: var(--text-sub, #5C6372);
+}
+
+@media (max-width: 767.98px) {
+    .api-keys-table,
+    .api-keys-table tbody,
+    .api-keys-table tr,
+    .api-keys-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .api-keys-table thead {
+        display: none;
+    }
+
+    .api-keys-table tr {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--border, #E1E5EF);
+    }
+
+    .api-keys-table td {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.45rem 0;
+        border: none;
+        text-align: right !important;
+    }
+
+    .api-keys-table td::before {
+        content: attr(data-label);
+        color: var(--text-sub, #5C6372);
+        font-weight: 800;
+        text-align: left;
+    }
+
+    .api-key-name,
+    .api-key-usage,
+    .api-key-actions {
+        justify-items: end;
+    }
 }
 
 /* Team access management */

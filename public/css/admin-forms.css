@@ -20,7 +20,7 @@
 .forms-workspace {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.75rem;
   min-height: calc(100vh - var(--layout-topbar-height, 56px) - 1rem);
 }
 
@@ -143,25 +143,25 @@
 .forms-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 
 .forms-summary-card {
-  min-height: 88px;
+  min-height: 74px;
   border: 1px solid var(--forms-border);
   border-radius: 8px;
   background: var(--forms-surface);
-  padding: 0.85rem;
+  padding: 0.72rem;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 0.75rem;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 0.65rem;
   align-items: center;
   box-shadow: 0 1px 3px rgba(18, 25, 38, 0.04);
 }
 
 .forms-summary-card__icon {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -202,8 +202,34 @@
   line-height: 1.05;
 }
 
+.forms-summary-strip {
+  grid-column: 1 / -1;
+  min-height: 34px;
+  border: 1px solid var(--forms-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.35rem 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  color: var(--forms-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.forms-summary-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.forms-summary-strip i {
+  color: var(--forms-primary);
+}
+
 .forms-skeleton {
-  height: 88px;
+  height: 74px;
   border-radius: 8px;
   background: linear-gradient(90deg, rgba(225, 229, 239, 0.9) 25%, rgba(246, 247, 251, 0.9) 50%, rgba(225, 229, 239, 0.9) 75%);
   background-size: 200% 100%;
@@ -217,8 +243,8 @@
 
 .forms-layout {
   display: grid;
-  grid-template-columns: var(--forms-sidebar-width) minmax(0, 1fr);
-  gap: 0.85rem;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 0.75rem;
   min-height: 0;
 }
 
@@ -230,7 +256,7 @@
 .forms-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 
 .forms-panel,
@@ -242,7 +268,7 @@
 }
 
 .forms-panel {
-  padding: 0.75rem;
+  padding: 0.68rem;
 }
 
 .forms-panel__head {
@@ -250,7 +276,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.65rem;
+  margin-bottom: 0.52rem;
   font-size: 0.78rem;
   font-weight: 800;
   color: var(--forms-muted);
@@ -288,9 +314,26 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.65rem;
-  padding: 0.62rem 0.7rem;
+  padding: 0.54rem 0.62rem;
   text-align: left;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.forms-list-empty {
+  min-height: 58px;
+  border: 1px dashed rgba(139, 146, 163, 0.45);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  color: var(--forms-muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.forms-list-empty i {
+  color: var(--forms-soft);
 }
 
 .forms-list-btn:hover,
@@ -368,7 +411,7 @@
 .forms-dot.is-other { background: var(--forms-info); }
 
 .forms-page-list {
-  max-height: 270px;
+  max-height: 220px;
   overflow: auto;
   padding-right: 0.15rem;
 }
@@ -376,7 +419,7 @@
 .forms-page-option {
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 0.58rem 0.65rem;
+  padding: 0.5rem 0.58rem;
   display: grid;
   grid-template-columns: 18px 30px minmax(0, 1fr);
   gap: 0.5rem;
@@ -475,7 +518,7 @@
 .forms-main {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 
 .forms-board-head {
@@ -486,7 +529,7 @@
 }
 
 .forms-current {
-  min-height: 54px;
+  min-height: 50px;
   flex: 1;
   min-width: 0;
   border: 1px solid var(--forms-border);
@@ -554,7 +597,7 @@
 }
 
 .forms-table-card {
-  min-height: 460px;
+  min-height: 390px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -728,7 +771,7 @@
 }
 
 .forms-empty {
-  min-height: 320px;
+  min-height: 220px;
   display: flex;
   align-items: center;
   justify-content: center;

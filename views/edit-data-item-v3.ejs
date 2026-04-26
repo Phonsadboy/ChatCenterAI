@@ -26,18 +26,32 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
+            min-height: 100vh;
+            background: var(--light-bg, #F6F7FB);
+        }
+
+        body.has-admin-layout.page-data-item-editor-v3 .app-content.editor-app-content {
             height: 100vh;
+            max-height: 100vh;
+            min-height: 0;
+            overflow: hidden;
+            padding-bottom: var(--layout-content-gap-bottom, 0.5rem) !important;
+            box-sizing: border-box;
             display: flex;
             flex-direction: column;
-            background: var(--light-bg, #F6F7FB);
         }
 
         /* ===== Editor Container ===== */
         .editor-container {
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            flex: 1 1 auto;
+            height: auto;
+            min-height: 0;
             background: var(--light-bg);
+            border: 1px solid var(--border-color, #E1E5EF);
+            border-radius: var(--radius-md, 8px);
+            overflow: hidden;
         }
 
         /* ===== Editor Header ===== */
@@ -152,11 +166,17 @@
         .editor-toolbar {
             display: flex;
             align-items: center;
-            height: 48px;
+            min-height: 48px;
             padding: 0 16px;
             background: var(--card-bg, #fff);
             border-bottom: 1px solid var(--border-color);
             gap: 8px;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .editor-toolbar::-webkit-scrollbar {
+            display: none;
         }
 
         .toolbar-group {
@@ -351,6 +371,11 @@
         }
 
         @media (max-width: 768px) {
+            body.has-admin-layout.page-data-item-editor-v3 .app-content.editor-app-content {
+                padding-left: var(--layout-content-gap-mobile-side, 0.5rem) !important;
+                padding-right: var(--layout-content-gap-mobile-side, 0.5rem) !important;
+                padding-bottom: calc(var(--layout-mobile-nav-height, 72px) + var(--layout-content-gap-mobile-bottom, 0.5rem)) !important;
+            }
 
             .status-center,
             .status-shortcut {
@@ -687,7 +712,9 @@
     </style>
 </head>
 
-<body>
+<body class="app-shell page-data-item-editor-v3">
+    <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
+    <div class="app-content editor-app-content">
     <div class="editor-container">
         <!-- Editor Header -->
         <header class="editor-header">
@@ -1017,10 +1044,11 @@
                 // Responsive height for the sheet content
                 function applyTableHeight() {
                     if (!sheet || !sheet.content) return;
+                    var editorH = (document.querySelector('.editor-container') || {}).clientHeight || window.innerHeight;
                     var headerH = (document.querySelector('.editor-header') || {}).offsetHeight || 0;
                     var toolbarH = (document.querySelector('.editor-toolbar') || {}).offsetHeight || 0;
                     var statusH = (document.querySelector('.editor-statusbar') || {}).offsetHeight || 0;
-                    var available = window.innerHeight - (headerH + toolbarH + statusH);
+                    var available = editorH - (headerH + toolbarH + statusH);
                     var height = Math.max(240, available);
                     sheet.content.style.height = height + 'px';
                     sheet.content.style.maxHeight = height + 'px';
@@ -1529,6 +1557,7 @@
             });
         </script>
     </div><!-- /editor-container -->
+    </div><!-- /app-content -->
 </body>
 
 </html>

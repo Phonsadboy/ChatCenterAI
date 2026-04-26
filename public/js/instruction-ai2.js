@@ -18,6 +18,17 @@
         "gpt-5": { label: "GPT-5", efforts: ["low", "medium", "high"], default: "medium" },
     };
 
+    function adminCan(permission) {
+        if (!permission) return true;
+        const user = window.adminAuth?.user || null;
+        if (!user) return true;
+        if (user.role === "superadmin") return true;
+        return Array.isArray(user.permissions) && user.permissions.includes(permission);
+    }
+
+    const CAN_CREATE_INSTRUCTION = adminCan("instructions:create") || adminCan("instructions:manage");
+    const CAN_UPDATE_INSTRUCTION = adminCan("instructions:update") || adminCan("instructions:manage");
+
     // ─── State ──────────────────────────────────────────────────────────
 
     let state = {
@@ -174,6 +185,7 @@
     }
 
     async function createRetailInstruction() {
+        if (!CAN_CREATE_INSTRUCTION) return;
         const rawName = window.prompt("ตั้งชื่อ Instruction ใหม่", "Retail Instruction");
         const name = (rawName || "").trim();
         if (!name) return;
@@ -3611,9 +3623,11 @@
         // Update UI
         dom.activeName.textContent = name || "Untitled";
         dom.empty.style.display = "none";
-        dom.input.disabled = false;
-        if (dom.attach) dom.attach.disabled = false;
-        dom.input.placeholder = `พิมพ์คำสั่ง... เช่น "ดูราคาสินค้า"`;
+        dom.input.disabled = !CAN_UPDATE_INSTRUCTION;
+        if (dom.attach) dom.attach.disabled = !CAN_UPDATE_INSTRUCTION;
+        dom.input.placeholder = CAN_UPDATE_INSTRUCTION
+            ? `พิมพ์คำสั่ง... เช่น "ดูราคาสินค้า"`
+            : "คุณมีสิทธิ์ดู Instruction นี้ แต่ไม่มีสิทธิ์แก้ไข";
         dom.statusInfo.style.display = "inline-flex";
         dom.messages.innerHTML = "";
 
@@ -3784,7 +3798,7 @@
             dom.send.classList.add("ic-btn-stop-active");
         } else {
             dom.send.innerHTML = '<i class="fas fa-arrow-up" aria-hidden="true"></i>';
-            dom.send.disabled = !(hasText || hasImages) || !hasInstruction;
+            dom.send.disabled = !(hasText || hasImages) || !hasInstruction || !CAN_UPDATE_INSTRUCTION;
             dom.send.title = "ส่ง (Enter)";
             dom.send.setAttribute("aria-label", "ส่งข้อความ");
             dom.send.classList.remove("ic-btn-stop-active");
@@ -3830,6 +3844,7 @@
             dom.welcomeOpenSidebar.addEventListener("click", () => openSidebar({ focusSidebar: true }));
         }
         if (dom.createRetail) {
+            dom.createRetail.hidden = !CAN_CREATE_INSTRUCTION;
             dom.createRetail.addEventListener("click", createRetailInstruction);
         }
         if (dom.toggleInventory && dom.inventoryPanel) {

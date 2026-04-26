@@ -3898,7 +3898,9 @@ function registerAdminSession(req, { role, passcodeDoc }) {
     role: access.role,
     codeId: passcodeDoc ? String(passcodeDoc._id) : null,
     label: passcodeDoc?.label || null,
+    permissionsVersion: access.permissionsVersion,
     permissions: access.permissions,
+    instructionAccess: access.instructionAccess,
     inboxAccess: access.inboxAccess,
     chatLayout: access.chatLayout,
     loggedInAt: new Date().toISOString(),
@@ -3925,6 +3927,8 @@ function getAdminUserContext(req) {
     label,
     loggedInAt,
     permissions,
+    permissionsVersion,
+    instructionAccess,
     inboxAccess,
     chatLayout,
   } = req.session.adminUser;
@@ -3933,6 +3937,8 @@ function getAdminUserContext(req) {
     passcodeDoc: {
       role,
       permissions,
+      permissionsVersion,
+      instructionAccess,
       inboxAccess,
       chatLayout,
     },
@@ -3942,6 +3948,8 @@ function getAdminUserContext(req) {
     codeId,
     label,
     permissions: access.permissions,
+    permissionsVersion: access.permissionsVersion,
+    instructionAccess: access.instructionAccess,
     inboxAccess: access.inboxAccess,
     chatLayout: access.chatLayout,
     loggedInAt,
@@ -4088,6 +4096,259 @@ function requireAnyPermission(permissions = []) {
   };
 }
 
+function getAdminActorIdentity(req) {
+  const adminUser = getAdminUserContext(req);
+  if (!adminUser) {
+    return { id: null, label: "admin", role: "admin" };
+  }
+  return {
+    id: adminUser.codeId || adminUser.role || null,
+    label: adminUser.label || adminUser.role || "admin",
+    role: adminUser.role || "admin",
+  };
+}
+
+function buildInstructionActorFields(req, prefix = "updated") {
+  const actor = getAdminActorIdentity(req);
+  return {
+    [`${prefix}ByAdminId`]: actor.id,
+    [`${prefix}ByAdminLabel`]: actor.label,
+    [`${prefix}ByAdminRole`]: actor.role,
+  };
+}
+
+function getInstructionAccessIds(instruction = {}) {
+  return [
+    instruction._id?.toString?.() || instruction._id,
+    instruction.id,
+    instruction.instructionId,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function isInstructionCreatedByAdmin(adminUser, instruction = {}) {
+  if (!adminUser || !instruction) return false;
+  const codeId = String(adminUser.codeId || "").trim();
+  const label = String(adminUser.label || "").trim();
+  const createdByIds = [
+    instruction.createdByAdminId,
+    instruction.ownerAdminId,
+    instruction.createdByCodeId,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const createdByLabels = [
+    instruction.createdByAdminLabel,
+    instruction.ownerAdminLabel,
+    instruction.createdBy,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  if (codeId && createdByIds.includes(codeId)) return true;
+  return Boolean(label && createdByLabels.includes(label));
+}
+
+function canAdminAccessInstruction(req, instruction = {}) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) return true;
+  const adminUser = getAdminUserContext(req);
+  if (!adminUser) return false;
+  if (adminUser.role === "superadmin") return true;
+  if (!hasAdminPermission(adminUser, "instructions:view")) return false;
+  if (isInstructionCreatedByAdmin(adminUser, instruction)) return true;
+  const access = adminUser.instructionAccess || {};
+  if (access.mode === "all") return true;
+  const allowedIds = new Set(
+    (Array.isArray(access.instructionIds) ? access.instructionIds : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+  if (!allowedIds.size) return false;
+  return getInstructionAccessIds(instruction).some((id) => allowedIds.has(id));
+}
+
+function filterInstructionsForAdmin(req, instructions = []) {
+  if (!Array.isArray(instructions)) return [];
+  return instructions.filter((instruction) =>
+    canAdminAccessInstruction(req, instruction),
+  );
+}
+
+function canAdminAccessLegacyInstructions(req) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) return true;
+  const adminUser = getAdminUserContext(req);
+  return Boolean(
+    adminUser?.role === "superadmin" ||
+    adminUser?.instructionAccess?.mode === "all",
+  );
+}
+
+function ensureLegacyInstructionAccess(req, res) {
+  if (canAdminAccessLegacyInstructions(req)) return true;
+  res.status(403).json({
+    success: false,
+    error: "ไม่มีสิทธิ์เข้าถึง Legacy Instructions",
+  });
+  return false;
+}
+
+function ensureInstructionAccess(req, res, instruction = {}) {
+  if (canAdminAccessInstruction(req, instruction)) return true;
+  res.status(403).json({
+    success: false,
+    error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้",
+  });
+  return false;
+}
+
+async function ensureInstructionSelectionsAccess(req, res, db, selections = []) {
+  const normalizedSelections = normalizeLatestOnlyInstructionSelections(selections);
+  const instructionIds = normalizedSelections
+    .map((entry) => entry?.instructionId)
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!instructionIds.length) return true;
+
+  const docs = await db
+    .collection("instructions_v2")
+    .find({ instructionId: { $in: instructionIds } })
+    .toArray();
+  const byInstructionId = new Map(docs.map((doc) => [String(doc.instructionId || ""), doc]));
+  for (const instructionId of instructionIds) {
+    const doc = byInstructionId.get(instructionId);
+    if (doc) {
+      if (!canAdminAccessInstruction(req, doc)) {
+        res.status(403).json({ error: "ไม่มีสิทธิ์เลือก Instruction บางรายการ" });
+        return false;
+      }
+      continue;
+    }
+    if (!canAdminAccessLegacyInstructions(req)) {
+      res.status(403).json({ error: "ไม่มีสิทธิ์เลือก Legacy Instruction" });
+      return false;
+    }
+  }
+  return true;
+}
+
+async function requireInstructionParamAccess(req, res, next) {
+  try {
+    const instructionId = String(req.params?.instructionId || "").trim();
+    if (!instructionId) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ Instruction" });
+    }
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const instruction = ObjectId.isValid(instructionId)
+      ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) })
+      : await db.collection("instructions_v2").findOne({ instructionId });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้" });
+    }
+    return next();
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+const SETTINGS_READ_KEYS_BY_PERMISSION = Object.freeze({
+  "settings:bot": [
+    "textModel",
+    "visionModel",
+    "maxImagesPerMessage",
+    "defaultInstruction",
+  ],
+  "settings:chat": [
+    "chatDelaySeconds",
+    "maxQueueMessages",
+    "enableMessageMerging",
+    "showTokenUsage",
+    "audioAttachmentResponse",
+    "chatQueueSlaMinutes",
+  ],
+  "settings:general": [
+    "aiEnabled",
+    "enableChatHistory",
+    "enableAdminNotifications",
+    "showDebugInfo",
+    "systemMode",
+    "aiHistoryLimit",
+    "orderRequiredFields",
+  ],
+  "settings:security-filter": [
+    "enableMessageFiltering",
+    "hiddenWords",
+    "replacementText",
+    "enableStrictFiltering",
+  ],
+});
+
+function filterSettingsForAdmin(req, settings = {}) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) return settings;
+  const adminUser = getAdminUserContext(req);
+  if (!adminUser || adminUser.role === "superadmin") return settings;
+  const allowedKeys = new Set();
+  Object.entries(SETTINGS_READ_KEYS_BY_PERMISSION).forEach(([permission, keys]) => {
+    if (!hasAdminPermission(adminUser, permission)) return;
+    keys.forEach((key) => allowedKeys.add(key));
+  });
+  const filtered = {};
+  Object.entries(settings).forEach(([key, value]) => {
+    if (allowedKeys.has(key)) filtered[key] = value;
+  });
+  return filtered;
+}
+
+function resolveBotApiPermission(req) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") return "bots:view";
+  if (method === "DELETE") return "bots:delete";
+  if (method === "POST") {
+    const pathName = req.path || "";
+    if (/\/api\/(?:line|facebook|instagram|whatsapp)-bots$/.test(pathName)) {
+      return "bots:create";
+    }
+    if (pathName === "/api/facebook-bots/init") {
+      return "bots:create";
+    }
+  }
+  return "bots:update";
+}
+
+function requireBotApiPermission(req, res, next) {
+  const permission = resolveBotApiPermission(req);
+  return requireAnyPermission([permission, "bots:manage"])(req, res, next);
+}
+
+const BOT_SECRET_FIELDS = Object.freeze([
+  "accessToken",
+  "channelAccessToken",
+  "channelSecret",
+  "verifyToken",
+  "appSecret",
+  "clientSecret",
+]);
+
+function canViewBotSecrets(req) {
+  return hasAdminPermission(getAdminUserContext(req), "bots:secrets");
+}
+
+function redactBotSecretsForAdmin(req, bot) {
+  if (!bot || canViewBotSecrets(req)) return bot;
+  const redacted = { ...bot, secretsRedacted: true };
+  BOT_SECRET_FIELDS.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(redacted, field)) {
+      redacted[field] = "";
+    }
+  });
+  return redacted;
+}
+
+function redactBotListSecretsForAdmin(req, bots = []) {
+  return Array.isArray(bots)
+    ? bots.map((bot) => redactBotSecretsForAdmin(req, bot))
+    : [];
+}
+
 function normalizeAdminInboxKey(platform, botId) {
   const normalizedPlatform =
     typeof platform === "string" ? platform.trim().toLowerCase() : "";
@@ -4132,6 +4393,15 @@ function filterInboxesForAdmin(req, inboxes = []) {
   if (allowed === null) return inboxes;
   const allowedSet = new Set(allowed);
   return inboxes.filter((inbox) => allowedSet.has(inbox.inboxKey));
+}
+
+function filterOrderPagesForAdmin(req, pages = []) {
+  const allowed = getAdminAllowedInboxKeys(req);
+  if (allowed === null) return pages;
+  const allowedSet = new Set(allowed);
+  return pages.filter((page) =>
+    allowedSet.has(normalizeAdminInboxKey(page.platform || "line", page.botId || "default")),
+  );
 }
 
 function parseRequestedAdminInboxKeys(queryParams = {}) {
@@ -4210,10 +4480,13 @@ function dataFormAssignmentsAllowedForAdmin(req, enabledPages = []) {
 
 function filterChatUsersForAdmin(req, users = []) {
   const allowed = getAdminAllowedInboxKeys(req);
-  if (allowed === null) return users;
-  return users.filter((user) =>
-    isAdminInboxAllowed(req, user.platform || "line", user.botId || "default"),
-  );
+  const scopedUsers =
+    allowed === null
+      ? users
+      : users.filter((user) =>
+        isAdminInboxAllowed(req, user.platform || "line", user.botId || "default"),
+      );
+  return scopedUsers.map((user) => filterChatUserFieldsForAdmin(req, user));
 }
 
 function getAdminChatAllowedTabs(req) {
@@ -4240,15 +4513,44 @@ function getAdminChatAllowedTabs(req) {
   return configuredTabs.filter((tab) => permissionTabs.includes(tab));
 }
 
+function filterChatUserFieldsForAdmin(req, user = {}) {
+  if (!user || typeof user !== "object") return user;
+  const tabs = new Set(getAdminChatAllowedTabs(req));
+  const adminUser = getAdminUserContext(req);
+  const filtered = { ...user };
+  if (!tabs.has("tags")) {
+    filtered.tags = [];
+  }
+  if (!tabs.has("orders")) {
+    filtered.hasOrders = false;
+    filtered.orderCount = 0;
+  }
+  if (!tabs.has("tools") || !hasAdminPermission(adminUser, "chat:assign")) {
+    filtered.assignment = null;
+  }
+  return filtered;
+}
+
+function requireChatWorkspaceTab(tab) {
+  return (req, res, next) => {
+    if (!getAdminChatAllowedTabs(req).includes(tab)) {
+      return res.status(403).json({
+        success: false,
+        error: "ไม่มีสิทธิ์เข้าถึงแท็บนี้ใน Chat Workspace",
+      });
+    }
+    return next();
+  };
+}
+
 function applyChatContextPermissions(req, payload = {}) {
   const tabs = new Set(getAdminChatAllowedTabs(req));
   const filtered = {
     ...payload,
     allowedTabs: [...tabs],
   };
-  if (!tabs.has("overview")) {
-    filtered.orders = [];
-    filtered.assignment = null;
+  if (filtered.user) {
+    filtered.user = filterChatUserFieldsForAdmin(req, filtered.user);
   }
   if (!tabs.has("forms")) {
     filtered.forms = [];
@@ -4264,7 +4566,7 @@ function applyChatContextPermissions(req, payload = {}) {
     filtered.notes = "";
     filtered.notesUpdatedAt = null;
   }
-  if (!hasAdminPermission(getAdminUserContext(req), "chat:assign")) {
+  if (!tabs.has("tools") || !hasAdminPermission(getAdminUserContext(req), "chat:assign")) {
     filtered.assignment = null;
   }
   return filtered;
@@ -8382,6 +8684,48 @@ function buildOrderQuery(params = {}) {
   }
 
   return { query, dateRange: { start: startMoment, end: endMoment } };
+}
+
+function resolveAdminScopedOrderParams(req, params = {}) {
+  const scopedKeys = resolveAdminInboxScopeKeys(req, params);
+  if (scopedKeys === null) {
+    return { params, scopedKeys: null, isEmptyScope: false };
+  }
+  if (!scopedKeys.length) {
+    return { params: { ...params }, scopedKeys, isEmptyScope: true };
+  }
+  return {
+    params: {
+      ...params,
+      pageKey: scopedKeys.join(","),
+    },
+    scopedKeys,
+    isEmptyScope: false,
+  };
+}
+
+function buildAdminScopedOrderQuery(req, params = {}) {
+  const scope = resolveAdminScopedOrderParams(req, params);
+  const result = buildOrderQuery(scope.params);
+  if (scope.isEmptyScope) {
+    result.query.$and = Array.isArray(result.query.$and)
+      ? result.query.$and
+      : [];
+    result.query.$and.push({ _id: { $in: [] } });
+  }
+  return {
+    ...result,
+    scopedParams: scope.params,
+    isEmptyScope: scope.isEmptyScope,
+  };
+}
+
+function canAdminAccessOrder(req, order = {}) {
+  return isAdminInboxAllowed(
+    req,
+    normalizeOrderPlatform(order.platform || "line"),
+    normalizeOrderBotId(order.botId) || "default",
+  );
 }
 
 /**
@@ -12855,10 +13199,10 @@ async function maybeMirrorInstructionV2Document(db, instructionOrId) {
 }
 
 // API: List all instructions
-app.get("/api/instructions-v2", async (req, res) => {
+app.get("/api/instructions-v2", requirePermission("instructions:view"), async (req, res) => {
   try {
     const instructions = await getInstructionsV2();
-    res.json({ success: true, instructions });
+    res.json({ success: true, instructions: filterInstructionsForAdmin(req, instructions) });
   } catch (err) {
     console.error("Error fetching instructions v2:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -12866,14 +13210,17 @@ app.get("/api/instructions-v2", async (req, res) => {
 });
 
 // API: Get one instruction
-app.get("/api/instructions-v2/:id", async (req, res) => {
+app.get("/api/instructions-v2/:id", requirePermission("instructions:view"), async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (id === "export") return next();
     const instruction = await getInstructionV2ById(id);
 
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     res.json({
       success: true,
@@ -12886,7 +13233,7 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
 });
 
 // API: Create new instruction
-app.post("/api/instructions-v2", async (req, res) => {
+app.post("/api/instructions-v2", requirePermission("instructions:create"), async (req, res) => {
   try {
     const { name, description } = req.body;
 
@@ -12927,7 +13274,9 @@ app.post("/api/instructions-v2", async (req, res) => {
       },
       usageCount: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      ...buildInstructionActorFields(req, "created"),
+      ...buildInstructionActorFields(req, "updated"),
     };
 
     const result = await coll.insertOne(instruction);
@@ -12952,7 +13301,7 @@ app.post("/api/instructions-v2", async (req, res) => {
 });
 
 // API: Update instruction (name, description only)
-app.put("/api/instructions-v2/:id", async (req, res) => {
+app.put("/api/instructions-v2/:id", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, conversationStarter } = req.body || {};
@@ -12960,8 +13309,13 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
+    const existing = await coll.findOne({ _id: toObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+    if (!ensureInstructionAccess(req, res, existing)) return;
 
-    const updateData = { updatedAt: new Date() };
+    const updateData = { updatedAt: new Date(), ...buildInstructionActorFields(req, "updated") };
     if (name !== undefined) updateData.name = name.trim();
     if (description !== undefined) updateData.description = description.trim();
     if (conversationStarter !== undefined) {
@@ -13004,7 +13358,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
 });
 
 // API: Delete instruction
-app.delete("/api/instructions-v2/:id", async (req, res) => {
+app.delete("/api/instructions-v2/:id", requirePermission("instructions:delete"), async (req, res) => {
   try {
     const { id } = req.params;
     const client = await connectDB();
@@ -13015,6 +13369,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
     if (!target) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, target)) return;
     await createDashboardSnapshotOrThrow(
       id,
       "delete_instruction",
@@ -13037,7 +13392,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
 });
 
 // API: Duplicate instruction
-app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
+app.post("/api/instructions-v2/:id/duplicate", requirePermission("instructions:create"), async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
@@ -13050,6 +13405,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     if (!original) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
     }
+    if (!ensureInstructionAccess(req, res, original)) return;
 
     const escapeRegex = (value) =>
       String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -13092,7 +13448,9 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
       ),
       usageCount: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      ...buildInstructionActorFields(req, "created"),
+      ...buildInstructionActorFields(req, "updated"),
     };
 
     const result = await coll.insertOne(duplicate);
@@ -13118,6 +13476,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
 
 app.post(
   "/api/instructions-v2/starter-assets",
+  requireAnyPermission(["instructions:create", "instructions:update"]),
   imageUpload.array("images", 10),
   async (req, res) => {
     try {
@@ -13287,7 +13646,7 @@ app.post(
 );
 
 // API: Add data item to instruction
-app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
+app.post("/api/instructions-v2/:id/data-items", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id } = req.params;
     const { title, type, content, data } = req.body;
@@ -13308,6 +13667,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const now = new Date();
@@ -13327,7 +13687,8 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
       {
         $set: {
           dataItems: [...dataItems, newItem],
-          updatedAt: now
+          updatedAt: now,
+          ...buildInstructionActorFields(req, "updated"),
         }
       }
     );
@@ -13353,7 +13714,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
 
 // API: Reorder data items
 // NOTE: Declare before the :itemId route below so Express does not treat "reorder" as an itemId.
-app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
+app.put("/api/instructions-v2/:id/data-items/reorder", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id } = req.params;
     const { itemIds } = req.body; // Array of itemIds in new order
@@ -13370,6 +13731,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     // Reorder dataItems based on itemIds array
     const dataItems = normalizeInstructionDataItems(instruction.dataItems);
@@ -13386,7 +13748,8 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
       {
         $set: {
           dataItems: reorderedItems,
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          ...buildInstructionActorFields(req, "updated"),
         }
       }
     );
@@ -13407,7 +13770,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
 });
 
 // API: Update data item
-app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
+app.put("/api/instructions-v2/:id/data-items/:itemId", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { title, content, data } = req.body;
@@ -13420,6 +13783,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const itemIndex = dataItems.findIndex(item => item.itemId === itemId);
@@ -13439,7 +13803,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 
     await coll.updateOne(
       { _id: toObjectId(id) },
-      { $set: { dataItems, updatedAt: now } }
+      { $set: { dataItems, updatedAt: now, ...buildInstructionActorFields(req, "updated") } }
     );
     await createDashboardSnapshotOrThrow(
       id,
@@ -13459,7 +13823,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 });
 
 // API: Delete data item
-app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
+app.delete("/api/instructions-v2/:id/data-items/:itemId", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id, itemId } = req.params;
 
@@ -13471,6 +13835,7 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const nextDataItems = dataItems.filter((item) => item.itemId !== itemId);
@@ -13483,7 +13848,8 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
       {
         $set: {
           dataItems: nextDataItems,
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          ...buildInstructionActorFields(req, "updated"),
         }
       }
     );
@@ -13508,7 +13874,7 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 });
 
 // API: Duplicate data item
-app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, res) => {
+app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { id, itemId } = req.params;
 
@@ -13520,6 +13886,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    if (!ensureInstructionAccess(req, res, instruction)) return;
 
     const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const originalItem = dataItems.find(item => item.itemId === itemId);
@@ -13542,7 +13909,8 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
       {
         $set: {
           dataItems: [...dataItems, duplicateItem],
-          updatedAt: now
+          updatedAt: now,
+          ...buildInstructionActorFields(req, "updated"),
         }
       }
     );
@@ -13563,7 +13931,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
 });
 
 // API: Preview instruction (build system prompt)
-app.get("/api/instructions-v2/:id/preview", async (req, res) => {
+app.get("/api/instructions-v2/:id/preview", requirePermission("instructions:view"), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -13623,13 +13991,16 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
 });
 
 // API: Export Instructions V2 to Excel
-app.get("/api/instructions-v2/export", async (req, res) => {
+app.get("/api/instructions-v2/export", requirePermission("instructions:export"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instructions = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const instructions = filterInstructionsForAdmin(
+      req,
+      await coll.find({}).sort({ createdAt: -1 }).toArray(),
+    );
 
     // 1. Instructions Sheet
     const instructionRows = instructions.map(inst => ({
@@ -13687,7 +14058,7 @@ app.get("/api/instructions-v2/export", async (req, res) => {
 });
 
 // API: Preview Import Sheets (New Design)
-app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), async (req, res) => {
+app.post("/api/instructions-v2/import/preview-sheets", requirePermission("instructions:import"), upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
@@ -13707,7 +14078,10 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
     const previews = service.previewImportSheets(filePath);
 
     // Get list of existing instructions for mapping
-    const instructions = await db.collection("instructions_v2").find({}, { projection: { _id: 1, name: 1 } }).toArray();
+    const instructions = filterInstructionsForAdmin(
+      req,
+      await db.collection("instructions_v2").find({}, { projection: { _id: 1, instructionId: 1, name: 1, createdByAdminId: 1, createdByAdminLabel: 1 } }).toArray(),
+    );
 
     res.json({
       success: true,
@@ -13723,7 +14097,7 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
 });
 
 // API: Execute Import Sheets (New Design)
-app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
+app.post("/api/instructions-v2/import/execute-sheets", requirePermission("instructions:import"), async (req, res) => {
   try {
     const { mappings, fileToken } = req.body;
 
@@ -13742,11 +14116,56 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
     const db = client.db("chatbot");
     const service = new InstructionDataService(db);
 
-    const results = await service.executeImport(mappings, filePath);
+    const mappingsToRun = Array.isArray(mappings) ? mappings : [];
+    const hasCreateMappings = mappingsToRun.some((mapping) => mapping?.action === "create");
+    const updateTargetIds = mappingsToRun
+      .filter((mapping) => mapping?.action === "update")
+      .map((mapping) => String(mapping.targetId || "").trim())
+      .filter(Boolean);
+    if (hasCreateMappings && !hasAdminPermission(getAdminUserContext(req), "instructions:create")) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์สร้าง Instruction" });
+    }
+    if (updateTargetIds.length && !hasAdminPermission(getAdminUserContext(req), "instructions:update")) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์แก้ไข Instruction" });
+    }
+    if (updateTargetIds.length) {
+      const targets = await db
+        .collection("instructions_v2")
+        .find({ _id: { $in: updateTargetIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id)) } })
+        .toArray();
+      const targetMap = new Map(targets.map((instruction) => [instruction._id.toString(), instruction]));
+      for (const targetId of updateTargetIds) {
+        const target = targetMap.get(targetId);
+        if (!target) {
+          return res.status(404).json({ success: false, error: "ไม่พบ Instruction เป้าหมายสำหรับ import" });
+        }
+        if (!canAdminAccessInstruction(req, target)) {
+          return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์แก้ไข Instruction เป้าหมายบางรายการ" });
+        }
+      }
+    }
+
+    const results = await service.executeImport(mappingsToRun, filePath);
     for (const result of results) {
       if (!result || result.success !== true) continue;
       if (!["created", "updated"].includes(result.action)) continue;
       if (!result.instructionObjectId) continue;
+      if (result.action === "created") {
+        await db.collection("instructions_v2").updateOne(
+          { _id: new ObjectId(result.instructionObjectId) },
+          {
+            $set: {
+              ...buildInstructionActorFields(req, "created"),
+              ...buildInstructionActorFields(req, "updated"),
+            },
+          },
+        );
+      } else if (result.action === "updated") {
+        await db.collection("instructions_v2").updateOne(
+          { _id: new ObjectId(result.instructionObjectId) },
+          { $set: buildInstructionActorFields(req, "updated") },
+        );
+      }
       const snapshotResult = await createDashboardSnapshotOrThrow(
         result.instructionObjectId,
         "import_sheets",
@@ -13771,7 +14190,7 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
 });
 
 // API: Export Sheets (New Design)
-app.post("/api/instructions-v2/export-sheets", async (req, res) => {
+app.post("/api/instructions-v2/export-sheets", requirePermission("instructions:export"), async (req, res) => {
   try {
     const { instructionIds } = req.body;
 
@@ -13783,7 +14202,18 @@ app.post("/api/instructions-v2/export-sheets", async (req, res) => {
     const db = client.db("chatbot");
     const service = new InstructionDataService(db);
 
-    const buffer = await service.exportInstructions(instructionIds);
+    const requestedIds = instructionIds.map((id) => String(id || "").trim()).filter(Boolean);
+    const docs = await db
+      .collection("instructions_v2")
+      .find({ _id: { $in: requestedIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id)) } })
+      .toArray();
+    const allowedIds = new Set(filterInstructionsForAdmin(req, docs).map((instruction) => instruction._id.toString()));
+    const deniedIds = requestedIds.filter((id) => !allowedIds.has(id));
+    if (deniedIds.length) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์ export Instruction บางรายการ" });
+    }
+
+    const buffer = await service.exportInstructions(requestedIds);
 
     const filename = `instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx`;
 
@@ -18324,8 +18754,11 @@ app.get("/", (req, res) => {
 });
 
 // Route: list all instruction libraries
-app.get("/admin/instructions/library", async (req, res) => {
+app.get("/admin/instructions/library", requirePermission("instructions:view"), async (req, res) => {
   try {
+    if (!canAdminAccessLegacyInstructions(req)) {
+      return res.json({ success: true, libraries: [] });
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const libraryColl = db.collection("instruction_library");
@@ -18353,8 +18786,9 @@ app.get("/admin/instructions/library", async (req, res) => {
 });
 
 // Route: get instruction library by date (YYYY-MM-DD)
-app.get("/admin/instructions/library/:date", async (req, res) => {
+app.get("/admin/instructions/library/:date", requirePermission("instructions:view"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { date } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18378,8 +18812,9 @@ app.get("/admin/instructions/library/:date", async (req, res) => {
 });
 
 // Route: สร้าง instruction library ด้วยตนเอง
-app.post("/admin/instructions/library-now", async (req, res) => {
+app.post("/admin/instructions/library-now", requirePermission("instructions:export"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { name, description } = req.body;
     const now = new Date();
     const thaiNow = new Date(
@@ -18428,8 +18863,9 @@ app.post("/admin/instructions/library-now", async (req, res) => {
 });
 
 // Route: อัปเดตชื่อหรือคำอธิบายของ instruction library
-app.put("/admin/instructions/library/:date", async (req, res) => {
+app.put("/admin/instructions/library/:date", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { date } = req.params;
     const { name, description } = req.body;
 
@@ -18463,8 +18899,9 @@ app.put("/admin/instructions/library/:date", async (req, res) => {
 });
 
 // Route: ลบ instruction library ตามวันที่ระบุ
-app.delete("/admin/instructions/library/:date", async (req, res) => {
+app.delete("/admin/instructions/library/:date", requirePermission("instructions:delete"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { date } = req.params;
 
     const client = await connectDB();
@@ -18486,8 +18923,9 @@ app.delete("/admin/instructions/library/:date", async (req, res) => {
 });
 
 // Route: คืนค่า instruction library
-app.post("/admin/instructions/restore/:date", async (req, res) => {
+app.post("/admin/instructions/restore/:date", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { date } = req.params;
     const { createLibraryBefore } = req.body;
 
@@ -18570,6 +19008,7 @@ app.post("/admin/instructions/restore/:date", async (req, res) => {
 // Route: Upload Excel file และแปลงเป็น instructions
 app.post(
   "/admin/instructions/upload-excel",
+  requirePermission("instructions:import"),
   upload.single("excelFile"),
   async (req, res) => {
     try {
@@ -18644,6 +19083,7 @@ app.post(
 // Route: Get preview ของไฟล์ Excel ก่อนอัพโหลด (ไม่บันทึกลงฐานข้อมูล)
 app.post(
   "/admin/instructions/preview-excel",
+  requirePermission("instructions:import"),
   upload.single("excelFile"),
   async (req, res) => {
     try {
@@ -18772,7 +19212,7 @@ app.use(
   "/api/agent-forge",
   createAgentForgeRouter({
     connectDB,
-    requireAdmin,
+    requireAdmin: requirePermission("agent-forge:manage"),
     getAdminUserContext,
     agentForgeService,
     agentForgeRunner,
@@ -18782,13 +19222,17 @@ app.use(
 
 app.use(
   createInstructionAI2Router({
-    requireAdmin: requirePermission("menu:instruction-ai"),
+    requireAdmin: requirePermission("instruction-ai:use"),
     connectDB,
     getOpenAIApiKeyForBot,
     buildLLMClientFromKey,
     resolveModelForProvider,
     invalidateAllRuntimeCaches,
     notifyPageVisit,
+    requireInstructionCreate: requirePermission("instructions:create"),
+    requireInstructionUpdate: requirePermission("instructions:update"),
+    canAccessInstruction: (req, instruction) => canAdminAccessInstruction(req, instruction),
+    buildInstructionActorFields,
   }),
 );
 
@@ -18820,6 +19264,7 @@ app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
       passcode,
       role,
       permissions,
+      instructionAccess,
       inboxAccess,
       chatLayout,
     } = req.body || {};
@@ -18843,6 +19288,7 @@ app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
       passcode: sanitizedPasscode,
       role,
       permissions,
+      instructionAccess,
       inboxAccess,
       chatLayout,
       createdBy: getAdminUserContext(req)?.role || "superadmin",
@@ -18857,6 +19303,7 @@ app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
       metadata: {
         role: doc.role,
         permissions: doc.permissions,
+        instructionAccess: doc.instructionAccess,
         inboxAccess: doc.inboxAccess,
         chatLayout: doc.chatLayout,
       },
@@ -18890,6 +19337,7 @@ app.patch("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
       metadata: {
         role: doc.role,
         permissions: doc.permissions,
+        instructionAccess: doc.instructionAccess,
         inboxAccess: doc.inboxAccess,
         chatLayout: doc.chatLayout,
       },
@@ -18953,7 +19401,7 @@ app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
   }
 });
 
-app.get("/admin/api/audit-logs", requirePermission("settings:security-filter"), async (req, res) => {
+app.get("/admin/api/audit-logs", requirePermission("audit:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -21614,7 +22062,7 @@ async function processMessageWithAI(message, userId, lineBot) {
 
 app.use(
   ["/api/line-bots", "/api/facebook-bots", "/api/instagram-bots", "/api/whatsapp-bots"],
-  requirePermission("bots:manage"),
+  requireBotApiPermission,
 );
 
 // Get all Line Bots
@@ -21624,7 +22072,7 @@ app.get("/api/line-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
     const lineBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(lineBots);
+    res.json(redactBotListSecretsForAdmin(req, lineBots));
   } catch (err) {
     console.error("Error fetching line bots:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Line Bot ได้" });
@@ -21644,7 +22092,7 @@ app.get("/api/line-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    res.json(lineBot);
+    res.json(redactBotSecretsForAdmin(req, lineBot));
   } catch (err) {
     console.error("Error fetching line bot:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Line Bot ได้" });
@@ -21699,6 +22147,7 @@ app.post("/api/line-bots", async (req, res) => {
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
@@ -22008,6 +22457,7 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
@@ -22213,7 +22663,7 @@ app.get("/api/facebook-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
     const facebookBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(facebookBots);
+    res.json(redactBotListSecretsForAdmin(req, facebookBots));
   } catch (err) {
     console.error("Error fetching facebook bots:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Facebook Bot ได้" });
@@ -22233,7 +22683,7 @@ app.get("/api/facebook-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    res.json(facebookBot);
+    res.json(redactBotSecretsForAdmin(req, facebookBot));
   } catch (err) {
     console.error("Error fetching facebook bot:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Facebook Bot ได้" });
@@ -22286,6 +22736,7 @@ app.post("/api/facebook-bots", async (req, res) => {
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
@@ -22647,6 +23098,7 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
@@ -22727,7 +23179,7 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
 // ============================ Facebook Comment v2 Admin API ============================
 
 // List captured posts (per page/bot)
-app.get("/api/facebook-posts", requirePermission("menu:facebook-posts"), async (req, res) => {
+app.get("/api/facebook-posts", requirePermission("facebook-posts:view"), async (req, res) => {
   try {
     const { botId, limit = 50 } = req.query;
     const client = await connectDB();
@@ -22773,7 +23225,7 @@ async function fetchPagePostsFromFB(pageId, accessToken, limit = 20) {
   }
 }
 
-app.post("/api/facebook-posts/fetch", requirePermission("menu:facebook-posts"), async (req, res) => {
+app.post("/api/facebook-posts/fetch", requirePermission("facebook-posts:sync"), async (req, res) => {
   try {
     const { botId } = req.body;
     if (!botId) {
@@ -22841,7 +23293,7 @@ app.post("/api/facebook-posts/fetch", requirePermission("menu:facebook-posts"), 
 // Update reply profile per post (default OFF, activate per post)
 app.patch(
   "/api/facebook-posts/:postId/reply-profile",
-  requirePermission("menu:facebook-posts"),
+  requirePermission("facebook-posts:update"),
   async (req, res) => {
     try {
       const { postId } = req.params;
@@ -22931,7 +23383,7 @@ app.patch(
 // Get page default comment policy
 app.get(
   "/api/facebook-bots/:id/comment-policy",
-  requirePermission("bots:manage"),
+  requireAnyPermission(["bots:view", "bots:manage"]),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -22955,7 +23407,7 @@ app.get(
 // Set page default comment policy
 app.put(
   "/api/facebook-bots/:id/comment-policy",
-  requirePermission("bots:manage"),
+  requireAnyPermission(["bots:update", "bots:manage"]),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -23100,7 +23552,7 @@ app.get("/api/instagram-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instagram_bots");
     const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(bots);
+    res.json(redactBotListSecretsForAdmin(req, bots));
   } catch (err) {
     console.error("Error fetching instagram bots:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Instagram Bot ได้" });
@@ -23121,7 +23573,7 @@ app.get("/api/instagram-bots/:id", async (req, res) => {
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
-    res.json(bot);
+    res.json(redactBotSecretsForAdmin(req, bot));
   } catch (err) {
     console.error("Error fetching instagram bot:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Instagram Bot ได้" });
@@ -23175,6 +23627,7 @@ app.post("/api/instagram-bots", async (req, res) => {
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
@@ -23442,6 +23895,7 @@ app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instagram_bots");
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
       {
@@ -23587,7 +24041,7 @@ app.get("/api/whatsapp-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("whatsapp_bots");
     const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(bots);
+    res.json(redactBotListSecretsForAdmin(req, bots));
   } catch (err) {
     console.error("Error fetching whatsapp bots:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล WhatsApp Bot ได้" });
@@ -23608,7 +24062,7 @@ app.get("/api/whatsapp-bots/:id", async (req, res) => {
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
-    res.json(bot);
+    res.json(redactBotSecretsForAdmin(req, bot));
   } catch (err) {
     console.error("Error fetching whatsapp bot:", err);
     res.status(500).json({ error: "ไม่สามารถดึงข้อมูล WhatsApp Bot ได้" });
@@ -23660,6 +24114,7 @@ app.post("/api/whatsapp-bots", async (req, res) => {
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
@@ -23928,6 +24383,7 @@ app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("whatsapp_bots");
+    if (!(await ensureInstructionSelectionsAccess(req, res, db, normalizedSelections))) return;
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
       {
@@ -24066,7 +24522,7 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
 });
 
 // Route: ดึงรายการ instruction library ทั้งหมด
-app.get("/api/instructions/library", async (req, res) => {
+app.get("/api/instructions/library", requirePermission("instructions:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -24102,6 +24558,10 @@ app.get("/api/instructions/library", async (req, res) => {
               description: 1,
               createdAt: 1,
               updatedAt: 1,
+              createdByAdminId: 1,
+              createdByAdminLabel: 1,
+              ownerAdminId: 1,
+              ownerAdminLabel: 1,
               dataItemCount: {
                 $size: {
                   $cond: [
@@ -24142,10 +24602,18 @@ app.get("/api/instructions/library", async (req, res) => {
         second: "2-digit",
       });
 
-    const v2Libraries = instructionV2Docs.map((doc) => {
+    const visibleInstructionV2Docs = filterInstructionsForAdmin(req, instructionV2Docs);
+    const canSeeLegacyLibraries =
+      !isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) ||
+      getAdminUserContext(req)?.role === "superadmin" ||
+      getAdminUserContext(req)?.instructionAccess?.mode === "all";
+
+    const v2Libraries = visibleInstructionV2Docs.map((doc) => {
       const createdAt = doc.createdAt || doc.updatedAt || new Date();
       const updatedAt = doc.updatedAt || createdAt;
       return {
+        _id: doc._id?.toString?.() || doc._id || "",
+        id: doc._id?.toString?.() || doc._id || "",
         date: doc.instructionId,
         name: doc.name,
         description: doc.description,
@@ -24160,7 +24628,7 @@ app.get("/api/instructions/library", async (req, res) => {
       };
     });
 
-    const legacyWithSource = legacyLibraries.map((lib) => ({
+    const legacyWithSource = (canSeeLegacyLibraries ? legacyLibraries : []).map((lib) => ({
       ...lib,
       source: lib.source || "legacy",
       dataItemCount: lib.dataItemCount || 0,
@@ -24193,7 +24661,7 @@ app.get("/api/instructions/library", async (req, res) => {
 });
 
 // Route: แปลง instruction library (legacy) เป็น Instruction V2
-app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
+app.post("/api/instructions/library/:date/convert-to-v2", requirePermission("instructions:create"), async (req, res) => {
   try {
     const { date } = req.params;
     if (!date) {
@@ -24212,6 +24680,13 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
       return res
         .status(404)
         .json({ success: false, error: "ไม่พบคลัง instruction ของวันที่ระบุ" });
+    }
+    const canSeeLegacyLibraries =
+      !isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) ||
+      getAdminUserContext(req)?.role === "superadmin" ||
+      getAdminUserContext(req)?.instructionAccess?.mode === "all";
+    if (!canSeeLegacyLibraries) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Legacy Instruction Library" });
     }
 
     const existingInstruction = await v2Coll.findOne({ libraryDate: date });
@@ -24306,6 +24781,8 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
       libraryDate: date,
       createdAt: now,
       updatedAt: now,
+      ...buildInstructionActorFields(req, "created"),
+      ...buildInstructionActorFields(req, "updated"),
     };
 
     const insertResult = await v2Coll.insertOne(instructionDoc);
@@ -24341,7 +24818,7 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
 });
 
 // Route: ดึงรายละเอียด instruction library พร้อม instructions
-app.get("/api/instructions/library/:date/details", async (req, res) => {
+app.get("/api/instructions/library/:date/details", requirePermission("instructions:view"), async (req, res) => {
   try {
     const { date } = req.params;
     const client = await connectDB();
@@ -24351,6 +24828,13 @@ app.get("/api/instructions/library/:date/details", async (req, res) => {
     const library = await libraryColl.findOne({ date });
     if (!library) {
       return res.status(404).json({ error: "ไม่พบคลัง instruction ที่ระบุ" });
+    }
+    const canSeeLegacyLibraries =
+      !isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) ||
+      getAdminUserContext(req)?.role === "superadmin" ||
+      getAdminUserContext(req)?.instructionAccess?.mode === "all";
+    if (!canSeeLegacyLibraries) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Legacy Instruction Library" });
     }
 
     res.json({
@@ -24375,9 +24859,16 @@ app.get("/api/instructions/library/:date/details", async (req, res) => {
 });
 
 // Route: ดึงรายการ instructions พร้อมประวัติเวอร์ชัน
-app.get("/api/instructions", async (req, res) => {
+app.get("/api/instructions", requirePermission("instructions:view"), async (req, res) => {
   try {
     await ensureInstructionIdentifiers();
+    const canSeeLegacyInstructions =
+      !isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) ||
+      getAdminUserContext(req)?.role === "superadmin" ||
+      getAdminUserContext(req)?.instructionAccess?.mode === "all";
+    if (!canSeeLegacyInstructions) {
+      return res.json({ success: true, instructions: [] });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -24457,8 +24948,10 @@ app.get("/api/instructions", async (req, res) => {
 // Route: ดึงรายละเอียด instruction ตาม instructionId และเวอร์ชัน
 app.get(
   "/api/instructions/:instructionId/versions/:version",
+  requirePermission("instructions:view"),
   async (req, res) => {
     try {
+      if (!ensureLegacyInstructionAccess(req, res)) return;
       const { instructionId, version } = req.params;
       if (!instructionId) {
         return res
@@ -24534,7 +25027,7 @@ app.get(
 // Dashboard (V2 - New Instruction System)
 app.get("/admin/dashboard", requirePermission("menu:dashboard"), async (req, res) => {
   try {
-    const instructions = await getInstructionsV2();
+    const instructions = filterInstructionsForAdmin(req, await getInstructionsV2());
     const aiEnabled = await getAiEnabled();
     res.render("admin-dashboard-v2", { instructions, aiEnabled });
   } catch (err) {
@@ -24554,6 +25047,7 @@ app.get("/admin/api-usage", requirePermission("menu:api-usage"), async (req, res
 // Create Data Item (V2) - Full Page Editor for Text
 app.get(
   "/admin/instructions-v2/:instructionId/data-items/new",
+  requirePermission("instructions:update"),
   async (req, res) => {
     try {
       const { instructionId } = req.params;
@@ -24566,6 +25060,9 @@ app.get(
       });
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+      }
+      if (!canAdminAccessInstruction(req, instruction)) {
+        return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
       }
 
       const templateDataItem = {
@@ -24596,7 +25093,7 @@ app.get(
 );
 
 // Edit Data Item (V2) - Full Page Editor
-app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
+app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
     const client = await connectDB();
@@ -24607,6 +25104,9 @@ app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     // หา data item
@@ -24644,6 +25144,7 @@ app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (
 // Create Data Item (V2) - Save
 app.post(
   "/admin/instructions-v2/:instructionId/data-items/new",
+  requirePermission("instructions:update"),
   async (req, res) => {
     try {
       const { instructionId } = req.params;
@@ -24658,6 +25159,9 @@ app.post(
       });
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+      }
+      if (!canAdminAccessInstruction(req, instruction)) {
+        return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
       }
 
       title = (title || "").trim();
@@ -24718,6 +25222,7 @@ app.post(
           $set: {
             dataItems: [...items, newItem],
             updatedAt: now,
+            ...buildInstructionActorFields(req, "updated"),
           },
         },
       );
@@ -24744,7 +25249,7 @@ app.post(
 );
 
 // Save Data Item (V2) - Full Page Editor
-app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
+app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
@@ -24757,6 +25262,9 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     // หา index ของ data item
@@ -24812,7 +25320,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     // บันทึกลง database
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
-      { $set: { dataItems, updatedAt: now } }
+      { $set: { dataItems, updatedAt: now, ...buildInstructionActorFields(req, "updated") } }
     );
     await createDashboardSnapshotOrThrow(
       instructionId,
@@ -24834,7 +25342,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
 // ============================================
 
 // View/Edit Data Item (V3) - Jspreadsheet Full Page Editor
-app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
+app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
     const client = await connectDB();
@@ -24845,6 +25353,9 @@ app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     // หา data item
@@ -24880,7 +25391,7 @@ app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (
 });
 
 // Create Data Item (V3) - Jspreadsheet Full Page Editor
-app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
+app.get("/admin/instructions-v3/:instructionId/data-items/new", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId } = req.params;
     const client = await connectDB();
@@ -24890,6 +25401,9 @@ app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res)
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     const templateDataItem = {
@@ -24917,7 +25431,7 @@ app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res)
 });
 
 // Save New Data Item (V3)
-app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
+app.post("/admin/instructions-v3/:instructionId/data-items/new", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId } = req.params;
     let { type = "table", title = "", content = "", tableData } = req.body;
@@ -24929,6 +25443,9 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     title = (title || "").trim();
@@ -24973,6 +25490,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
         $set: {
           dataItems: [...items, newItem],
           updatedAt: now,
+          ...buildInstructionActorFields(req, "updated"),
         },
       }
     );
@@ -24994,7 +25512,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
 });
 
 // Save Edit Data Item (V3)
-app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
+app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
@@ -25007,6 +25525,9 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+    if (!canAdminAccessInstruction(req, instruction)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Instruction นี้");
     }
 
     // หา index ของ data item
@@ -25049,7 +25570,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     // บันทึกลง database
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
-      { $set: { dataItems, updatedAt: now } }
+      { $set: { dataItems, updatedAt: now, ...buildInstructionActorFields(req, "updated") } }
     );
     await createDashboardSnapshotOrThrow(
       instructionId,
@@ -25067,7 +25588,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
 });
 
 // Export Data Item (V3) - True XLSX (from current sheet data)
-app.post("/admin/instructions-v3/export-xlsx", async (req, res) => {
+app.post("/admin/instructions-v3/export-xlsx", requirePermission("instructions:export"), async (req, res) => {
   try {
     const { filename, headers, rows } = req.body || {};
 
@@ -25129,12 +25650,7 @@ app.post("/admin/instructions-v3/export-xlsx", async (req, res) => {
 
 // Admin settings page
 app.get("/admin/settings", requirePermission("menu:settings"), async (req, res) => {
-  try {
-    res.render("admin-settings");
-  } catch (err) {
-    console.error("Error rendering admin settings:", err);
-    res.status(500).send("Internal Server Error");
-  }
+  res.redirect("/admin/settings2");
 });
 
 // Admin settings2 page (new modern design)
@@ -25150,7 +25666,7 @@ app.get("/admin/settings2", requirePermission("menu:settings"), async (req, res)
 
 
 // Toggle global AI enabled
-app.post("/admin/ai-toggle", async (req, res) => {
+app.post("/admin/ai-toggle", requirePermission("settings:general"), async (req, res) => {
   try {
     const { enabled } = req.body;
     await setAiEnabled(enabled === "true" || enabled === true);
@@ -25161,8 +25677,11 @@ app.post("/admin/ai-toggle", async (req, res) => {
 });
 
 // Add new instruction
-app.post("/admin/instructions", async (req, res) => {
+app.post("/admin/instructions", requirePermission("instructions:create"), async (req, res) => {
   try {
+    if (!canAdminAccessLegacyInstructions(req)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Legacy Instructions");
+    }
     const { type, title, content, tableData } = req.body;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -25202,8 +25721,11 @@ app.post("/admin/instructions", async (req, res) => {
 });
 
 // Delete instruction
-app.post("/admin/instructions/:id/delete", async (req, res) => {
+app.post("/admin/instructions/:id/delete", requirePermission("instructions:delete"), async (req, res) => {
   try {
+    if (!canAdminAccessLegacyInstructions(req)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Legacy Instructions");
+    }
     const { id } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -25217,8 +25739,11 @@ app.post("/admin/instructions/:id/delete", async (req, res) => {
 });
 
 // Edit instruction form
-app.get("/admin/instructions/:id/edit", async (req, res) => {
+app.get("/admin/instructions/:id/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!canAdminAccessLegacyInstructions(req)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Legacy Instructions");
+    }
     const { id } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -25231,8 +25756,11 @@ app.get("/admin/instructions/:id/edit", async (req, res) => {
 });
 
 // Handle edit submission
-app.post("/admin/instructions/:id/edit", async (req, res) => {
+app.post("/admin/instructions/:id/edit", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!canAdminAccessLegacyInstructions(req)) {
+      return res.redirect("/admin/dashboard?error=ไม่มีสิทธิ์เข้าถึง Legacy Instructions");
+    }
     const { id } = req.params;
     const { type, title, content, tableData } = req.body;
     const client = await connectDB();
@@ -25357,8 +25885,9 @@ app.post("/admin/instructions/:id/edit", async (req, res) => {
 });
 
 // Instruction export endpoints
-app.get("/admin/instructions/export/json", async (req, res) => {
+app.get("/admin/instructions/export/json", requirePermission("instructions:export"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const instructions = await getInstructions();
     const exportedAt = new Date().toISOString();
     const previewText = buildInstructionText(instructions, {
@@ -25404,8 +25933,9 @@ app.get("/admin/instructions/export/json", async (req, res) => {
   }
 });
 
-app.get("/admin/instructions/export/markdown", async (req, res) => {
+app.get("/admin/instructions/export/markdown", requirePermission("instructions:export"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const instructions = await getInstructions();
     const markdown =
       instructions.length === 0
@@ -25434,8 +25964,9 @@ app.get("/admin/instructions/export/markdown", async (req, res) => {
   }
 });
 
-app.get("/admin/instructions/export/excel", async (req, res) => {
+app.get("/admin/instructions/export/excel", requirePermission("instructions:export"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const instructions = await getInstructions();
     const workbook = XLSX.utils.book_new();
     const usedNames = new Set();
@@ -25537,8 +26068,9 @@ app.get("/admin/instructions/export/excel", async (req, res) => {
 });
 
 // Preview combined instructions (simple implementation)
-app.get("/admin/instructions/preview", async (req, res) => {
+app.get("/admin/instructions/preview", requirePermission("instructions:view"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const instructions = await getInstructions();
     const preview =
       instructions.length === 0
@@ -25554,8 +26086,9 @@ app.get("/admin/instructions/preview", async (req, res) => {
 });
 
 // Simple reorder (up/down)
-app.post("/admin/instructions/reorder", async (req, res) => {
+app.post("/admin/instructions/reorder", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { instructionId, direction } = req.body;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -25590,8 +26123,9 @@ app.post("/admin/instructions/reorder", async (req, res) => {
   }
 });
 
-app.post("/admin/instructions/reorder/drag", async (req, res) => {
+app.post("/admin/instructions/reorder/drag", requirePermission("instructions:update"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { orderedIds } = req.body || {};
     if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
       return res.json({ success: false, error: "รูปแบบข้อมูลไม่ถูกต้อง" });
@@ -25640,8 +26174,9 @@ app.post("/admin/instructions/reorder/drag", async (req, res) => {
 });
 
 // API endpoint สำหรับดึงรายการ instructions (สำหรับ dynamic updates)
-app.get("/admin/instructions/list", async (req, res) => {
+app.get("/admin/instructions/list", requirePermission("instructions:view"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const instructions = await getInstructions();
     res.json({
       success: true,
@@ -25663,7 +26198,7 @@ app.get("/admin/instructions/list", async (req, res) => {
 
 // ============================ Instruction Assets API ============================
 // List all instruction assets
-app.get("/admin/instructions/assets", async (req, res) => {
+app.get("/admin/instructions/assets", requirePermission("image-library:view"), async (req, res) => {
   try {
     const assets = await getInstructionAssets();
     res.json({ success: true, assets });
@@ -25772,6 +26307,7 @@ async function ensureUniqueInstructionSlug(
 // Upload a new instruction asset
 app.post(
   "/admin/instructions/assets",
+  requirePermission("image-library:manage"),
   imageUpload.single("image"),
   async (req, res) => {
     try {
@@ -25954,7 +26490,7 @@ app.post(
   },
 );
 
-app.put("/admin/instructions/assets/:label", async (req, res) => {
+app.put("/admin/instructions/assets/:label", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const originalLabel = req.params.label;
     let { label: newLabel, description } = req.body || {};
@@ -26011,7 +26547,7 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
 });
 
 // Delete an instruction asset by label
-app.delete("/admin/instructions/assets/:label", async (req, res) => {
+app.delete("/admin/instructions/assets/:label", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const { label } = req.params;
     const client = await connectDB();
@@ -26030,7 +26566,7 @@ app.delete("/admin/instructions/assets/:label", async (req, res) => {
   }
 });
 
-app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
+app.post("/admin/instructions/assets/bulk-delete", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const labels = Array.isArray(req.body?.labels)
       ? Array.from(
@@ -26089,7 +26625,7 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
 });
 
 // Check and fix asset data consistency
-app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
+app.post("/admin/instructions/assets/check-consistency", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -26889,7 +27425,7 @@ function mapInstructionAssetResponse(asset) {
 
 // GET: ดึงรายการ Image Collections ทั้งหมด
 // GET: ดึงรายการ Image Collections ทั้งหมด
-app.get("/api/image-collections", async (req, res) => {
+app.get("/api/image-collections", requirePermission("image-library:view"), async (req, res) => {
   try {
     const collections = await getImageCollections();
     res.json({ success: true, collections });
@@ -26919,7 +27455,7 @@ app.get("/admin/categories/:categoryId/data", requirePermission("menu:categories
   });
 });
 
-app.get("/admin/image-collections", async (req, res) => {
+app.get("/admin/image-collections", requirePermission("image-library:view"), async (req, res) => {
   try {
     const collections = await getImageCollections();
     res.json({ success: true, collections });
@@ -26933,7 +27469,7 @@ app.get("/admin/image-collections", async (req, res) => {
 });
 
 // GET: ดึง Image Collection เดียว
-app.get("/admin/image-collections/:id", async (req, res) => {
+app.get("/admin/image-collections/:id", requirePermission("image-library:view"), async (req, res) => {
   try {
     const { id } = req.params;
     const client = await connectDB();
@@ -26960,7 +27496,7 @@ app.get("/admin/image-collections/:id", async (req, res) => {
 });
 
 // POST: สร้าง Image Collection ใหม่
-app.post("/admin/image-collections", async (req, res) => {
+app.post("/admin/image-collections", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const { name, description, imageLabels } = req.body;
 
@@ -27030,7 +27566,7 @@ app.post("/admin/image-collections", async (req, res) => {
 });
 
 // PUT: แก้ไข Image Collection
-app.put("/admin/image-collections/:id", async (req, res) => {
+app.put("/admin/image-collections/:id", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, imageLabels } = req.body;
@@ -27110,7 +27646,7 @@ app.put("/admin/image-collections/:id", async (req, res) => {
 });
 
 // DELETE: ลบ Image Collection
-app.delete("/admin/image-collections/:id", async (req, res) => {
+app.delete("/admin/image-collections/:id", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const { id } = req.params;
     const client = await connectDB();
@@ -27181,8 +27717,9 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
 // ==================== END IMAGE COLLECTIONS API ====================
 
 // Enhanced delete instruction with JSON response
-app.delete("/admin/instructions/:id", async (req, res) => {
+app.delete("/admin/instructions/:id", requirePermission("instructions:delete"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { id } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -27217,8 +27754,9 @@ app.delete("/admin/instructions/:id", async (req, res) => {
 });
 
 // Show JSON for a table instruction
-app.get("/admin/instructions/:id/json", async (req, res) => {
+app.get("/admin/instructions/:id/json", requirePermission("instructions:view"), async (req, res) => {
   try {
+    if (!ensureLegacyInstructionAccess(req, res)) return;
     const { id } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -27643,7 +28181,7 @@ app.get("/admin/broadcast", requirePermission("menu:broadcast"), async (req, res
 
 // Broadcast action
 // Preview Audience
-app.post("/admin/broadcast/preview", async (req, res) => {
+app.post("/admin/broadcast/preview", requirePermission("broadcast:preview"), async (req, res) => {
   try {
     const { channels = [], audience = "all" } = req.body;
     if (!channels.length) {
@@ -27713,7 +28251,7 @@ const broadcastUpload = (req, res, next) => {
   });
 };
 
-app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
+app.post("/admin/broadcast", requirePermission("broadcast:send"), broadcastUpload, async (req, res) => {
   try {
     let { messages, audience, channels, settings } = req.body;
 
@@ -27864,7 +28402,7 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
 });
 
 // Check Status
-app.get("/admin/broadcast/status/:jobId", (req, res) => {
+app.get("/admin/broadcast/status/:jobId", requirePermission("broadcast:view"), (req, res) => {
   const job = activeBroadcasts.get(req.params.jobId);
   if (!job) {
     return res.json({ success: false, error: "ไม่พบรายการ หรือรายการเสร็จสิ้นแล้ว" });
@@ -27873,7 +28411,7 @@ app.get("/admin/broadcast/status/:jobId", (req, res) => {
 });
 
 // Cancel Broadcast
-app.delete("/admin/broadcast/cancel/:jobId", (req, res) => {
+app.delete("/admin/broadcast/cancel/:jobId", requirePermission("broadcast:cancel"), (req, res) => {
   const job = activeBroadcasts.get(req.params.jobId);
   if (job) {
     job.cancel();
@@ -27925,11 +28463,11 @@ app.get("/admin/followup", requirePermission("menu:followup"), (req, res) => {
 });
 
 // Follow-up status page now redirects to unified dashboard
-app.get("/admin/followup/status", (req, res) => {
+app.get("/admin/followup/status", requirePermission("followup:view"), (req, res) => {
   return res.redirect("/admin/followup");
 });
 
-app.get("/admin/followup/overview", async (req, res) => {
+app.get("/admin/followup/overview", requirePermission("followup:view"), async (req, res) => {
   try {
     const overview = await buildFollowUpOverview();
     res.json({
@@ -27946,7 +28484,7 @@ app.get("/admin/followup/overview", async (req, res) => {
   }
 });
 
-app.get("/admin/followup/users", async (req, res) => {
+app.get("/admin/followup/users", requirePermission("followup:view"), async (req, res) => {
   try {
     const { platform, botId } = req.query || {};
     const normalizedPlatform = platform || null;
@@ -27973,7 +28511,7 @@ app.get("/admin/followup/users", async (req, res) => {
   }
 });
 
-app.post("/admin/followup/clear", async (req, res) => {
+app.post("/admin/followup/clear", requirePermission("followup:manage"), async (req, res) => {
   try {
     const { userId } = req.body || {};
     if (!userId) {
@@ -28027,7 +28565,7 @@ app.post("/admin/followup/clear", async (req, res) => {
   }
 });
 
-app.get("/admin/followup/page-settings", async (req, res) => {
+app.get("/admin/followup/page-settings", requirePermission("followup:view"), async (req, res) => {
   try {
     const result = await listFollowUpPageSettings();
     res.json({
@@ -28041,7 +28579,7 @@ app.get("/admin/followup/page-settings", async (req, res) => {
   }
 });
 
-app.post("/admin/followup/page-settings", async (req, res) => {
+app.post("/admin/followup/page-settings", requirePermission("followup:manage"), async (req, res) => {
   try {
     const { platform, botId, settings } = req.body || {};
     const normalizedPlatform =
@@ -28116,7 +28654,7 @@ app.post("/admin/followup/page-settings", async (req, res) => {
   }
 });
 
-app.delete("/admin/followup/page-settings", async (req, res) => {
+app.delete("/admin/followup/page-settings", requirePermission("followup:manage"), async (req, res) => {
   try {
     const { platform, botId } = req.body || {};
     const normalizedPlatform =
@@ -28145,7 +28683,7 @@ app.delete("/admin/followup/page-settings", async (req, res) => {
   }
 });
 
-app.get("/admin/followup/assets", async (req, res) => {
+app.get("/admin/followup/assets", requirePermission("followup:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -28172,6 +28710,7 @@ app.get("/admin/followup/assets", async (req, res) => {
 
 app.post(
   "/admin/followup/assets",
+  requirePermission("followup:assets"),
   imageUpload.array("images", 5),
   async (req, res) => {
     try {
@@ -28358,7 +28897,7 @@ app.get("/admin/chat", requirePermission("menu:chat"), async (req, res) => {
   }
 });
 
-app.get("/admin/chat2", (req, res) => {
+app.get("/admin/chat2", requirePermission("menu:chat"), (req, res) => {
   const queryIndex = req.originalUrl.indexOf("?");
   const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
   res.redirect(302, `/admin/chat${query}`);
@@ -28373,7 +28912,7 @@ app.get("/admin/orders", requirePermission("menu:orders"), async (req, res) => {
   }
 });
 
-app.get("/admin/forms", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/forms", requireAnyPermission(["data-forms:view", "data-forms:manage", "data-forms:export"]), async (req, res) => {
   try {
     res.render("admin-forms");
   } catch (error) {
@@ -28385,7 +28924,7 @@ app.get("/admin/forms", requirePermission("data-forms:manage"), async (req, res)
 // ============================ InstructionAI Legacy Alias ============================
 
 // Legacy InstructionAI page alias. The canonical editor is handled by routes/instructionAI2.js.
-app.get("/admin/instruction-chat", requirePermission("menu:instruction-ai"), (req, res) => res.redirect("/admin/instruction-ai"));
+app.get("/admin/instruction-chat", requirePermission("instruction-ai:use"), (req, res) => res.redirect("/admin/instruction-ai"));
 
 // ═══════════════════════ Conversation History API ═══════════════════════
 
@@ -28399,7 +28938,7 @@ function parseInstructionConversationVersionQuery(rawVersion) {
 }
 
 // Page route — Conversation History viewer
-app.get("/admin/instruction-conversations", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.get("/admin/instruction-conversations", requirePermission("instruction-ai:use"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -28419,7 +28958,7 @@ app.get("/admin/instruction-conversations", requirePermission("menu:instruction-
 });
 
 // GET threads for an instruction with advanced filters
-app.get("/api/instruction-conversations/:instructionId", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.get("/api/instruction-conversations/:instructionId", requirePermission("instruction-ai:use"), requireInstructionParamAccess, async (req, res) => {
   try {
     const { instructionId } = req.params;
     const {
@@ -28473,7 +29012,7 @@ app.get("/api/instruction-conversations/:instructionId", requirePermission("menu
 });
 
 // GET thread detail with messages
-app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requirePermission("instruction-ai:use"), requireInstructionParamAccess, async (req, res) => {
   try {
     const { threadId } = req.params;
     const { page, limit } = req.query;
@@ -28494,7 +29033,7 @@ app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requir
 });
 
 // GET analytics for an instruction
-app.get("/api/instruction-conversations/:instructionId/analytics", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.get("/api/instruction-conversations/:instructionId/analytics", requirePermission("instruction-ai:use"), requireInstructionParamAccess, async (req, res) => {
   try {
     const { instructionId } = req.params;
     const { version, dateFrom, dateTo } = req.query;
@@ -28517,7 +29056,7 @@ app.get("/api/instruction-conversations/:instructionId/analytics", requirePermis
 });
 
 // GET dynamic filter options
-app.get("/api/instruction-conversations/:instructionId/filters", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.get("/api/instruction-conversations/:instructionId/filters", requirePermission("instruction-ai:use"), requireInstructionParamAccess, async (req, res) => {
   try {
     const { instructionId } = req.params;
     const { version } = req.query;
@@ -28539,7 +29078,7 @@ app.get("/api/instruction-conversations/:instructionId/filters", requirePermissi
 });
 
 // PATCH tags on a thread
-app.patch("/api/instruction-conversations/thread/:threadId/tags", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.patch("/api/instruction-conversations/thread/:threadId/tags", requirePermission("instruction-ai:use"), async (req, res) => {
   try {
     const { threadId } = req.params;
     const { add = [], remove = [] } = req.body;
@@ -28556,8 +29095,15 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requirePermiss
 });
 
 // POST rebuild threads (migration)
-app.post("/api/instruction-conversations/:instructionId/rebuild", requirePermission("menu:instruction-ai"), async (req, res) => {
+app.post("/api/instruction-conversations/:instructionId/rebuild", requirePermission("instruction-ai:use"), requireInstructionParamAccess, async (req, res) => {
   try {
+    if (
+      isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) &&
+      getAdminUserContext(req)?.role !== "superadmin" &&
+      getAdminUserContext(req)?.instructionAccess?.mode !== "all"
+    ) {
+      return res.status(403).json({ success: false, error: "ต้องมีสิทธิ์เห็นทุก Instructions เพื่อ rebuild conversation ทั้งระบบ" });
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const threadService = new ConversationThreadService(db);
@@ -28613,7 +29159,7 @@ app.get("/admin/customer-stats", requirePermission("menu:customer-stats"), async
   }
 });
 
-app.get("/admin/customer-stats/data", requirePermission("menu:customer-stats"), async (req, res) => {
+app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), async (req, res) => {
   try {
     const { pageKey, startDate, endDate } = req.query;
     const client = await connectDB();
@@ -29182,7 +29728,7 @@ async function buildNativeOrderPagesResponse() {
   };
 }
 
-app.get("/admin/orders/pages", async (req, res) => {
+app.get("/admin/orders/pages", requirePermission("orders:view"), async (req, res) => {
   try {
     if (isPostgresNativeReadEnabled()) {
       const cachedResponse = await getCachedAdminJson(
@@ -29191,7 +29737,10 @@ app.get("/admin/orders/pages", async (req, res) => {
         buildNativeOrderPagesResponse,
         { ttlSeconds: runtimeConfig.redis.adminCacheTtlSeconds },
       );
-      return res.json(cachedResponse);
+      return res.json({
+        ...cachedResponse,
+        pages: filterOrderPagesForAdmin(req, cachedResponse?.pages || []),
+      });
     }
 
     const client = await connectDB();
@@ -29386,7 +29935,7 @@ app.get("/admin/orders/pages", async (req, res) => {
 
     res.json({
       success: true,
-      pages,
+      pages: filterOrderPagesForAdmin(req, pages),
       settings: {
         schedulingEnabled: false,
         defaultCutoffTime: "00:00",
@@ -29429,7 +29978,7 @@ app.get("/admin/chat/inboxes", requirePermission("menu:chat"), async (req, res) 
   }
 });
 
-app.get("/admin/forms/inboxes", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/forms/inboxes", requirePermission("data-forms:view"), async (req, res) => {
   try {
     const rawLimit = Number.parseInt(req.query.limit || "500", 10);
     const limit = Number.isFinite(rawLimit)
@@ -30244,13 +30793,17 @@ app.get(["/admin/chat/context/:userId", "/admin/chat2/context/:userId"], require
   }
 });
 
-app.post(["/admin/chat/data-form-submissions", "/admin/chat2/data-form-submissions"], requirePermission("chat:forms"), async (req, res) => {
-  try {
-    const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
-    const formId = typeof req.body?.formId === "string" ? req.body.formId.trim() : "";
-    if (!userId || !formId || !ObjectId.isValid(formId)) {
-      return res.status(400).json({ success: false, error: "ข้อมูลฟอร์มไม่ครบถ้วน" });
-    }
+app.post(
+  ["/admin/chat/data-form-submissions", "/admin/chat2/data-form-submissions"],
+  requirePermission("chat:forms"),
+  requireChatWorkspaceTab("forms"),
+  async (req, res) => {
+    try {
+      const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+      const formId = typeof req.body?.formId === "string" ? req.body.formId.trim() : "";
+      if (!userId || !formId || !ObjectId.isValid(formId)) {
+        return res.status(400).json({ success: false, error: "ข้อมูลฟอร์มไม่ครบถ้วน" });
+      }
 
     const users = await getNormalizedChatUsers({
       applyFilter: true,
@@ -30333,15 +30886,16 @@ app.post(["/admin/chat/data-form-submissions", "/admin/chat2/data-form-submissio
       metadata: { formId, status: normalizedStatus },
     });
     res.json(result);
-  } catch (err) {
-    console.error("[Chat] data form submission failed:", err);
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
+    } catch (err) {
+      console.error("[Chat] data form submission failed:", err);
+      res.status(400).json({ success: false, error: err.message });
+    }
+  },
+);
 
 // ============================ Voxtron Phase 1 APIs ============================
 
-app.get("/admin/api/data-forms", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/api/data-forms", requirePermission("data-forms:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -30412,7 +30966,7 @@ app.get("/admin/api/data-forms", requirePermission("data-forms:manage"), async (
   }
 });
 
-app.get("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/api/data-forms/:id", requirePermission("data-forms:view"), async (req, res) => {
   try {
     const formId = req.params.id;
     if (!ObjectId.isValid(formId)) {
@@ -30555,7 +31109,7 @@ app.delete("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), 
   }
 });
 
-app.get("/admin/api/data-form-submissions", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/api/data-form-submissions", requirePermission("data-forms:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -30693,7 +31247,7 @@ function csvCell(value) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-app.get("/admin/api/data-form-submissions/export", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/api/data-form-submissions/export", requirePermission("data-forms:export"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -30742,7 +31296,7 @@ app.get("/admin/api/data-form-submissions/export", requirePermission("data-forms
   }
 });
 
-app.get("/admin/api/data-form-submissions/:id", requirePermission("data-forms:manage"), async (req, res) => {
+app.get("/admin/api/data-form-submissions/:id", requirePermission("data-forms:view"), async (req, res) => {
   try {
     const submissionId = req.params.id;
     if (!ObjectId.isValid(submissionId)) {
@@ -30837,7 +31391,7 @@ app.put("/admin/api/data-form-submissions/:id", requirePermission("data-forms:ma
   }
 });
 
-app.get("/admin/api/file-assets", requirePermission("file-assets:manage"), async (req, res) => {
+app.get("/admin/api/file-assets", requirePermission("file-assets:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -30888,7 +31442,7 @@ app.post(
   },
 );
 
-app.get("/admin/api/file-assets/:id", requirePermission("file-assets:manage"), async (req, res) => {
+app.get("/admin/api/file-assets/:id", requirePermission("file-assets:view"), async (req, res) => {
   try {
     const assetId = req.params.id;
     if (!ObjectId.isValid(assetId)) {
@@ -30985,6 +31539,7 @@ app.delete("/admin/api/file-assets/:id", requirePermission("file-assets:manage")
 app.post(
   "/admin/chat/files/send",
   requirePermission("chat:files"),
+  requireChatWorkspaceTab("files"),
   voxtronFileUpload.single("file"),
   async (req, res) => {
     try {
@@ -31409,7 +31964,7 @@ async function deleteChatSystemTag(db, rawTag) {
   };
 }
 
-app.get("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+app.get("/admin/chat/system-tags", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -31421,7 +31976,7 @@ app.get("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, r
   }
 });
 
-app.post("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+app.post("/admin/chat/system-tags", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -31440,7 +31995,7 @@ app.post("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, 
   }
 });
 
-app.delete("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+app.delete("/admin/chat/system-tags", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -31458,7 +32013,7 @@ app.delete("/admin/chat/system-tags", requirePermission("chat:tags"), async (req
 });
 
 // Get tags for a specific user
-app.get("/admin/chat/tags/:userId", requirePermission("chat:tags"), async (req, res) => {
+app.get("/admin/chat/tags/:userId", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const { userId } = req.params;
     const access = await resolveChatConversationForAdmin(req, userId, req.query || {});
@@ -31498,7 +32053,7 @@ app.get("/admin/chat/tags/:userId", requirePermission("chat:tags"), async (req, 
 });
 
 // Set tags for a specific user
-app.post("/admin/chat/tags/:userId", requirePermission("chat:tags"), async (req, res) => {
+app.post("/admin/chat/tags/:userId", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const { userId } = req.params;
     const { tags } = req.body;
@@ -31581,7 +32136,7 @@ function sanitizeChatTemplatePayload(payload = {}) {
   };
 }
 
-app.get("/admin/chat/templates", requirePermission("chat:templates"), async (req, res) => {
+app.get("/admin/chat/templates", requirePermission("chat:templates"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -31598,7 +32153,7 @@ app.get("/admin/chat/templates", requirePermission("chat:templates"), async (req
   }
 });
 
-app.post("/admin/chat/templates", requirePermission("chat:templates"), async (req, res) => {
+app.post("/admin/chat/templates", requirePermission("chat:templates"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const payload = sanitizeChatTemplatePayload(req.body || {});
     const client = await connectDB();
@@ -31620,7 +32175,7 @@ app.post("/admin/chat/templates", requirePermission("chat:templates"), async (re
   }
 });
 
-app.put("/admin/chat/templates/:templateId", requirePermission("chat:templates"), async (req, res) => {
+app.put("/admin/chat/templates/:templateId", requirePermission("chat:templates"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const { templateId } = req.params;
     if (!ObjectId.isValid(templateId)) {
@@ -31651,7 +32206,7 @@ app.put("/admin/chat/templates/:templateId", requirePermission("chat:templates")
   }
 });
 
-app.delete("/admin/chat/templates/:templateId", requirePermission("chat:templates"), async (req, res) => {
+app.delete("/admin/chat/templates/:templateId", requirePermission("chat:templates"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const { templateId } = req.params;
     if (!ObjectId.isValid(templateId)) {
@@ -31677,7 +32232,7 @@ app.delete("/admin/chat/templates/:templateId", requirePermission("chat:template
   }
 });
 
-app.get("/admin/users", requirePermission("chat:assign"), async (req, res) => {
+app.get("/admin/users", requirePermission("chat:assign"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -31712,7 +32267,7 @@ app.get("/admin/users", requirePermission("chat:assign"), async (req, res) => {
   }
 });
 
-app.post("/admin/chat/assign", requirePermission("chat:assign"), async (req, res) => {
+app.post("/admin/chat/assign", requirePermission("chat:assign"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
     const hasOwnerField =
@@ -31823,7 +32378,7 @@ app.post("/admin/chat/assign", requirePermission("chat:assign"), async (req, res
   }
 });
 
-app.post("/admin/chat/forward", requirePermission("chat:forward"), async (req, res) => {
+app.post("/admin/chat/forward", requirePermission("chat:forward"), requireChatWorkspaceTab("tools"), async (req, res) => {
   try {
     const message =
       typeof req.body?.message === "string" ? req.body.message.trim() : "";
@@ -32000,7 +32555,7 @@ app.post("/admin/chat/feedback", requirePermission("chat:view"), async (req, res
 // ========== Order Management APIs ==========
 
 // Get orders for a specific user
-app.get("/admin/chat/orders/:userId", requirePermission("chat:orders"), async (req, res) => {
+app.get("/admin/chat/orders/:userId", requirePermission("chat:orders"), requireChatWorkspaceTab("orders"), async (req, res) => {
   try {
     const { userId } = req.params;
     const access = await resolveChatConversationForAdmin(req, userId, req.query || {});
@@ -32020,7 +32575,7 @@ app.get("/admin/chat/orders/:userId", requirePermission("chat:orders"), async (r
 });
 
 // Update order
-app.put("/admin/chat/orders/:orderId", requirePermission("chat:orders"), async (req, res) => {
+app.put("/admin/chat/orders/:orderId", requirePermission("chat:orders"), requireChatWorkspaceTab("orders"), async (req, res) => {
   try {
     const { orderId } = req.params;
     const { orderData, status, notes } = req.body;
@@ -32122,7 +32677,7 @@ app.put("/admin/chat/orders/:orderId", requirePermission("chat:orders"), async (
 });
 
 // Delete order
-app.delete("/admin/chat/orders/:orderId", requirePermission("chat:orders"), async (req, res) => {
+app.delete("/admin/chat/orders/:orderId", requirePermission("chat:orders"), requireChatWorkspaceTab("orders"), async (req, res) => {
   try {
     const { orderId } = req.params;
 
@@ -32175,7 +32730,7 @@ app.delete("/admin/chat/orders/:orderId", requirePermission("chat:orders"), asyn
 });
 
 // Get all orders (for reporting)
-app.get("/admin/chat/orders", requirePermission("chat:orders"), async (req, res) => {
+app.get("/admin/chat/orders", requirePermission("chat:orders"), requireChatWorkspaceTab("orders"), async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
 
@@ -32242,9 +32797,17 @@ app.get("/admin/chat/orders", requirePermission("chat:orders"), async (req, res)
 app.get(
   "/admin/api/all-bots",
   requireAnyPermission([
+    "menu:categories",
+    "categories:view",
+    "categories:manage",
     "bots:manage",
+    "bots:view",
+    "notifications:view",
     "notifications:manage",
+    "data-forms:view",
     "data-forms:manage",
+    "data-forms:export",
+    "file-assets:view",
     "file-assets:manage",
     "settings:data-forms",
     "settings:file-library",
@@ -32315,7 +32878,7 @@ function mapTelegramNotificationBotDoc(doc) {
   };
 }
 
-app.get("/admin/api/telegram-notification-bots", requirePermission("notifications:manage"), async (req, res) => {
+app.get("/admin/api/telegram-notification-bots", requirePermission("notifications:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -32603,8 +33166,8 @@ app.delete(
 );
 
 app.get(
-  "/admin/api/telegram-notification-bots/:botId/groups",
-  requirePermission("notifications:manage"),
+	  "/admin/api/telegram-notification-bots/:botId/groups",
+	  requirePermission("notifications:view"),
   async (req, res) => {
     try {
       const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
@@ -33165,7 +33728,7 @@ function mapNotificationChannelDoc(doc, ctx = {}) {
   };
 }
 
-app.get("/admin/api/notification-channels", requirePermission("notifications:manage"), async (req, res) => {
+app.get("/admin/api/notification-channels", requirePermission("notifications:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -33702,8 +34265,8 @@ app.post(
 );
 
 app.get(
-  "/admin/api/line-bots/:botId/groups",
-  requirePermission("notifications:manage"),
+	  "/admin/api/line-bots/:botId/groups",
+	  requirePermission("notifications:view"),
   async (req, res) => {
     try {
       const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
@@ -33740,7 +34303,7 @@ app.get(
   },
 );
 
-app.get("/admin/api/notification-logs", requirePermission("notifications:manage"), async (req, res) => {
+app.get("/admin/api/notification-logs", requirePermission("notifications:view"), async (req, res) => {
   try {
     const channelId =
       typeof req.query.channelId === "string" ? req.query.channelId.trim() : "";
@@ -33798,7 +34361,7 @@ app.get("/admin/api/notification-logs", requirePermission("notifications:manage"
 // ============================ Category Management APIs ============================
 
 // GET: List all categories (filtered by botId and platform)
-app.get("/admin/api/categories", requirePermission("categories:manage"), async (req, res) => {
+app.get("/admin/api/categories", requirePermission("categories:view"), async (req, res) => {
   try {
     const { botId, platform } = req.query;
     const query = { isActive: true };
@@ -33948,7 +34511,7 @@ app.delete("/admin/api/categories/:categoryId", requirePermission("categories:ma
 });
 
 // 5. Get category data
-app.get("/admin/api/categories/:categoryId/data", requirePermission("categories:manage"), async (req, res) => {
+app.get("/admin/api/categories/:categoryId/data", requirePermission("categories:view"), async (req, res) => {
   try {
     const { categoryId } = req.params;
     const client = await connectDB();
@@ -34060,7 +34623,7 @@ app.delete("/admin/api/categories/:categoryId/data/:rowId", requirePermission("c
 });
 
 // 9. Import Excel
-app.post("/admin/api/categories/:categoryId/import-excel", requirePermission("categories:manage"), upload.single("file"), async (req, res) => {
+app.post("/admin/api/categories/:categoryId/import-excel", requirePermission("categories:import"), upload.single("file"), async (req, res) => {
   try {
     const { categoryId } = req.params;
     const file = req.file;
@@ -34123,7 +34686,7 @@ app.post("/admin/api/categories/:categoryId/import-excel", requirePermission("ca
 });
 
 // 10. Export Excel
-app.get("/admin/api/categories/:categoryId/export-excel", requirePermission("categories:manage"), async (req, res) => {
+app.get("/admin/api/categories/:categoryId/export-excel", requirePermission("categories:export"), async (req, res) => {
   try {
     const { categoryId } = req.params;
     const client = await connectDB();
@@ -34241,7 +34804,7 @@ async function searchItemBroad(db, categoryName, keyword, botId, platform) {
 }
 
 // Get all available tags in the system
-app.get("/admin/chat/available-tags", requirePermission("chat:tags"), async (req, res) => {
+app.get("/admin/chat/available-tags", requirePermission("chat:tags"), requireChatWorkspaceTab("tags"), async (req, res) => {
   try {
     const availableTags = await getCachedChatAdminAuxValue(
       "chat:available-tags",
@@ -34350,7 +34913,16 @@ app.get("/admin/chat/unread-count", requirePermission("menu:chat"), async (req, 
 // ============================ Settings API Endpoints ============================
 
 // Get all settings
-app.get("/api/settings", requirePermission("menu:settings"), async (req, res) => {
+app.get(
+  "/api/settings",
+  requireAnyPermission([
+    "menu:settings",
+    "settings:bot",
+    "settings:chat",
+    "settings:general",
+    "settings:security-filter",
+  ]),
+  async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -34399,7 +34971,7 @@ app.get("/api/settings", requirePermission("menu:settings"), async (req, res) =>
       finalSettings.orderRequiredFields,
     );
 
-    res.json(finalSettings);
+    res.json(filterSettingsForAdmin(req, finalSettings));
   } catch (err) {
     console.error("Error getting settings:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -35080,7 +35652,7 @@ async function logOpenAIUsage(data) {
 }
 
 // GET: List all API keys (masked)
-app.get("/api/openai-keys", requirePermission("settings:api-key"), async (req, res) => {
+app.get("/api/openai-keys", requirePermission("api-keys:view"), async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -35642,7 +36214,7 @@ async function queryOpenAiUsageSummaryFromPostgres(filters) {
   };
 }
 
-app.get("/api/openai-usage/summary", async (req, res) => {
+app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const cacheHash = buildAdminCacheHash(req.query || {});
     const cachedResponse = await getCachedAdminJson(
@@ -35915,7 +36487,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
 });
 
 // GET: Detailed usage logs
-app.get("/api/openai-usage", async (req, res) => {
+app.get("/api/openai-usage", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const {
       startDate,
@@ -36019,7 +36591,7 @@ app.get("/api/openai-usage", async (req, res) => {
 });
 
 // GET: Drill-down usage by specific Bot
-app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
+app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const { botId } = req.params;
     const { startDate, endDate } = req.query;
@@ -36172,7 +36744,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
 });
 
 // GET: Drill-down usage by specific Model
-app.get("/api/openai-usage/by-model/:model", async (req, res) => {
+app.get("/api/openai-usage/by-model/:model", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const { model } = req.params;
     const { startDate, endDate } = req.query;
@@ -36292,7 +36864,7 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
 });
 
 // GET: Drill-down usage by specific API Key
-app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
+app.get("/api/openai-usage/by-key/:keyId", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const { keyId } = req.params;
     const { startDate, endDate } = req.query;
@@ -36449,6 +37021,29 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
   }
 });
 
+function buildEmptyAdminOrdersDataResponse(queryParams = {}) {
+  const page = Math.max(parseInt(queryParams.page, 10) || 1, 1);
+  const limit = Math.min(parseInt(queryParams.limit, 10) || 50, 200);
+  return {
+    success: true,
+    orders: [],
+    pagination: {
+      page,
+      limit,
+      total: 0,
+      pages: 1,
+    },
+    summary: {
+      totalOrders: 0,
+      totalAmount: 0,
+      totalAmountConfirmed: 0,
+      totalShipping: 0,
+      confirmedOrders: 0,
+    },
+    statusCounts: {},
+  };
+}
+
 async function buildNativeOrdersDataResponse(queryParams = {}) {
   const nativeResult = await postgresNativeReadRepository.queryOrders(queryParams);
   if (!nativeResult) return null;
@@ -36604,20 +37199,25 @@ async function buildNativeOrdersDataResponse(queryParams = {}) {
   };
 }
 
-app.get("/admin/orders/data", async (req, res) => {
+app.get("/admin/orders/data", requirePermission("orders:view"), async (req, res) => {
   try {
+    const scopedOrderParams = resolveAdminScopedOrderParams(req, req.query || {});
+    if (scopedOrderParams.isEmptyScope) {
+      return res.json(buildEmptyAdminOrdersDataResponse(scopedOrderParams.params));
+    }
+
     if (isPostgresNativeReadEnabled()) {
-      const cacheHash = buildAdminCacheHash(req.query || {});
+      const cacheHash = buildAdminCacheHash(scopedOrderParams.params);
       const cachedResponse = await getCachedAdminJson(
         req,
         ["orders-data", cacheHash],
-        () => buildNativeOrdersDataResponse(req.query || {}),
+        () => buildNativeOrdersDataResponse(scopedOrderParams.params),
         { ttlSeconds: runtimeConfig.redis.adminCacheTtlSeconds },
       );
       return res.json(cachedResponse);
     }
 
-    const { query } = buildOrderQuery(req.query || {});
+    const { query } = buildOrderQuery(scopedOrderParams.params);
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     const skip = (page - 1) * limit;
@@ -36939,9 +37539,9 @@ app.get("/admin/orders/data", async (req, res) => {
   }
 });
 
-app.get("/admin/orders/export", async (req, res) => {
+app.get("/admin/orders/export", requirePermission("orders:export"), async (req, res) => {
   try {
-    const { query } = buildOrderQuery(req.query || {});
+    const { query } = buildAdminScopedOrderQuery(req, req.query || {});
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
@@ -37728,7 +38328,7 @@ async function processFacebookConversion(order) {
 // API: เปลี่ยนสถานะหลายออเดอร์พร้อมกัน (Bulk)
 // NOTE: This route MUST be defined BEFORE the parameterized route below
 // to prevent Express from matching "bulk" as an :orderId parameter
-app.patch("/admin/orders/bulk/status", async (req, res) => {
+app.patch("/admin/orders/bulk/status", requirePermission("orders:update"), async (req, res) => {
   try {
     const { orderIds, status } = req.body || {};
 
@@ -37756,16 +38356,28 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+    const objectIds = validIds.map((id) => new ObjectId(id));
+    const orders = await coll
+      .find({ _id: { $in: objectIds } })
+      .project({ _id: 1, platform: 1, botId: 1 })
+      .toArray();
+
+    if (!orders.length) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์ที่ต้องการอัปเดต" });
+    }
+    if (orders.some((order) => !canAdminAccessOrder(req, order))) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการออเดอร์ของบาง Inbox" });
+    }
 
     const result = await coll.updateMany(
-      { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
+      { _id: { $in: orders.map((order) => order._id) } },
       { $set: { status, updatedAt: new Date() } }
     );
     if (result.modifiedCount > 0) {
       await maybeMirrorAppDocumentByQuery(
         db,
         "orders",
-        { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
+        { _id: { $in: orders.map((order) => order._id) } },
         { multiple: true },
       );
     }
@@ -37783,7 +38395,7 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
 });
 
 // API: ลบออเดอร์หลายรายการพร้อมกัน (Bulk)
-app.delete("/admin/orders/bulk/delete", async (req, res) => {
+app.delete("/admin/orders/bulk/delete", requirePermission("orders:delete"), async (req, res) => {
   try {
     const { orderIds } = req.body || {};
 
@@ -37815,6 +38427,9 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
 
     if (!orders.length) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์ที่ต้องการลบ" });
+    }
+    if (orders.some((order) => !canAdminAccessOrder(req, order))) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์ลบออเดอร์ของบาง Inbox" });
     }
 
     const deleteResult = await coll.deleteMany({
@@ -37867,7 +38482,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
 });
 
 // API: เปลี่ยนสถานะออเดอร์เดี่ยว
-app.patch("/admin/orders/:orderId/status", async (req, res) => {
+app.patch("/admin/orders/:orderId/status", requirePermission("orders:update"), async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body || {};
@@ -37892,6 +38507,9 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     if (!existingOrder) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+    if (!canAdminAccessOrder(req, existingOrder)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการออเดอร์ของ Inbox นี้" });
     }
 
     const previousStatus = existingOrder.status;
@@ -37941,7 +38559,7 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
 });
 
 // API: อัปเดต notes ของออเดอร์
-app.patch("/admin/orders/:orderId/notes", async (req, res) => {
+app.patch("/admin/orders/:orderId/notes", requirePermission("orders:update"), async (req, res) => {
   try {
     const { orderId } = req.params;
     const { notes } = req.body || {};
@@ -37955,6 +38573,13 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+    const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+    if (!canAdminAccessOrder(req, existingOrder)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการออเดอร์ของ Inbox นี้" });
+    }
 
     const result = await coll.updateOne(
       { _id: new ObjectId(orderId) },
@@ -37977,7 +38602,7 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
 });
 
 // API: ลบออเดอร์ (Orders page)
-app.delete("/admin/orders/:orderId", async (req, res) => {
+app.delete("/admin/orders/:orderId", requirePermission("orders:delete"), async (req, res) => {
   try {
     const { orderId } = req.params;
 
@@ -37992,6 +38617,9 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
     const order = await coll.findOne({ _id: new ObjectId(orderId) });
     if (!order) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+    if (!canAdminAccessOrder(req, order)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์ลบออเดอร์ของ Inbox นี้" });
     }
 
     const result = await coll.deleteOne({ _id: new ObjectId(orderId) });
@@ -38030,7 +38658,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
 // ========================================
 
 // API: ดึงโน้ตของผู้ใช้
-app.get("/api/users/:userId/notes", requirePermission("chat:notes"), async (req, res) => {
+app.get("/api/users/:userId/notes", requirePermission("chat:notes"), requireChatWorkspaceTab("notes"), async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId || typeof userId !== "string") {
@@ -38075,7 +38703,7 @@ app.get("/api/users/:userId/notes", requirePermission("chat:notes"), async (req,
 });
 
 // API: บันทึกโน้ตของผู้ใช้
-app.patch("/api/users/:userId/notes", requirePermission("chat:notes"), async (req, res) => {
+app.patch("/api/users/:userId/notes", requirePermission("chat:notes"), requireChatWorkspaceTab("notes"), async (req, res) => {
   try {
     const { userId } = req.params;
     const { notes } = req.body || {};
@@ -38118,7 +38746,7 @@ app.patch("/api/users/:userId/notes", requirePermission("chat:notes"), async (re
 });
 
 // API: Generate Print Label HTML
-app.get("/admin/orders/:orderId/print-label", async (req, res) => {
+app.get("/admin/orders/:orderId/print-label", requirePermission("orders:print"), async (req, res) => {
   try {
     const { orderId } = req.params;
 
@@ -38133,6 +38761,9 @@ app.get("/admin/orders/:orderId/print-label", async (req, res) => {
     const order = await coll.findOne({ _id: new ObjectId(orderId) });
     if (!order) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+    if (!canAdminAccessOrder(req, order)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์พิมพ์ออเดอร์ของ Inbox นี้" });
     }
 
     const orderData = order.orderData || {};
@@ -38234,7 +38865,7 @@ app.get("/admin/orders/:orderId/print-label", async (req, res) => {
 });
 
 // API endpoint สำหรับทดสอบการกรองข้อความ
-app.post("/api/filter/test", async (req, res) => {
+app.post("/api/filter/test", requirePermission("filter:test"), async (req, res) => {
   try {
     const { message } = req.body;
 
@@ -38267,6 +38898,7 @@ io.on("connection", (socket) => {
       ? {
         role: sessionUser.role,
         permissions: sessionUser.permissions,
+        permissionsVersion: sessionUser.permissionsVersion,
         inboxAccess: sessionUser.inboxAccess,
         chatLayout: sessionUser.chatLayout,
       }

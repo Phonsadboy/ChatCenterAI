@@ -7,6 +7,8 @@ const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
 let imageCollections = [];
 let chatSystemTags = [];
+let passcodeInstructionOptions = [];
+let passcodeInstructionSelectedIds = [];
 const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
 const BOT_LABELS = {
     line: 'LINE',
@@ -37,24 +39,36 @@ const botKeywordModalState = {
     botType: '',
     botId: ''
 };
+const BOT_SETTINGS_PERMISSIONS = ['settings:bot', 'bots:view', 'bots:create', 'bots:update', 'bots:delete', 'bots:manage'];
+const IMAGE_COLLECTION_PERMISSIONS = ['settings:image-library', 'image-library:view', 'image-library:manage'];
+const SECURITY_SECTION_PERMISSIONS = ['settings:security-filter', 'audit:view', 'filter:test'];
 const SETTINGS_SECTION_PERMISSIONS = {
-    'bot-settings': 'settings:bot',
-    'image-collections': 'settings:image-library',
-    'data-forms': 'settings:data-forms',
-    'file-library': 'settings:file-library',
+    'bot-settings': BOT_SETTINGS_PERMISSIONS,
+    'image-collections': IMAGE_COLLECTION_PERMISSIONS,
+    'data-forms': ['settings:data-forms', 'data-forms:view', 'data-forms:manage', 'data-forms:export'],
+    'file-library': ['settings:file-library', 'file-assets:view', 'file-assets:manage'],
     'chat-settings': 'settings:chat',
-    'order-notifications': 'settings:notifications',
+    'order-notifications': ['settings:notifications', 'notifications:view', 'notifications:manage'],
     'system-settings': 'settings:general',
-    'security-settings': 'settings:security-filter',
-    'api-keys-settings': 'settings:api-key'
+    'security-settings': SECURITY_SECTION_PERMISSIONS,
+    'api-keys-settings': ['settings:api-key', 'api-keys:view', 'api-keys:manage']
 };
 
 function adminCan(permission) {
+    if (Array.isArray(permission)) return permission.some(item => adminCan(item));
     if (!permission) return true;
     const user = window.adminAuth?.user || null;
     if (!user) return true;
     if (user.role === 'superadmin') return true;
     return Array.isArray(user.permissions) && user.permissions.includes(permission);
+}
+
+function canUpdateBots() {
+    return adminCan(['settings:bot', 'bots:update', 'bots:manage']);
+}
+
+function canEditBotSecrets() {
+    return canUpdateBots() && adminCan('bots:secrets');
 }
 
 function initSettingsPermissionVisibility() {
@@ -71,6 +85,16 @@ function initSettingsPermissionVisibility() {
     });
     const chatTagCard = document.getElementById('chatTagSettingsCard');
     if (chatTagCard) chatTagCard.hidden = !adminCan('chat:tags');
+    const auditCard = document.getElementById('auditLogsCard');
+    if (auditCard) auditCard.hidden = !adminCan('audit:view');
+    const securityForm = document.getElementById('securitySettingsForm');
+    const securityCard = securityForm?.closest('.settings-card');
+    if (securityCard) securityCard.hidden = !adminCan('settings:security-filter');
+    const addApiKeyBtn = document.getElementById('addApiKeyBtn');
+    if (addApiKeyBtn) addApiKeyBtn.hidden = !adminCan('api-keys:manage');
+    document.querySelectorAll('.bot-secret-action').forEach((button) => {
+        button.hidden = !canEditBotSecrets();
+    });
     const firstVisibleNav = navItems.find((item) => !item.hidden);
     const activeNav = navItems.find((item) => item.classList.contains('active') && !item.hidden);
     const targetNav = activeNav || firstVisibleNav;
@@ -194,7 +218,8 @@ function initNavigation() {
             } else if (targetId === 'file-library') {
                 window.voxtronPhase1?.refreshFiles?.();
             } else if (targetId === 'security-settings') {
-                loadAuditLogs();
+                if (adminCan('settings:security-filter')) loadSecuritySettings();
+                if (adminCan('audit:view')) loadAuditLogs();
             }
         });
     });
@@ -203,25 +228,23 @@ function initNavigation() {
 // --- Data Loading ---
 async function loadAllSettings() {
     try {
-        const needsInstructionData = adminCan('settings:bot') || adminCan('bots:manage');
-        const needsImageData = adminCan('settings:image-library') || adminCan('bots:manage');
+        const needsInstructionData = adminCan(['instructions:view', 'instructions:create', 'instructions:update', 'instructions:manage']);
+        const needsImageData = adminCan(IMAGE_COLLECTION_PERMISSIONS);
         const preloadTasks = [];
         if (needsInstructionData) preloadTasks.push(loadInstructionLibraries());
         if (needsImageData) preloadTasks.push(loadImageCollections());
         await Promise.all(preloadTasks);
 
         const loadTasks = [];
-        if (adminCan('settings:bot') || adminCan('bots:manage')) loadTasks.push(loadBotSettings());
+        if (adminCan(BOT_SETTINGS_PERMISSIONS)) loadTasks.push(loadBotSettings());
         if (adminCan('settings:chat')) {
             loadTasks.push(loadChatSettings());
             if (adminCan('chat:tags')) loadTasks.push(loadChatSystemTags());
         }
         if (adminCan('settings:general')) loadTasks.push(loadSystemSettings());
-        if (adminCan('settings:security-filter')) {
-            loadTasks.push(loadSecuritySettings());
-            loadTasks.push(loadAuditLogs());
-        }
-        if (adminCan('settings:image-library')) loadTasks.push(window.imageCollectionsManager?.refreshAll?.());
+        if (adminCan('settings:security-filter')) loadTasks.push(loadSecuritySettings());
+        if (adminCan('audit:view')) loadTasks.push(loadAuditLogs());
+        if (adminCan(IMAGE_COLLECTION_PERMISSIONS)) loadTasks.push(window.imageCollectionsManager?.refreshAll?.());
         await Promise.all(loadTasks.filter(Boolean));
     } catch (error) {
         console.error('Error loading settings:', error);
@@ -277,6 +300,8 @@ async function loadBotSettings() {
 function renderLineBots(bots) {
     const container = document.getElementById('line-bots-list');
     if (!container) return;
+    const canUpdate = canUpdateBots();
+    const canEditSecrets = canEditBotSecrets();
 
     if (bots.length === 0) {
         container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า Line Bot</div>';
@@ -307,21 +332,21 @@ function renderLineBots(bots) {
                     <div class="text-center">
                         <div class="text-muted small">แชท</div>
                         <label class="toggle-switch mb-0" title="เปิด/ปิดการตอบแชท">
-                            <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
+                            <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} ${canUpdate ? '' : 'disabled'} onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
                     <div class="text-center">
                         <div class="text-muted small">แจ้งเตือน</div>
                         <label class="toggle-switch mb-0" title="เปิด/ปิดการแจ้งเตือน">
-                            <input type="checkbox" ${notificationEnabled ? 'checked' : ''} onchange="toggleBotNotification('line', '${bot._id}', this.checked)">
+                            <input type="checkbox" ${notificationEnabled ? 'checked' : ''} ${canUpdate ? '' : 'disabled'} onchange="toggleBotNotification('line', '${bot._id}', this.checked)">
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
                 </div>
                 <div class="actions-stack">
-                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('line', '${bot._id}')"><i class="fas fa-key"></i></button>
-                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditLineBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                    ${canUpdate ? `<button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('line', '${bot._id}')"><i class="fas fa-key"></i></button>` : ''}
+                    ${canEditSecrets ? `<button class="btn-ghost-sm" title="แก้ไข" onclick="openEditLineBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>` : ''}
                 </div>
             </div>
         </div>
@@ -332,6 +357,8 @@ function renderLineBots(bots) {
 function renderFacebookBots(bots) {
     const container = document.getElementById('facebook-bots-list');
     if (!container) return;
+    const canUpdate = canUpdateBots();
+    const canEditSecrets = canEditBotSecrets();
 
     if (bots.length === 0) {
         container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า Facebook Bot</div>';
@@ -357,12 +384,12 @@ function renderFacebookBots(bots) {
             </div>
             <div class="bot-actions-compact">
                 <label class="toggle-switch mb-0">
-                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('facebook', '${bot._id}', this.checked)">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} ${canUpdate ? '' : 'disabled'} onchange="toggleBotStatus('facebook', '${bot._id}', this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
-                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('facebook', '${bot._id}')"><i class="fas fa-key"></i></button>
-                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditFacebookBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                    ${canUpdate ? `<button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('facebook', '${bot._id}')"><i class="fas fa-key"></i></button>` : ''}
+                    ${canEditSecrets ? `<button class="btn-ghost-sm" title="แก้ไข" onclick="openEditFacebookBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>` : ''}
                 </div>
             </div>
         </div>
@@ -372,6 +399,8 @@ function renderFacebookBots(bots) {
 function renderInstagramBots(bots) {
     const container = document.getElementById('instagram-bots-list');
     if (!container) return;
+    const canUpdate = canUpdateBots();
+    const canEditSecrets = canEditBotSecrets();
 
     if (!Array.isArray(bots) || bots.length === 0) {
         container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า Instagram Bot</div>';
@@ -397,12 +426,12 @@ function renderInstagramBots(bots) {
             </div>
             <div class="bot-actions-compact">
                 <label class="toggle-switch mb-0">
-                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('instagram', '${bot._id}', this.checked)">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} ${canUpdate ? '' : 'disabled'} onchange="toggleBotStatus('instagram', '${bot._id}', this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
-                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('instagram', '${bot._id}')"><i class="fas fa-key"></i></button>
-                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditInstagramBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                    ${canUpdate ? `<button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('instagram', '${bot._id}')"><i class="fas fa-key"></i></button>` : ''}
+                    ${canEditSecrets ? `<button class="btn-ghost-sm" title="แก้ไข" onclick="openEditInstagramBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>` : ''}
                 </div>
             </div>
         </div>
@@ -412,6 +441,8 @@ function renderInstagramBots(bots) {
 function renderWhatsAppBots(bots) {
     const container = document.getElementById('whatsapp-bots-list');
     if (!container) return;
+    const canUpdate = canUpdateBots();
+    const canEditSecrets = canEditBotSecrets();
 
     if (!Array.isArray(bots) || bots.length === 0) {
         container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า WhatsApp Bot</div>';
@@ -437,12 +468,12 @@ function renderWhatsAppBots(bots) {
             </div>
             <div class="bot-actions-compact">
                 <label class="toggle-switch mb-0">
-                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('whatsapp', '${bot._id}', this.checked)">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} ${canUpdate ? '' : 'disabled'} onchange="toggleBotStatus('whatsapp', '${bot._id}', this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
-                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('whatsapp', '${bot._id}')"><i class="fas fa-key"></i></button>
-                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditWhatsAppBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                    ${canUpdate ? `<button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('whatsapp', '${bot._id}')"><i class="fas fa-key"></i></button>` : ''}
+                    ${canEditSecrets ? `<button class="btn-ghost-sm" title="แก้ไข" onclick="openEditWhatsAppBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>` : ''}
                 </div>
             </div>
         </div>
@@ -450,6 +481,7 @@ function renderWhatsAppBots(bots) {
 }
 
 async function toggleBotStatus(type, id, isActive) {
+    if (!canUpdateBots()) return;
     const endpointMap = {
         line: `/api/line-bots/${id}`,
         facebook: `/api/facebook-bots/${id}`,
@@ -495,6 +527,7 @@ async function toggleBotStatus(type, id, isActive) {
 }
 
 async function toggleBotNotification(type, id, isEnabled) {
+    if (!canUpdateBots()) return;
     if (type !== 'line') return;
     try {
         const response = await fetch(`/api/line-bots/${id}/toggle-notifications`, {
@@ -569,6 +602,7 @@ function populateBotModelDropdown(selectId, selectedValue = DEFAULT_BOT_MODEL) {
 
 // Line Bot
 window.openAddLineBotModal = async function () {
+    if (!canEditBotSecrets()) return;
     const form = document.getElementById('lineBotForm');
     if (form) form.reset();
     const idInput = document.getElementById('lineBotId');
@@ -604,6 +638,7 @@ window.openAddLineBotModal = async function () {
 };
 
 window.openEditLineBotModal = async function (id) {
+    if (!canEditBotSecrets()) return;
     try {
         const res = await fetch(`/api/line-bots/${id}`);
         const bot = await res.json();
@@ -698,6 +733,7 @@ async function saveLineBot() {
 
 // Facebook Bot
 window.openAddFacebookBotModal = async function () {
+    if (!canEditBotSecrets()) return;
     const form = document.getElementById('facebookBotForm');
     if (form) form.reset();
 
@@ -753,6 +789,7 @@ window.openAddFacebookBotModal = async function () {
 };
 
 window.openEditFacebookBotModal = async function (id) {
+    if (!canEditBotSecrets()) return;
     // Populate API key dropdown first
     await populateApiKeyDropdowns('facebookBotApiKeyId');
 
@@ -888,6 +925,7 @@ async function autoFetchFacebookDataset() {
 
 // Instagram Bot
 window.openAddInstagramBotModal = async function () {
+    if (!canEditBotSecrets()) return;
     const form = document.getElementById('instagramBotForm');
     if (form) form.reset();
     const idInput = document.getElementById('instagramBotId');
@@ -917,6 +955,7 @@ window.openAddInstagramBotModal = async function () {
 };
 
 window.openEditInstagramBotModal = async function (id) {
+    if (!canEditBotSecrets()) return;
     await populateApiKeyDropdowns('instagramBotApiKeyId');
     try {
         const res = await fetch(`/api/instagram-bots/${id}`);
@@ -1034,6 +1073,7 @@ async function deleteInstagramBot(botId) {
 
 // WhatsApp Bot
 window.openAddWhatsAppBotModal = async function () {
+    if (!canEditBotSecrets()) return;
     const form = document.getElementById('whatsappBotForm');
     if (form) form.reset();
     const idInput = document.getElementById('whatsappBotId');
@@ -1063,6 +1103,7 @@ window.openAddWhatsAppBotModal = async function () {
 };
 
 window.openEditWhatsAppBotModal = async function (id) {
+    if (!canEditBotSecrets()) return;
     await populateApiKeyDropdowns('whatsappBotApiKeyId');
     try {
         const res = await fetch(`/api/whatsapp-bots/${id}`);
@@ -1641,7 +1682,7 @@ function buildAuditLogQuery() {
 
 async function loadAuditLogs() {
     const list = document.getElementById('auditLogsList');
-    if (!list || !adminCan('settings:security-filter')) return;
+    if (!list || !adminCan('audit:view')) return;
     list.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Audit Log...</div>';
     try {
         const res = await fetch(`/admin/api/audit-logs?${buildAuditLogQuery().toString()}`);
@@ -1720,10 +1761,10 @@ function setupEventListeners() {
     const refreshBtn = document.getElementById('refreshSettingsBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            if (adminCan('settings:bot') || adminCan('bots:manage')) {
+            if (adminCan(BOT_SETTINGS_PERMISSIONS)) {
                 Promise.all([
-                    loadInstructionLibraries(),
-                    loadImageCollections()
+                    adminCan(['instructions:view', 'instructions:create', 'instructions:update', 'instructions:manage']) ? loadInstructionLibraries() : Promise.resolve(),
+                    adminCan(IMAGE_COLLECTION_PERMISSIONS) ? loadImageCollections() : Promise.resolve()
                 ])
                     .then(() => loadBotSettings());
             }
@@ -1732,11 +1773,9 @@ function setupEventListeners() {
                 if (adminCan('chat:tags')) loadChatSystemTags();
             }
             if (adminCan('settings:general')) loadSystemSettings();
-            if (adminCan('settings:security-filter')) {
-                loadSecuritySettings();
-                loadAuditLogs();
-            }
-            if (adminCan('settings:image-library') && window.imageCollectionsManager?.refreshAll) {
+            if (adminCan('settings:security-filter')) loadSecuritySettings();
+            if (adminCan('audit:view')) loadAuditLogs();
+            if (adminCan(IMAGE_COLLECTION_PERMISSIONS) && window.imageCollectionsManager?.refreshAll) {
                 window.imageCollectionsManager.refreshAll();
             }
         });
@@ -2701,6 +2740,7 @@ function setBotKeywordModalLoading(isLoading) {
 }
 
 window.openBotKeywordModal = async function (botType, botId) {
+    if (!canUpdateBots()) return;
     const modalEl = document.getElementById('botKeywordModal');
     if (!modalEl || !botType || !botId) return;
 
@@ -2743,6 +2783,7 @@ window.openBotKeywordModal = async function (botType, botId) {
 };
 
 async function saveBotKeywordSettings() {
+    if (!canUpdateBots()) return;
     const botType = getInputValue('botKeywordType') || botKeywordModalState.botType;
     const botId = getInputValue('botKeywordBotId') || botKeywordModalState.botId;
     const endpoint = getBotKeywordsEndpoint(botType, botId);
@@ -2909,13 +2950,24 @@ const PASSCODE_ROLE_LABELS = {
 const PASSCODE_ALL_PERMISSIONS = [
     'menu:dashboard', 'menu:settings', 'menu:instruction-ai', 'menu:api-usage', 'menu:chat',
     'menu:orders', 'menu:followup', 'menu:broadcast', 'menu:facebook-posts', 'menu:customer-stats',
-    'menu:categories', 'settings:bot', 'settings:image-library', 'settings:data-forms',
-    'settings:file-library', 'settings:chat', 'settings:notifications', 'settings:general',
-    'settings:security-filter', 'settings:api-key', 'chat:view', 'chat:send', 'chat:forms',
-    'chat:files', 'chat:notes', 'chat:tags', 'chat:orders', 'chat:templates', 'chat:forward',
-    'chat:assign', 'chat:debug', 'chat:clear', 'chat:ai-control', 'chat:purchase-status',
-    'chat:profile-refresh', 'chat:export', 'data-forms:manage', 'file-assets:manage',
-    'notifications:manage', 'categories:manage', 'bots:manage', 'api-keys:manage'
+    'menu:categories', 'dashboard:view', 'settings:bot', 'settings:image-library',
+    'settings:data-forms', 'settings:file-library', 'settings:chat', 'settings:notifications',
+    'settings:general', 'settings:security-filter', 'settings:api-key', 'audit:view', 'filter:test',
+    'chat:view', 'chat:send', 'chat:forms', 'chat:files', 'chat:notes', 'chat:tags', 'chat:orders',
+    'chat:templates', 'chat:forward', 'chat:assign', 'chat:debug', 'chat:clear', 'chat:ai-control',
+    'chat:purchase-status', 'chat:profile-refresh', 'chat:export', 'instructions:view',
+    'instructions:create', 'instructions:update', 'instructions:delete', 'instructions:manage',
+    'instructions:import', 'instructions:export', 'instruction-ai:use',
+    'agent-forge:manage', 'api-usage:view', 'orders:view', 'orders:update', 'orders:delete',
+    'orders:export', 'orders:print', 'broadcast:view', 'broadcast:preview', 'broadcast:send',
+    'broadcast:cancel', 'followup:view', 'followup:manage', 'followup:assets',
+    'facebook-posts:view', 'facebook-posts:sync', 'facebook-posts:update', 'customer-stats:view',
+    'image-library:view', 'image-library:manage', 'data-forms:view', 'data-forms:manage',
+    'data-forms:export',
+    'file-assets:view', 'file-assets:manage', 'notifications:view', 'notifications:manage',
+    'categories:view', 'categories:import', 'categories:export', 'categories:manage', 'bots:view',
+    'bots:create', 'bots:update', 'bots:delete', 'bots:secrets', 'bots:manage', 'api-keys:view',
+    'api-keys:manage'
 ];
 const PASSCODE_PERMISSION_GROUPS = [
     {
@@ -2932,13 +2984,14 @@ const PASSCODE_PERMISSION_GROUPS = [
         items: [
             ['settings:bot', 'จัดการบอท'], ['settings:image-library', 'คลังรูปภาพ'], ['settings:data-forms', 'Data Forms'],
             ['settings:file-library', 'คลังไฟล์'], ['settings:chat', 'แชทและคิว'], ['settings:notifications', 'แจ้งเตือนงาน'],
-            ['settings:general', 'ตั้งค่าทั่วไป'], ['settings:security-filter', 'Security/Filter'], ['settings:api-key', 'API Keys']
+            ['settings:general', 'ตั้งค่าทั่วไป'], ['settings:security-filter', 'Security/Filter'], ['settings:api-key', 'API Keys'],
+            ['audit:view', 'ดู Audit Logs'], ['filter:test', 'ทดสอบตัวกรอง']
         ]
     },
     {
         title: 'Chat Actions',
         items: [
-            ['chat:view', 'ดูแชท'], ['chat:send', 'ตอบแชท'], ['chat:forms', 'ฟอร์ม'], ['chat:files', 'ไฟล์'],
+            ['chat:view', 'ดูแชท / แท็บรวม'], ['chat:send', 'ตอบแชท'], ['chat:forms', 'ฟอร์ม'], ['chat:files', 'ไฟล์'],
             ['chat:notes', 'โน้ต'], ['chat:tags', 'แท็ก'], ['chat:orders', 'ออเดอร์'], ['chat:templates', 'Templates'],
             ['chat:forward', 'ส่งต่อ'], ['chat:assign', 'มอบหมาย'], ['chat:debug', 'Debug'], ['chat:clear', 'ล้างแชท'],
             ['chat:ai-control', 'เปิด/ปิด AI'], ['chat:purchase-status', 'สถานะซื้อ'], ['chat:profile-refresh', 'Refresh profile'],
@@ -2946,17 +2999,52 @@ const PASSCODE_PERMISSION_GROUPS = [
         ]
     },
     {
-        title: 'จัดการข้อมูล',
+        title: 'Instruction & AI',
         items: [
-            ['bots:manage', 'Bot APIs'], ['data-forms:manage', 'จัดการ Data Forms'], ['file-assets:manage', 'จัดการไฟล์'],
-            ['notifications:manage', 'แจ้งเตือน'], ['categories:manage', 'Categories'], ['api-keys:manage', 'จัดการ API Keys']
+            ['dashboard:view', 'ดู Dashboard'], ['instructions:view', 'ดู Instructions'], ['instructions:create', 'สร้าง Instructions'],
+            ['instructions:update', 'แก้ Instructions'], ['instructions:delete', 'ลบ Instructions'],
+            ['instructions:manage', 'จัดการ Instructions ทั้งหมด'], ['instructions:import', 'Import Instructions'], ['instructions:export', 'Export Instructions'],
+            ['instruction-ai:use', 'ใช้ InstructionAI2'], ['agent-forge:manage', 'Agent Forge'], ['api-usage:view', 'ดู API Usage']
+        ]
+    },
+    {
+        title: 'Orders / Broadcast / Follow-up',
+        items: [
+            ['orders:view', 'ดูออเดอร์'], ['orders:update', 'แก้ออเดอร์'], ['orders:delete', 'ลบออเดอร์'],
+            ['orders:export', 'Export ออเดอร์'], ['orders:print', 'พิมพ์ใบปะหน้า'],
+            ['broadcast:view', 'ดู Broadcast'], ['broadcast:preview', 'Preview Broadcast'], ['broadcast:send', 'ส่ง Broadcast'],
+            ['broadcast:cancel', 'ยกเลิก Broadcast'], ['followup:view', 'ดู Follow-up'], ['followup:manage', 'จัดการ Follow-up'],
+            ['followup:assets', 'อัปโหลดรูป Follow-up'], ['facebook-posts:view', 'ดูโพสต์ FB'],
+            ['facebook-posts:sync', 'ดึงโพสต์ FB'], ['facebook-posts:update', 'ตั้งค่าโพสต์ FB'],
+            ['customer-stats:view', 'ดูสถิติลูกค้า']
+        ]
+    },
+    {
+        title: 'คลังข้อมูล / ไฟล์',
+        items: [
+            ['image-library:view', 'ดูคลังรูป'], ['image-library:manage', 'จัดการคลังรูป'],
+            ['data-forms:view', 'ดู Data Forms'], ['data-forms:manage', 'จัดการ Data Forms'],
+            ['data-forms:export', 'Export ข้อมูลฟอร์ม'],
+            ['file-assets:view', 'ดูคลังไฟล์'], ['file-assets:manage', 'จัดการไฟล์'],
+            ['categories:view', 'ดู Categories'], ['categories:import', 'Import Categories'],
+            ['categories:export', 'Export Categories'], ['categories:manage', 'จัดการ Categories']
+        ]
+    },
+    {
+        title: 'Bots / Notifications / Keys',
+        items: [
+            ['bots:view', 'ดู Bots'], ['bots:create', 'สร้าง Bots'], ['bots:update', 'แก้ Bots'],
+            ['bots:delete', 'ลบ Bots'], ['bots:secrets', 'Secrets ของ Bots'], ['bots:manage', 'Bot APIs ทั้งหมด'],
+            ['notifications:view', 'ดูแจ้งเตือน'], ['notifications:manage', 'จัดการแจ้งเตือน'],
+            ['api-keys:view', 'ดู API Keys'], ['api-keys:manage', 'จัดการ API Keys']
         ]
     }
 ];
 const PASSCODE_ROLE_DEFAULTS = {
     agent: ['menu:chat', 'chat:view', 'chat:send', 'chat:forms'],
     team_leader: PASSCODE_ALL_PERMISSIONS.filter(permission => ![
-        'settings:general', 'settings:security-filter', 'settings:api-key', 'api-keys:manage'
+        'settings:general', 'settings:security-filter', 'settings:api-key', 'audit:view',
+        'filter:test', 'bots:secrets', 'api-keys:view', 'api-keys:manage'
     ].includes(permission)),
     admin: PASSCODE_ALL_PERMISSIONS
 };
@@ -2968,6 +3056,11 @@ const PASSCODE_LAYOUT_DEFAULTS = {
     agent: { mode: 'forms_only', allowedTabs: ['forms'] },
     team_leader: { mode: 'full', allowedTabs: PASSCODE_CHAT_TABS.map(([key]) => key) },
     admin: { mode: 'full', allowedTabs: PASSCODE_CHAT_TABS.map(([key]) => key) }
+};
+const PASSCODE_INSTRUCTION_DEFAULTS = {
+    agent: { mode: 'selected', instructionIds: [] },
+    team_leader: { mode: 'all', instructionIds: [] },
+    admin: { mode: 'all', instructionIds: [] }
 };
 
 function isSuperadmin() {
@@ -2990,7 +3083,9 @@ function initPasscodeManagement() {
     renderPasscodePermissionGrid(PASSCODE_ROLE_DEFAULTS.agent);
     renderPasscodeInboxGrid([]);
     renderPasscodeChatLayoutTabs(PASSCODE_LAYOUT_DEFAULTS.agent.allowedTabs);
+    renderPasscodeInstructionGrid([]);
     loadPasscodeInboxOptions();
+    loadPasscodeInstructionOptions();
     refreshPasscodeList();
 }
 
@@ -3003,6 +3098,7 @@ function setupPasscodeEventListeners() {
     const tableBody = document.getElementById('passcodeTableBody');
     const roleSelect = document.getElementById('newPasscodeRole');
     const inboxMode = document.getElementById('passcodeInboxMode');
+    const instructionMode = document.getElementById('passcodeInstructionMode');
     const layoutMode = document.getElementById('passcodeChatLayoutMode');
 
     if (toggleBtn && createContainer) {
@@ -3048,14 +3144,20 @@ function setupPasscodeEventListeners() {
             if (grid) grid.classList.toggle('opacity-50', inboxMode.value === 'all');
         });
     }
+    if (instructionMode) {
+        instructionMode.addEventListener('change', () => {
+            renderPasscodeInstructionGrid(passcodeInstructionSelectedIds);
+        });
+    }
     if (layoutMode) {
         layoutMode.addEventListener('change', () => {
-            const role = document.getElementById('newPasscodeRole')?.value || 'agent';
-            const preset = layoutMode.value === 'forms_only'
-                ? { allowedTabs: ['forms'] }
-                : layoutMode.value === 'full'
-                    ? PASSCODE_LAYOUT_DEFAULTS.admin
-                    : PASSCODE_LAYOUT_DEFAULTS[role] || PASSCODE_LAYOUT_DEFAULTS.agent;
+            const preset = layoutMode.value === 'overview_only'
+                ? { allowedTabs: ['overview'] }
+                : layoutMode.value === 'forms_only'
+                    ? { allowedTabs: ['forms'] }
+                    : layoutMode.value === 'full'
+                        ? PASSCODE_LAYOUT_DEFAULTS.admin
+                        : { allowedTabs: getCheckedValues('passcodeChatTab') };
             renderPasscodeChatLayoutTabs(preset.allowedTabs);
         });
     }
@@ -3083,6 +3185,28 @@ async function loadPasscodeInboxOptions() {
     }
     const selected = getCheckedValues('passcodeInboxKey');
     renderPasscodeInboxGrid(selected);
+}
+
+async function loadPasscodeInstructionOptions() {
+    try {
+        const response = await fetch('/api/instructions-v2');
+        const payload = await response.json();
+        if (!response.ok || payload?.success === false) {
+            throw new Error(payload?.error || 'ไม่สามารถโหลดรายการ Instructions ได้');
+        }
+        passcodeInstructionOptions = (Array.isArray(payload.instructions) ? payload.instructions : [])
+            .map(instruction => ({
+                id: String(instruction._id || instruction.id || instruction.instructionId || '').trim(),
+                instructionId: String(instruction.instructionId || '').trim(),
+                name: instruction.name || instruction.title || 'Untitled Instruction',
+                updatedAt: instruction.updatedAt || instruction.createdAt || null
+            }))
+            .filter(instruction => instruction.id);
+    } catch (error) {
+        console.warn('[Passcode] cannot load instruction options:', error);
+        passcodeInstructionOptions = [];
+    }
+    renderPasscodeInstructionGrid(passcodeInstructionSelectedIds);
 }
 
 function renderPasscodePermissionGrid(selected = []) {
@@ -3126,13 +3250,36 @@ function renderPasscodeInboxGrid(selected = []) {
     `).join('');
 }
 
+function renderPasscodeInstructionGrid(selected = []) {
+    const grid = document.getElementById('passcodeInstructionGrid');
+    if (!grid) return;
+    passcodeInstructionSelectedIds = Array.isArray(selected) ? selected.filter(Boolean) : [];
+    const selectedSet = new Set(passcodeInstructionSelectedIds);
+    const mode = document.getElementById('passcodeInstructionMode')?.value || 'selected';
+    grid.classList.toggle('opacity-50', mode === 'all');
+    if (!passcodeInstructionOptions.length) {
+        grid.innerHTML = '<div class="passcode-empty-note">ยังไม่มี Instruction หรือยังโหลดรายการไม่ได้</div>';
+        return;
+    }
+    grid.innerHTML = passcodeInstructionOptions.map(instruction => `
+        <label class="passcode-check-item passcode-check-item--stack">
+            <input type="checkbox" name="passcodeInstructionId" value="${escapeHtml(instruction.id)}" ${selectedSet.has(instruction.id) || selectedSet.has(instruction.instructionId) ? 'checked' : ''} ${mode === 'all' ? 'disabled' : ''}>
+            <span>
+                <span>${escapeHtml(instruction.name)}</span>
+                ${instruction.updatedAt ? `<small>${escapeHtml(formatPasscodeDate(instruction.updatedAt))}</small>` : ''}
+            </span>
+        </label>
+    `).join('');
+}
+
 function renderPasscodeChatLayoutTabs(selected = []) {
     const grid = document.getElementById('passcodeChatLayoutTabs');
     if (!grid) return;
     const selectedSet = new Set(selected);
+    const isCustomMode = (document.getElementById('passcodeChatLayoutMode')?.value || 'custom') === 'custom';
     grid.innerHTML = PASSCODE_CHAT_TABS.map(([value, label]) => `
         <label class="passcode-check-item">
-            <input type="checkbox" name="passcodeChatTab" value="${escapeHtml(value)}" ${selectedSet.has(value) ? 'checked' : ''}>
+            <input type="checkbox" name="passcodeChatTab" value="${escapeHtml(value)}" ${selectedSet.has(value) ? 'checked' : ''} ${isCustomMode ? '' : 'disabled'}>
             <span>${escapeHtml(label)}</span>
         </label>
     `).join('');
@@ -3147,6 +3294,10 @@ function getCheckedValues(name) {
 function applyPasscodeRolePreset(role) {
     const normalizedRole = PASSCODE_ROLE_DEFAULTS[role] ? role : 'agent';
     renderPasscodePermissionGrid(PASSCODE_ROLE_DEFAULTS[normalizedRole]);
+    const instructionAccess = PASSCODE_INSTRUCTION_DEFAULTS[normalizedRole] || PASSCODE_INSTRUCTION_DEFAULTS.agent;
+    const instructionMode = document.getElementById('passcodeInstructionMode');
+    if (instructionMode) instructionMode.value = instructionAccess.mode;
+    renderPasscodeInstructionGrid(instructionAccess.instructionIds);
     const layout = PASSCODE_LAYOUT_DEFAULTS[normalizedRole] || PASSCODE_LAYOUT_DEFAULTS.agent;
     const layoutMode = document.getElementById('passcodeChatLayoutMode');
     if (layoutMode) layoutMode.value = layout.mode;
@@ -3196,6 +3347,10 @@ function loadPasscodeIntoForm(passcode) {
     const role = passcode.role || 'admin';
     document.getElementById('newPasscodeRole').value = role === 'superadmin' ? 'admin' : role;
     renderPasscodePermissionGrid(passcode.permissions || PASSCODE_ROLE_DEFAULTS[role] || PASSCODE_ROLE_DEFAULTS.admin);
+    const instructionAccess = passcode.instructionAccess || PASSCODE_INSTRUCTION_DEFAULTS[role] || PASSCODE_INSTRUCTION_DEFAULTS.admin;
+    const instructionMode = document.getElementById('passcodeInstructionMode');
+    if (instructionMode) instructionMode.value = instructionAccess.mode || 'selected';
+    renderPasscodeInstructionGrid(instructionAccess.instructionIds || []);
     const inboxMode = document.getElementById('passcodeInboxMode');
     if (inboxMode) inboxMode.value = passcode.inboxAccess?.mode || 'selected';
     renderPasscodeInboxGrid(passcode.inboxAccess?.inboxKeys || []);
@@ -3213,6 +3368,7 @@ function loadPasscodeIntoForm(passcode) {
 function collectPasscodePayload(includePasscode) {
     const role = document.getElementById('newPasscodeRole')?.value || 'agent';
     const inboxMode = document.getElementById('passcodeInboxMode')?.value || 'selected';
+    const instructionMode = document.getElementById('passcodeInstructionMode')?.value || 'selected';
     const layoutMode = document.getElementById('passcodeChatLayoutMode')?.value || 'forms_only';
     const payload = {
         label: (document.getElementById('newPasscodeLabel')?.value || '').trim(),
@@ -3222,11 +3378,19 @@ function collectPasscodePayload(includePasscode) {
             mode: inboxMode,
             inboxKeys: inboxMode === 'all' ? [] : getCheckedValues('passcodeInboxKey')
         },
+        instructionAccess: {
+            mode: instructionMode,
+            instructionIds: instructionMode === 'all' ? [] : getCheckedValues('passcodeInstructionId')
+        },
         chatLayout: {
             mode: layoutMode,
             allowedTabs: layoutMode === 'full'
                 ? PASSCODE_LAYOUT_DEFAULTS.admin.allowedTabs
-                : getCheckedValues('passcodeChatTab')
+                : layoutMode === 'overview_only'
+                    ? ['overview']
+                    : layoutMode === 'forms_only'
+                        ? ['forms']
+                        : getCheckedValues('passcodeChatTab')
         }
     };
     if (includePasscode) {
@@ -3242,8 +3406,16 @@ function summarizeInboxAccess(inboxAccess = {}) {
     return keys.slice(0, 3).join(', ') + (keys.length > 3 ? ` +${keys.length - 3}` : '');
 }
 
+function summarizeInstructionAccess(instructionAccess = {}) {
+    if (instructionAccess.mode === 'all') return 'ทุก Instructions';
+    const ids = Array.isArray(instructionAccess.instructionIds) ? instructionAccess.instructionIds : [];
+    if (!ids.length) return 'เฉพาะที่สร้างเอง';
+    return `${ids.length} Instructions + ที่สร้างเอง`;
+}
+
 function summarizeChatLayout(chatLayout = {}) {
     if (chatLayout.mode === 'full') return 'เต็มทั้งหมด';
+    if (chatLayout.mode === 'overview_only') return 'รวมเท่านั้น';
     if (chatLayout.mode === 'forms_only') return 'Chat + Form';
     const tabs = Array.isArray(chatLayout.allowedTabs) ? chatLayout.allowedTabs : [];
     if (!tabs.length) return 'ไม่ระบุ Layout';
@@ -3354,6 +3526,7 @@ function renderPasscodeTable() {
         const roleLabel = PASSCODE_ROLE_LABELS[passcode.role] || passcode.role || 'Admin';
         const roleClass = getRoleClass(passcode.role);
         const layoutSummary = summarizeChatLayout(passcode.chatLayout);
+        const instructionSummary = summarizeInstructionAccess(passcode.instructionAccess);
 
         return `
             <tr class="${passcode.isActive ? '' : 'is-disabled'}">
@@ -3373,6 +3546,7 @@ function renderPasscodeTable() {
                 <td>
                     <div class="passcode-chip-row">${renderInboxAccess(passcode.inboxAccess)}</div>
                     <small class="passcode-cell-note">${escapeHtml(layoutSummary)}</small>
+                    <small class="passcode-cell-note">${escapeHtml(instructionSummary)}</small>
                 </td>
                 <td><span class="passcode-status ${passcode.isActive ? 'is-active' : 'is-inactive'}">${statusText}</span></td>
                 <td>
@@ -3619,8 +3793,8 @@ async function loadApiKeys() {
 
     tbody.innerHTML = `
         <tr>
-            <td colspan="5" class="text-center text-muted py-4">
-                <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
+            <td colspan="5" class="api-keys-empty">
+                <i class="fas fa-spinner fa-spin api-keys-empty__icon"></i>กำลังโหลด...
             </td>
         </tr>
     `;
@@ -3637,8 +3811,8 @@ async function loadApiKeys() {
         console.error('[API Keys] load error:', error);
         tbody.innerHTML = `
             <tr>
-                <td colspan="5" class="text-center text-danger py-4">
-                    <i class="fas fa-exclamation-circle me-2"></i>${escapeHtml(error.message)}
+                <td colspan="5" class="api-keys-empty is-danger">
+                    <i class="fas fa-exclamation-circle api-keys-empty__icon"></i>${escapeHtml(error.message)}
                 </td>
             </tr>
         `;
@@ -3648,12 +3822,13 @@ async function loadApiKeys() {
 function renderApiKeys() {
     const tbody = document.getElementById('apiKeysTableBody');
     if (!tbody) return;
+    const canManageApiKeys = adminCan('api-keys:manage');
 
     if (apiKeysCache.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="5" class="text-center text-muted py-4">
-                    <i class="fas fa-key me-2"></i>ยังไม่มี API Key ในระบบ กดปุ่ม "เพิ่ม API Key" เพื่อเริ่มใช้งาน
+                <td colspan="5" class="api-keys-empty">
+                    <i class="fas fa-key api-keys-empty__icon"></i>ยังไม่มี API Key ในระบบ กดปุ่ม "เพิ่ม API Key" เพื่อเริ่มใช้งาน
                 </td>
             </tr>
         `;
@@ -3663,46 +3838,47 @@ function renderApiKeys() {
     tbody.innerHTML = apiKeysCache.map(key => {
         const statusClass = key.isActive ? 'success' : 'secondary';
         const statusText = key.isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
-        const defaultBadge = key.isDefault ? '<span class="badge bg-primary ms-1">หลัก</span>' : '';
+        const defaultBadge = key.isDefault ? '<span class="api-key-badge is-primary">หลัก</span>' : '';
         const provider = normalizeApiProvider(key.provider);
-        const providerBadge = `<span class="badge bg-dark ms-1">${escapeHtml(provider.toUpperCase())}</span>`;
+        const providerBadge = `<span class="api-key-badge is-neutral">${escapeHtml(provider.toUpperCase())}</span>`;
         const lastUsed = key.lastUsedAt ? formatBotUpdatedAt(key.lastUsedAt) : 'ยังไม่มี';
         const usage = key.usageCount || 0;
 
         return `
             <tr>
-                <td>
-                    <strong>${escapeHtml(key.name)}</strong>
-                    ${defaultBadge}
-                    ${providerBadge}
+                <td data-label="ชื่อ">
+                    <div class="api-key-name">
+                        <strong>${escapeHtml(key.name)}</strong>
+                        <span class="api-key-badges">${defaultBadge}${providerBadge}</span>
+                    </div>
                 </td>
-                <td>
-                    <code class="text-muted">${escapeHtml(key.maskedKey)}</code>
+                <td data-label="API Key">
+                    <code class="api-key-mask">${escapeHtml(key.maskedKey)}</code>
                 </td>
-                <td class="text-center">
-                    <span class="badge bg-${statusClass}">${statusText}</span>
+                <td data-label="สถานะ">
+                    <span class="api-key-status is-${statusClass}">${statusText}</span>
                 </td>
-                <td class="text-center">
-                    <small>${usage} ครั้ง</small>
-                    <br>
-                    <small class="text-muted">${lastUsed}</small>
+                <td data-label="ใช้งาน">
+                    <div class="api-key-usage">
+                        <span>${usage} ครั้ง</span>
+                        <small>${lastUsed}</small>
+                    </div>
                 </td>
-                <td class="text-end">
-                    <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-info" title="ทดสอบ" onclick="testApiKey('${key.id}')">
+                <td data-label="จัดการ">
+                    ${canManageApiKeys ? `<div class="api-key-actions">
+                        <button class="btn-ghost-sm" title="ทดสอบ" aria-label="ทดสอบ API Key" onclick="testApiKey('${key.id}')">
                             <i class="fas fa-check-circle"></i>
                         </button>
-                        <button class="btn btn-outline-primary" title="แก้ไข" onclick="openEditApiKeyModal('${key.id}')">
+                        <button class="btn-ghost-sm" title="แก้ไข" aria-label="แก้ไข API Key" onclick="openEditApiKeyModal('${key.id}')">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button class="btn btn-outline-${key.isActive ? 'warning' : 'success'}" title="${key.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}" 
-                                onclick="toggleApiKeyStatus('${key.id}', ${!key.isActive})">
+                        <button class="btn-ghost-sm ${key.isActive ? 'is-warning' : 'is-success'}" title="${key.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}" aria-label="${key.isActive ? 'ปิดใช้งาน API Key' : 'เปิดใช้งาน API Key'}" onclick="toggleApiKeyStatus('${key.id}', ${!key.isActive})">
                             <i class="fas fa-${key.isActive ? 'pause' : 'play'}"></i>
                         </button>
-                        <button class="btn btn-outline-danger" title="ลบ" onclick="deleteApiKey('${key.id}')">
+                        <button class="btn-ghost-sm is-danger" title="ลบ" aria-label="ลบ API Key" onclick="deleteApiKey('${key.id}')">
                             <i class="fas fa-trash"></i>
                         </button>
-                    </div>
+                    </div>` : '<span class="text-muted-v2">-</span>'}
                 </td>
             </tr>
         `;
@@ -3710,6 +3886,7 @@ function renderApiKeys() {
 }
 
 function openAddApiKeyModal() {
+    if (!adminCan('api-keys:manage')) return;
     document.getElementById('apiKeyId').value = '';
     document.getElementById('apiKeyName').value = '';
     document.getElementById('apiKeyProvider').value = API_PROVIDER_OPENAI;
@@ -3725,6 +3902,7 @@ function openAddApiKeyModal() {
 }
 
 function openEditApiKeyModal(id) {
+    if (!adminCan('api-keys:manage')) return;
     const key = apiKeysCache.find(k => k.id === id);
     if (!key) {
         showToast('ไม่พบ API Key', 'danger');
@@ -3746,6 +3924,7 @@ function openEditApiKeyModal(id) {
 }
 
 async function saveApiKey() {
+    if (!adminCan('api-keys:manage')) return;
     const id = document.getElementById('apiKeyId').value;
     const name = document.getElementById('apiKeyName').value.trim();
     const provider = normalizeApiProvider(document.getElementById('apiKeyProvider')?.value);
@@ -3806,6 +3985,7 @@ async function saveApiKey() {
 }
 
 async function deleteApiKey(id) {
+    if (!adminCan('api-keys:manage')) return;
     const key = apiKeysCache.find(k => k.id === id);
     const name = key?.name || id || '';
     if (!confirm(`ยืนยันการลบ API Key "${name}"?\n\nหมายเหตุ: Bot ที่ใช้ key นี้จะสลับไปใช้ key หลักหรือ Environment Variable แทน`)) {
@@ -3831,6 +4011,7 @@ async function deleteApiKey(id) {
 }
 
 async function testApiKey(id) {
+    if (!adminCan('api-keys:manage')) return;
     const key = apiKeysCache.find(k => k.id === id);
     if (!key) return;
 
@@ -3854,6 +4035,7 @@ async function testApiKey(id) {
 }
 
 async function testApiKeyFromModal() {
+    if (!adminCan('api-keys:manage')) return;
     const apiKey = document.getElementById('apiKeyValue').value.trim();
     const provider = normalizeApiProvider(document.getElementById('apiKeyProvider')?.value);
     const resultDiv = document.getElementById('apiKeyTestResult');
@@ -3914,6 +4096,7 @@ async function testApiKeyFromModal() {
 }
 
 async function toggleApiKeyStatus(id, isActive) {
+    if (!adminCan('api-keys:manage')) return;
     try {
         const response = await fetch(`/api/openai-keys/${id}`, {
             method: 'PUT',
@@ -3966,7 +4149,7 @@ initNavigation = function () {
         mutations.forEach(function (mutation) {
             if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                 const section = document.getElementById('api-keys-settings');
-                if (section && !section.classList.contains('d-none') && adminCan('settings:api-key')) {
+                if (section && !section.classList.contains('d-none') && adminCan(['settings:api-key', 'api-keys:view', 'api-keys:manage'])) {
                     loadApiKeys();
                 }
             }

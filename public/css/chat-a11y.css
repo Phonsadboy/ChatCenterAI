@@ -24,7 +24,10 @@
 .tag-filter-btn:focus,
 .btn-header-action:focus,
 .btn-input-action:focus,
-.btn-send:focus {
+.btn-send:focus,
+.user-item:focus-visible,
+.message-image:focus-visible,
+.tag-item--selectable:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(165, 184, 217, 0.35);
 }

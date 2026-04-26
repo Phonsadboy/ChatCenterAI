@@ -18,7 +18,7 @@ class Chat2Manager {
     };
     this.filtersCollapsed = true;
     this.tagFiltersExpanded = false;
-    this.mobileMedia = window.matchMedia ? window.matchMedia("(max-width: 760px)") : null;
+    this.mobileMedia = window.matchMedia ? window.matchMedia("(max-width: 991.98px)") : null;
     this.mobilePanel = "";
     this.inboxes = [];
     this.adminUser = window.adminAuth?.user || null;
@@ -76,26 +76,43 @@ class Chat2Manager {
   }
 
   isMobile() {
-    return this.mobileMedia ? this.mobileMedia.matches : window.innerWidth <= 760;
+    return this.mobileMedia ? this.mobileMedia.matches : window.innerWidth <= 991;
   }
 
-  setMobilePanel(panel = "") {
+  setMobilePanel(panel = "", options = {}) {
     if (!this.isMobile()) {
       panel = "";
     }
     if (panel === "context" && !this.allowedTabs.length) {
       panel = "";
     }
+    const previousPanel = this.mobilePanel;
     this.mobilePanel = panel;
     this.updateMobilePanelClasses();
+    if (options.focus && panel && panel !== previousPanel) {
+      this.focusMobilePanel(panel);
+    } else if (options.focus && !panel && previousPanel && this.mobileFocusReturn?.focus) {
+      this.mobileFocusReturn.focus({ preventScroll: true });
+      this.mobileFocusReturn = null;
+    }
   }
 
   toggleMobilePanel(panel) {
-    this.setMobilePanel(this.mobilePanel === panel ? "" : panel);
+    this.mobileFocusReturn = document.activeElement;
+    this.setMobilePanel(this.mobilePanel === panel ? "" : panel, { focus: true });
   }
 
   closeMobilePanels() {
-    this.setMobilePanel("");
+    this.setMobilePanel("", { focus: true });
+  }
+
+  focusMobilePanel(panel) {
+    const target = panel === "inbox"
+      ? this.$("chat2Search")
+      : this.$("chat2Tabs")?.querySelector("button:not([disabled])");
+    if (target?.focus) {
+      requestAnimationFrame(() => target.focus({ preventScroll: true }));
+    }
   }
 
   syncMobileShell() {
@@ -121,6 +138,7 @@ class Chat2Manager {
     const contextOpen = mobile && this.mobilePanel === "context";
     shell.classList.toggle("is-mobile-inbox-open", inboxOpen);
     shell.classList.toggle("is-mobile-context-open", contextOpen);
+    document.body.classList.toggle("chat2-mobile-panel-open", inboxOpen || contextOpen);
 
     const scrim = this.$("chat2MobileScrim");
     if (scrim) scrim.hidden = !(inboxOpen || contextOpen);
@@ -137,8 +155,16 @@ class Chat2Manager {
       contextBtn.setAttribute("aria-expanded", contextOpen ? "true" : "false");
     }
 
-    shell.querySelector(".cc2-inbox")?.setAttribute("aria-hidden", mobile && !inboxOpen ? "true" : "false");
-    shell.querySelector(".cc2-context")?.setAttribute("aria-hidden", mobile && !contextOpen ? "true" : "false");
+    const inbox = shell.querySelector(".cc2-inbox");
+    const context = shell.querySelector(".cc2-context");
+    if (inbox) {
+      inbox.setAttribute("aria-hidden", mobile && !inboxOpen ? "true" : "false");
+      inbox.inert = mobile && !inboxOpen;
+    }
+    if (context) {
+      context.setAttribute("aria-hidden", mobile && !contextOpen ? "true" : "false");
+      context.inert = mobile && !contextOpen;
+    }
   }
 
   can(permission) {
@@ -997,13 +1023,16 @@ class Chat2Manager {
   }
 
   defaultTagColor(tag) {
-    const colors = ["#315f8f", "#23775f", "#a76918", "#b83f45", "#6f4aa5", "#28708a", "#7a6a1d", "#8a4b2a"];
+    const styles = window.getComputedStyle(document.documentElement);
+    const colors = Array.from({ length: 8 }, (_, index) => styles.getPropertyValue(`--chat-tag-palette-${index + 1}`).trim())
+      .filter(Boolean);
+    const palette = colors.length ? colors : ["#315f8f", "#23775f", "#a76918", "#b83f45", "#6f4aa5", "#28708a", "#7a6a1d", "#8a4b2a"];
     const key = this.tagKey(tag);
     let hash = 0;
     for (let index = 0; index < key.length; index += 1) {
       hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
     }
-    return colors[Math.abs(hash) % colors.length] || colors[0];
+    return palette[Math.abs(hash) % palette.length] || palette[0];
   }
 
   tagMeta(tag) {
@@ -1663,7 +1692,7 @@ class Chat2Manager {
         <input type="text" class="form-control" data-order-field="product" placeholder="สินค้า" value="${this.escapeAttr(item.product || "")}">
         <input type="number" class="form-control" data-order-field="quantity" placeholder="จำนวน" value="${this.escapeAttr(item.quantity || 1)}">
         <input type="number" class="form-control" data-order-field="price" placeholder="ราคา" value="${this.escapeAttr(item.price || 0)}">
-        <button type="button" data-remove-order-item><i class="fas fa-times"></i></button>
+        <button type="button" data-remove-order-item aria-label="ลบรายการสินค้า"><i class="fas fa-times"></i></button>
       </div>
     `;
   }
@@ -2129,9 +2158,9 @@ class Chat2Manager {
           ${images ? `<div class="cc2-message-images">${images}</div>` : ""}
           ${messageId && message.role !== "user" ? `
             <div class="cc2-message-actions">
-              <button type="button" class="${feedback === "positive" ? "is-active" : ""}" data-feedback="positive" title="คำตอบดี"><i class="fas fa-thumbs-up"></i></button>
-              <button type="button" class="${feedback === "negative" ? "is-active" : ""}" data-feedback="negative" title="คำตอบควรแก้"><i class="fas fa-thumbs-down"></i></button>
-              ${feedback ? `<button type="button" data-feedback="clear" title="ล้าง feedback"><i class="fas fa-xmark"></i></button>` : ""}
+              <button type="button" class="${feedback === "positive" ? "is-active" : ""}" data-feedback="positive" title="คำตอบดี" aria-label="ให้คะแนนคำตอบดี"><i class="fas fa-thumbs-up"></i></button>
+              <button type="button" class="${feedback === "negative" ? "is-active" : ""}" data-feedback="negative" title="คำตอบควรแก้" aria-label="ให้คะแนนว่าคำตอบควรแก้"><i class="fas fa-thumbs-down"></i></button>
+              ${feedback ? `<button type="button" data-feedback="clear" title="ล้าง feedback" aria-label="ล้าง feedback"><i class="fas fa-xmark"></i></button>` : ""}
             </div>
           ` : ""}
         </div>

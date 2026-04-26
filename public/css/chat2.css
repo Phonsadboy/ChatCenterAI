@@ -1,31 +1,43 @@
 :root {
-  --cc2-bg: #eef2f5;
-  --cc2-panel: #ffffff;
-  --cc2-panel-alt: #f7f9fb;
-  --cc2-line: #dce3ea;
-  --cc2-line-strong: #c9d3dd;
-  --cc2-ink: #17202a;
-  --cc2-sub: #536171;
-  --cc2-muted: #8491a1;
-  --cc2-blue: #315f8f;
-  --cc2-blue-soft: #e8f0f8;
-  --cc2-green: #23775f;
-  --cc2-green-soft: #e5f4ef;
-  --cc2-amber: #a76918;
-  --cc2-amber-soft: #fbf0dc;
-  --cc2-red: #b83f45;
-  --cc2-red-soft: #fae7e8;
-  --cc2-violet: #6750a4;
-  --cc2-violet-soft: #eee9fb;
-  --cc2-radius: 8px;
-  --cc2-shadow: 0 8px 24px rgba(25, 35, 47, 0.07);
+  --cc2-bg: var(--bg-body, #eef2f5);
+  --cc2-panel: var(--bg-card, #ffffff);
+  --cc2-panel-alt: color-mix(in srgb, var(--bg-body, #f6f7fb) 82%, #ffffff);
+  --cc2-line: var(--border, #dce3ea);
+  --cc2-line-strong: color-mix(in srgb, var(--border, #dce3ea) 78%, var(--text-muted, #8491a1));
+  --cc2-ink: var(--text-main, #17202a);
+  --cc2-sub: var(--text-sub, #536171);
+  --cc2-muted: var(--text-muted, #8491a1);
+  --cc2-blue: var(--color-primary, #315f8f);
+  --cc2-blue-soft: rgba(var(--primary-rgb, 74, 111, 165), 0.12);
+  --cc2-green: var(--color-success, #23775f);
+  --cc2-green-soft: rgba(var(--success-rgb, 45, 143, 111), 0.12);
+  --cc2-amber: var(--color-warning, #a76918);
+  --cc2-amber-soft: rgba(var(--warning-rgb, 223, 169, 75), 0.15);
+  --cc2-red: var(--color-danger, #b83f45);
+  --cc2-red-soft: rgba(var(--danger-rgb, 210, 85, 90), 0.12);
+  --cc2-violet: #6f4aa5;
+  --cc2-violet-soft: rgba(111, 74, 165, 0.12);
+  --cc2-radius: var(--radius-md, 8px);
+  --cc2-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
   --cc2-top: var(--layout-topbar-height, 56px);
+  --chat-tag-palette-1: var(--color-primary, #315f8f);
+  --chat-tag-palette-2: var(--color-success, #23775f);
+  --chat-tag-palette-3: var(--color-warning, #a76918);
+  --chat-tag-palette-4: var(--color-danger, #b83f45);
+  --chat-tag-palette-5: #6f4aa5;
+  --chat-tag-palette-6: var(--color-info, #28708a);
+  --chat-tag-palette-7: #7a6a1d;
+  --chat-tag-palette-8: #8a4b2a;
 }
 
 body.page-chat2 {
   background: var(--cc2-bg);
   color: var(--cc2-ink);
   font-family: var(--font-family-base, 'Mali', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+  overflow: hidden;
+}
+
+body.page-chat2.chat2-mobile-panel-open {
   overflow: hidden;
 }
 
@@ -1523,7 +1535,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 991.98px) {
   html,
   body.page-chat2 {
     height: 100%;
@@ -1534,7 +1546,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
     height: 100dvh;
     min-height: 0;
     overflow: hidden;
-    padding: var(--layout-topbar-height, 56px) 0 var(--layout-mobile-nav-height, 72px) !important;
+    padding: 0 !important;
   }
 
   .cc2-shell {

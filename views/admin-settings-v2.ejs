@@ -96,7 +96,7 @@
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i class="fab fa-line text-success me-2"></i>Line Bots
                                         </h3>
-                                        <button class="btn-v2 btn-v2-primary btn-v2-sm" onclick="openAddLineBotModal()">
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm bot-secret-action" onclick="openAddLineBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่
                                         </button>
                                     </div>
@@ -113,7 +113,7 @@
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i
                                                 class="fab fa-facebook text-primary me-2"></i>Facebook Bots</h3>
-                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm bot-secret-action"
                                             onclick="openAddFacebookBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่
                                         </button>
@@ -131,7 +131,7 @@
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i
                                                 class="fab fa-instagram text-danger me-2"></i>Instagram Bots</h3>
-                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm bot-secret-action"
                                             onclick="openAddInstagramBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่
                                         </button>
@@ -149,7 +149,7 @@
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i
                                                 class="fab fa-whatsapp text-success me-2"></i>WhatsApp Bots</h3>
-                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm bot-secret-action"
                                             onclick="openAddWhatsAppBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่
                                         </button>
@@ -489,8 +489,8 @@
                                 <ol class="mb-0">
                                     <li>เพิ่ม Telegram Sender Bot (ถ้าต้องการส่ง Telegram) และเพิ่ม LINE Bot (ถ้าต้องการส่ง LINE)</li>
                                     <li>เชิญบอทเข้ากลุ่มปลายทาง (LINE/Telegram) แล้วส่งข้อความ 1 ครั้งในกลุ่ม</li>
-                                    <li>กด “รีเฟรช” เพื่อให้ระบบจับกลุ่ม และตรวจสอบว่ากลุ่มแสดงในรายการ</li>
-                                    <li>กด “สร้างช่องทาง” เลือกปลายทาง LINE หรือ Telegram เลือก event และเลือกบอท/เพจต้นทางที่ต้องการแจ้งเตือน
+                                    <li>กด "รีเฟรช" เพื่อให้ระบบจับกลุ่ม และตรวจสอบว่ากลุ่มแสดงในรายการ</li>
+                                    <li>กด "สร้างช่องทาง" เลือกปลายทาง LINE หรือ Telegram เลือก event และเลือกบอท/เพจต้นทางที่ต้องการแจ้งเตือน
                                     </li>
                                 </ol>
                             </div>
@@ -844,11 +844,27 @@
                                                         <div class="passcode-control-panel h-100">
                                                             <div class="passcode-control-title passcode-control-title--split">
                                                                 <div>
-                                                                    <span>Chat Layout</span>
-                                                                    <small>ควบคุม panel ด้านขวาของ Agent</small>
+                                                                    <span>Instruction Access</span>
+                                                                    <small>เห็นทั้งหมด, เห็นบางอัน และเห็นที่ตัวเองสร้างเสมอ</small>
+                                                                </div>
+                                                                <select id="passcodeInstructionMode" class="form-select form-select-sm w-auto">
+                                                                    <option value="selected">เลือก Instructions</option>
+                                                                    <option value="all">ทุก Instructions</option>
+                                                                </select>
+                                                            </div>
+                                                            <div id="passcodeInstructionGrid" class="small"></div>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div class="passcode-control-panel h-100">
+                                                            <div class="passcode-control-title passcode-control-title--split">
+                                                                <div>
+                                                                    <span>Chat Workspace</span>
+                                                                    <small>กำหนดแท็บที่เห็นในหน้าแชท</small>
                                                                 </div>
                                                                 <select id="passcodeChatLayoutMode" class="form-select form-select-sm w-auto">
                                                                     <option value="forms_only">Chat + Form</option>
+                                                                    <option value="overview_only">รวมเท่านั้น</option>
                                                                     <option value="full">เต็มทั้งหมด</option>
                                                                     <option value="custom">เลือกเอง</option>
                                                                 </select>
@@ -1033,7 +1049,7 @@
                                 <a href="/admin/api-usage" class="btn-v2 btn-v2-secondary btn-v2-sm">
                                     <i class="fas fa-chart-bar"></i> ดูสถิติ
                                 </a>
-                                <button class="btn-v2 btn-v2-primary btn-v2-sm" onclick="openAddApiKeyModal()">
+                                <button class="btn-v2 btn-v2-primary btn-v2-sm" id="addApiKeyBtn" onclick="openAddApiKeyModal()">
                                     <i class="fas fa-plus"></i> เพิ่ม API Key
                                 </button>
                             </div>
@@ -1047,28 +1063,28 @@
                                 </button>
                             </div>
                             <div class="card-body-v2 p-0">
-                                <div class="table-responsive">
-                                    <table class="table table-hover mb-0" id="apiKeysTable">
+                                <div class="api-keys-table-wrap">
+                                    <table class="api-keys-table" id="apiKeysTable">
                                         <thead>
                                             <tr>
-                                                <th style="width: 30%">ชื่อ</th>
-                                                <th style="width: 25%">API Key</th>
-                                                <th style="width: 15%" class="text-center">สถานะ</th>
-                                                <th style="width: 15%" class="text-center">ใช้งาน</th>
-                                                <th style="width: 15%" class="text-end">จัดการ</th>
+                                                <th>ชื่อ</th>
+                                                <th>API Key</th>
+                                                <th>สถานะ</th>
+                                                <th>ใช้งาน</th>
+                                                <th>จัดการ</th>
                                             </tr>
                                         </thead>
                                         <tbody id="apiKeysTableBody">
                                             <tr>
-                                                <td colspan="5" class="text-center text-muted py-4">
+                                                <td colspan="5" class="api-keys-empty">
                                                     <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
                                                 </td>
                                             </tr>
                                         </tbody>
                                     </table>
                                 </div>
-                                <div class="p-3 border-top bg-light">
-                                    <small class="text-muted">
+                                <div class="api-keys-note">
+                                    <small>
                                         <i class="fas fa-info-circle me-1"></i>
                                         หากไม่มี API Key ใดๆ ระบบจะใช้ <code>OPENAI_API_KEY</code> จาก Environment
                                         Variable แทน

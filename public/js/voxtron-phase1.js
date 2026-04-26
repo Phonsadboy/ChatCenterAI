@@ -110,6 +110,7 @@
   }
 
   function bindEvents() {
+    applyPermissionVisibility();
     els.dataFormsRefreshBtn?.addEventListener("click", () => refreshDataForms());
     els.dataFormsCreateBtn?.addEventListener("click", () => openCreateForm());
     els.formAddFieldBtn?.addEventListener("click", () => addFieldRow());
@@ -156,6 +157,28 @@
       if (btn.dataset.action === "copy") copyAssetUrl(id);
       if (btn.dataset.action === "delete") deleteFileAsset(id);
     });
+  }
+
+  function canAdmin(permission) {
+    if (!permission) return true;
+    const user = window.adminAuth?.user || null;
+    if (!user) return true;
+    if (user.role === "superadmin") return true;
+    return Array.isArray(user.permissions) && user.permissions.includes(permission);
+  }
+
+  function applyPermissionVisibility() {
+    const canManageForms = canAdmin("data-forms:manage");
+    const canExportForms = canAdmin("data-forms:export");
+    const canManageFiles = canAdmin("file-assets:manage");
+
+    if (els.dataFormsCreateBtn) els.dataFormsCreateBtn.hidden = !canManageForms;
+    if (els.exportCsvBtn) els.exportCsvBtn.hidden = !canExportForms;
+    if (els.exportXlsxBtn) els.exportXlsxBtn.hidden = !canExportForms;
+    if (els.formSaveBtn) els.formSaveBtn.hidden = !canManageForms;
+    if (els.formDeleteBtn) els.formDeleteBtn.hidden = !canManageForms;
+    if (els.formAddFieldBtn) els.formAddFieldBtn.hidden = !canManageForms;
+    if (els.fileUploadForm) els.fileUploadForm.hidden = !canManageFiles;
   }
 
   async function ensureBots() {
@@ -245,6 +268,7 @@
       return;
     }
 
+    const canManageForms = canAdmin("data-forms:manage");
     els.dataFormsList.innerHTML = state.forms.map((form) => {
       const fields = Array.isArray(form.fields) ? form.fields : [];
       const requiredCount = fields.filter((field) => field.required).length;
@@ -261,14 +285,14 @@
               ${fields.length} fields • required ${requiredCount} • ${assignedCount ? `${assignedCount} bot/page` : "ทุกบอท"}
             </div>
           </div>
-          <div class="voxtron-item-actions">
+          ${canManageForms ? `<div class="voxtron-item-actions">
             <button class="btn-ghost-sm" data-action="edit" data-id="${escapeHtml(form.id)}" title="แก้ไข">
               <i class="fas fa-edit"></i>
             </button>
             <button class="btn-ghost-sm text-danger" data-action="delete" data-id="${escapeHtml(form.id)}" title="ปิดฟอร์ม">
               <i class="fas fa-trash"></i>
             </button>
-          </div>
+          </div>` : ""}
         </div>
       `;
     }).join("");
@@ -374,6 +398,7 @@
   }
 
   function exportSubmissions(format) {
+    if (!canAdmin("data-forms:export")) return;
     const params = buildSubmissionQuery(5000);
     params.set("format", format === "xlsx" ? "xlsx" : "csv");
     window.open(`/admin/api/data-form-submissions/export?${params.toString()}`, "_blank", "noopener");
@@ -398,6 +423,7 @@
       return;
     }
 
+    const canManageForms = canAdmin("data-forms:manage");
     els.submissionsList.innerHTML = state.submissions.map((submission) => {
       const statuses = getStatusesForSubmission(submission);
       const values = submission.values && typeof submission.values === "object"
@@ -429,11 +455,13 @@
               ${escapeHtml(submission.platform || "line")} • ${escapeHtml(submission.botId || "default")} • ${escapeHtml(submission.userId || "-")} • ${formatDate(submission.createdAt)}
               ${submission.latestActor ? ` • by ${escapeHtml(submission.latestActor)}` : ""}
             </div>
-            ${valueRows ? `<details class="voxtron-details"><summary>ดูข้อมูล/แก้ JSON</summary><div>${valueRows}</div>
+            ${valueRows ? `<details class="voxtron-details"><summary>${canManageForms ? "ดูข้อมูล/แก้ JSON" : "ดูข้อมูล"}</summary><div>${valueRows}</div>
+              ${canManageForms ? `
               <textarea class="form-control form-control-sm mt-2" rows="4" data-submission-values="${escapeHtml(submission.id)}">${escapeHtml(JSON.stringify(values, null, 2))}</textarea>
+              ` : ""}
             </details>` : ""}
             ${historyRows ? `<details class="voxtron-details"><summary>Timeline / History</summary><div class="voxtron-timeline">${historyRows}</div></details>` : ""}
-            <div class="voxtron-inline-edit">
+            ${canManageForms ? `<div class="voxtron-inline-edit">
               <select class="form-select form-select-sm" data-submission-status="${escapeHtml(submission.id)}">
                 ${statuses.map((status) => `
                   <option value="${escapeHtml(status.key)}" ${status.key === submission.status ? "selected" : ""}>
@@ -444,7 +472,7 @@
               <button class="btn-v2 btn-v2-secondary btn-v2-sm" data-action="save-status" data-id="${escapeHtml(submission.id)}">
                 <i class="fas fa-save"></i>
               </button>
-            </div>
+            </div>` : ""}
           </div>
           <div class="voxtron-item-actions">
             <button class="btn-ghost-sm" data-action="open-chat" data-id="${escapeHtml(submission.id)}" title="เปิดแชท">
@@ -710,6 +738,7 @@
         '<div class="text-center p-4 text-muted-v2">ยังไม่มีไฟล์</div>';
       return;
     }
+    const canManageFiles = canAdmin("file-assets:manage");
     els.fileAssetsList.innerHTML = state.assets.map((asset) => {
       const assignedCount = Array.isArray(asset.enabledPages) ? asset.enabledPages.length : 0;
       const sizeMb = (Number(asset.sizeBytes || 0) / (1024 * 1024)).toFixed(2);
@@ -732,9 +761,11 @@
             <button class="btn-ghost-sm" data-action="copy" data-id="${escapeHtml(asset.id)}" title="คัดลอกลิงก์">
               <i class="fas fa-copy"></i>
             </button>
+            ${canManageFiles ? `
             <button class="btn-ghost-sm text-danger" data-action="delete" data-id="${escapeHtml(asset.id)}" title="ปิดไฟล์">
               <i class="fas fa-trash"></i>
             </button>
+            ` : ""}
           </div>
         </div>
       `;

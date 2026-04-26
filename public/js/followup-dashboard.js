@@ -172,34 +172,27 @@
             warning: 'circle-exclamation',
             info: 'circle-info'
         };
-        const classMap = {
-            success: 'alert-toast-success',
-            danger: 'alert-toast-danger',
-            warning: 'alert-toast-warning',
-            info: 'alert-toast-info'
-        };
-
-        const normalizedType = classMap[type] ? type : 'info';
+        const normalizedType = iconMap[type] ? type : 'info';
         const toast = document.createElement('div');
-        toast.className = `alert-toast ${classMap[normalizedType]}`;
+        toast.className = `app-toast app-toast--${normalizedType}`;
         toast.setAttribute('role', 'alert');
 
         const iconSpan = document.createElement('span');
-        iconSpan.className = 'alert-toast-icon';
+        iconSpan.className = 'app-toast__icon';
         iconSpan.innerHTML = `<i class="fas fa-${iconMap[normalizedType] || iconMap.info}"></i>`;
 
         const content = document.createElement('div');
-        content.className = 'alert-toast-content';
+        content.className = 'app-toast__body';
 
         const messageDiv = document.createElement('div');
-        messageDiv.className = 'alert-toast-message';
+        messageDiv.className = 'app-toast__title';
         messageDiv.textContent = message;
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
-        closeBtn.className = 'alert-toast-close';
+        closeBtn.className = 'app-toast__close';
         closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
-        closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+        closeBtn.innerHTML = '&times;';
 
         content.appendChild(messageDiv);
         content.appendChild(closeBtn);
@@ -207,10 +200,7 @@
         toast.appendChild(content);
         container.appendChild(toast);
 
-        requestAnimationFrame(() => toast.classList.add('show'));
-
         const hideToast = () => {
-            toast.classList.remove('show');
             toast.classList.add('hide');
             setTimeout(() => toast.remove(), 220);
         };

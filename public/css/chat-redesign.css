@@ -1486,6 +1486,14 @@
     opacity: 0.5;
 }
 
+.empty-state .app-empty__icon,
+.empty-state__icon {
+    font-size: 4rem;
+    color: var(--chat-primary);
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
 .empty-state h5 {
     font-size: 1.25rem;
     font-weight: 600;
@@ -1493,7 +1501,22 @@
     margin-bottom: 0.5rem;
 }
 
+.empty-state .app-empty__title,
+.empty-state__title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--chat-text-primary);
+    margin-bottom: 0.5rem;
+}
+
 .empty-state p {
+    font-size: 0.875rem;
+    color: var(--chat-text-secondary);
+    max-width: 400px;
+}
+
+.empty-state .app-empty__desc,
+.empty-state__desc {
     font-size: 0.875rem;
     color: var(--chat-text-secondary);
     max-width: 400px;

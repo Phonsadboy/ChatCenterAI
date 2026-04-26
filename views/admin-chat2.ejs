@@ -31,7 +31,7 @@
             <h1 class="cc2-title">บทสนทนา</h1>
           </div>
           <div class="cc2-panel-actions">
-            <button type="button" class="cc2-icon-btn" id="chat2ReloadUsers" title="โหลดใหม่">
+            <button type="button" class="cc2-icon-btn" id="chat2ReloadUsers" title="โหลดใหม่" aria-label="โหลดรายชื่อแชทใหม่">
               <i class="fas fa-rotate"></i>
             </button>
             <button type="button" class="cc2-icon-btn cc2-mobile-close" id="chat2MobileCloseInbox" title="ปิด Inbox" aria-label="ปิด Inbox">
@@ -352,12 +352,12 @@
     </div>
   </div>
 
-  <div class="modal fade" id="chat2ImageModal" tabindex="-1">
+  <div class="modal fade" id="chat2ImageModal" tabindex="-1" aria-labelledby="chat2ImageModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">รูปภาพ</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          <h5 class="modal-title" id="chat2ImageModalTitle">รูปภาพ</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
         </div>
         <div class="modal-body text-center">
           <img id="chat2ModalImage" src="" alt="รูปภาพ" class="img-fluid">
@@ -371,7 +371,7 @@
       <div class="modal-content cc2-color-modal">
         <div class="modal-header">
           <h5 class="modal-title" id="chat2TagColorModalTitle">เลือกสีแท็ก</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
         </div>
         <div class="modal-body">
           <div class="cc2-color-preview" id="chat2TagColorPreview">
@@ -396,12 +396,12 @@
     </div>
   </div>
 
-  <div class="modal fade" id="chat2OrderModal" tabindex="-1">
+  <div class="modal fade" id="chat2OrderModal" tabindex="-1" aria-labelledby="chat2OrderModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">แก้ไขออเดอร์</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          <h5 class="modal-title" id="chat2OrderModalTitle">แก้ไขออเดอร์</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="chat2EditOrderId">
