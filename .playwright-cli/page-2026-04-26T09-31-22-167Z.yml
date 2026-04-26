@@ -1,0 +1,172 @@
+- generic [active] [ref=e1]:
+  - text:   
+  - complementary [ref=e2]:
+    - generic [ref=e3]:
+      - navigation "AI & ระบบ" [ref=e4]:
+        - link "แดชบอร์ด" [ref=e5] [cursor=pointer]:
+          - /url: /admin/dashboard
+          - generic [ref=e6]: 
+        - link "ตั้งค่า" [ref=e7] [cursor=pointer]:
+          - /url: /admin/settings2
+          - generic [ref=e8]: 
+        - link "InstructionAI2" [ref=e9] [cursor=pointer]:
+          - /url: /admin/instruction-ai
+          - generic [ref=e10]: 
+        - link "สถิติ API" [ref=e11] [cursor=pointer]:
+          - /url: /admin/api-usage
+          - generic [ref=e12]: 
+      - navigation "ลูกค้า" [ref=e13]:
+        - link "แชท" [ref=e14] [cursor=pointer]:
+          - /url: /admin/chat
+          - generic [ref=e15]: 
+        - link "ออเดอร์" [ref=e16] [cursor=pointer]:
+          - /url: /admin/orders
+          - generic [ref=e17]: 
+        - link "ติดตามลูกค้า" [ref=e18] [cursor=pointer]:
+          - /url: /admin/followup
+          - generic [ref=e19]: 
+        - link "บรอดแคสต์" [ref=e20] [cursor=pointer]:
+          - /url: /admin/broadcast
+          - generic [ref=e21]: 
+        - link "FB โพสต์/คอมเมนต์" [ref=e22] [cursor=pointer]:
+          - /url: /admin/facebook-posts
+          - generic [ref=e23]: 
+        - link "สถิติลูกค้า" [ref=e24] [cursor=pointer]:
+          - /url: /admin/customer-stats
+          - generic [ref=e25]: 
+      - navigation "อื่น ๆ" [ref=e26]:
+        - link "จัดการข้อมูล" [ref=e27] [cursor=pointer]:
+          - /url: /admin/categories
+          - generic [ref=e28]: 
+    - generic:
+      - link " กลับหน้าแดชบอร์ด":
+        - /url: /admin/dashboard
+        - generic: 
+        - generic: กลับหน้าแดชบอร์ด
+  - text:                
+  - generic [ref=e30]:
+    - complementary [ref=e205]:
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]: Inbox
+          - heading [level=1] [ref=e206]: บทสนทนา
+        - generic [ref=e37]:
+          - button [ref=e207] [cursor=pointer]:
+            - generic [ref=e39]: 
+          - button [ref=e208] [cursor=pointer]:
+            - generic [ref=e41]: 
+      - generic [ref=e42]:
+        - generic [ref=e43]: 
+        - searchbox [ref=e209]
+      - generic [ref=e45]:
+        - generic [ref=e46]: Inbox
+        - combobox [ref=e210]
+      - generic [ref=e48]:
+        - button [ref=e211] [cursor=pointer]: ทั้งหมด
+        - button [ref=e212] [cursor=pointer]: ของฉัน
+        - button [ref=e213] [cursor=pointer]: ยังไม่รับ
+        - button [ref=e214] [cursor=pointer]: เกิน SLA
+        - button [ref=e215] [cursor=pointer]: Open
+        - button [ref=e216] [cursor=pointer]: Pending
+        - button [ref=e217] [cursor=pointer]: Resolved
+        - button [ref=e218] [cursor=pointer]: ไม่อ่าน
+        - button [ref=e219] [cursor=pointer]: ติดตาม
+        - button [ref=e220] [cursor=pointer]: ซื้อแล้ว
+      - generic [ref=e59]:
+        - generic [ref=e60]: 1 แชท
+        - button [ref=e221] [cursor=pointer]: ล้าง
+      - generic [ref=e63]: ไม่มีแท็ก
+      - button [ref=e222] [cursor=pointer]:
+        - generic [ref=e224]: ล
+        - generic [ref=e225]:
+          - generic [ref=e226]: ลูกค้าทดสอบมือถือ
+          - generic [ref=e227]: LINE
+          - generic [ref=e228]: สอบถามสินค้าและที่อยู่จัดส่ง
+          - generic [ref=e229]:
+            - generic [ref=e230]: Open
+            - generic [ref=e231]: ยังไม่รับ
+            - generic [ref=e232]: รอ 0 นาที
+          - generic [ref=e234]: VIP
+        - generic [ref=e235]:
+          - generic [ref=e236]: เมื่อสักครู่
+          - generic [ref=e237]: "2"
+    - main "หน้าสนทนา" [ref=e68]:
+      - generic "แผงควบคุมมือถือ" [ref=e69]:
+        - button " Inbox 1" [ref=e194] [cursor=pointer]:
+          - generic [ref=e71]: 
+          - generic [ref=e72]: Inbox
+          - strong [ref=e73]: "1"
+        - button " ข้อมูล" [ref=e74] [cursor=pointer]:
+          - generic [ref=e75]: 
+          - generic [ref=e76]: ข้อมูล
+      - generic [ref=e77]:
+        - generic [ref=e78]:
+          - generic [ref=e238]: ล
+          - generic [ref=e81]:
+            - generic [ref=e82]: ลูกค้าทดสอบมือถือ
+            - generic "LINE · 0 ข้อความ · U-mobile-demo-001" [ref=e239]
+        - generic [ref=e240]:
+          - button "" [ref=e241] [cursor=pointer]:
+            - generic [ref=e242]: 
+          - button "" [ref=e243] [cursor=pointer]:
+            - generic [ref=e244]: 
+          - button "" [ref=e245] [cursor=pointer]:
+            - generic [ref=e246]: 
+          - button "" [disabled] [ref=e247] [cursor=pointer]:
+            - generic [ref=e248]: 
+          - button "" [ref=e249] [cursor=pointer]:
+            - generic [ref=e250]: 
+      - text: 
+      - generic [ref=e251]:
+        - strong [ref=e252]: ยังไม่มีข้อความ
+        - generic [ref=e253]: เริ่มสนทนาด้วยข้อความแรกได้เลย
+      - generic [ref=e254]:
+        - generic [ref=e255]:
+          - button "" [ref=e256] [cursor=pointer]:
+            - generic [ref=e257]: 
+          - button "" [ref=e258] [cursor=pointer]:
+            - generic [ref=e259]: 
+          - button "" [ref=e260] [cursor=pointer]:
+            - generic [ref=e261]: 
+        - textbox "พิมพ์ข้อความตอบกลับ..." [ref=e262]
+        - button "" [ref=e263] [cursor=pointer]:
+          - generic [ref=e264]: 
+    - complementary [ref=e195]:
+      - generic [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e93]: Workspace
+          - heading [level=2] [ref=e196]: ข้อมูลลูกค้า
+        - generic [ref=e95]:
+          - generic [ref=e96]: online
+          - button [ref=e197] [cursor=pointer]:
+            - generic [ref=e98]: 
+      - tablist [ref=e99]:
+        - button [ref=e198] [cursor=pointer]:
+          - generic [ref=e101]: 
+          - generic [ref=e102]: รวม
+        - button [ref=e199] [cursor=pointer]:
+          - generic [ref=e104]: 
+          - generic [ref=e105]: แท็ก
+        - button [ref=e200] [cursor=pointer]:
+          - generic [ref=e107]: 
+          - generic [ref=e108]: ฟอร์ม
+        - button [ref=e201] [cursor=pointer]:
+          - generic [ref=e110]: 
+          - generic [ref=e111]: Order
+        - button [ref=e202] [cursor=pointer]:
+          - generic [ref=e113]: 
+          - generic [ref=e114]: ไฟล์
+        - button [ref=e203] [cursor=pointer]:
+          - generic [ref=e116]: 
+          - generic [ref=e117]: โน้ต
+        - button [ref=e204] [cursor=pointer]:
+          - generic [ref=e119]: 
+          - generic [ref=e120]: Tools
+      - generic [ref=e121]:
+        - generic [ref=e124]:
+          - strong [ref=e125]: เลือกแชทก่อน
+          - generic [ref=e126]: ข้อมูลภาพรวมจะแสดงที่นี่
+        - text: + 
+  - generic [ref=e265]:
+    - generic [ref=e266]: 
+    - generic [ref=e267]: DATABASE_URL is required. Legacy document-store fallback has been removed.

@@ -352,6 +352,24 @@
     font-size: 0.75rem;
 }
 
+.filter-select {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--chat-border-color);
+    border-radius: var(--chat-border-radius);
+    background: var(--chat-bg-app);
+    color: var(--chat-text-primary);
+    padding: 0.45rem 0.625rem;
+    font-size: 0.8125rem;
+    outline: none;
+    cursor: pointer;
+}
+
+.filter-select:focus {
+    border-color: var(--chat-primary);
+    box-shadow: 0 0 0 3px rgba(74, 111, 165, 0.12);
+}
+
 .tag-filters {
     display: flex;
     flex-wrap: wrap;
@@ -2065,7 +2083,7 @@
 
 @media (max-width: 767.98px) {
     .page-chat {
-        font-family: 'Sarabun', 'Inter', sans-serif;
+        font-family: var(--font-family-base, 'Sarabun', 'Inter', sans-serif);
     }
 
     .page-chat .app-navbar,
@@ -2482,6 +2500,27 @@
         gap: 0.375rem;
     }
 
+    .mobile-filter-field {
+        display: grid;
+        gap: 0.35rem;
+        margin: 0;
+        color: var(--chat-text-secondary);
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .mobile-filter-field select {
+        width: 100%;
+        min-height: 38px;
+        border: 1px solid var(--chat-border-color);
+        border-radius: var(--chat-border-radius);
+        background: #fff;
+        color: var(--chat-text-primary);
+        padding: 0 0.625rem;
+        font-size: 0.8125rem;
+        outline: none;
+    }
+
     .mobile-filter-chip {
         min-height: 32px;
         border-radius: 999px;
@@ -2822,6 +2861,129 @@
         overflow-y: auto;
     }
 
+}
+
+.chat-data-form-section {
+    border-top: 1px solid var(--chat-border-color);
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+}
+
+.chat-data-form-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0 0.75rem 0.5rem;
+    color: var(--chat-text-primary);
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+.chat-data-form-title strong {
+    margin-left: auto;
+    min-width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    background: var(--chat-primary-light);
+    color: var(--chat-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+}
+
+.chat-data-form-card {
+    margin: 0 0.75rem 0.6rem;
+    border: 1px solid var(--chat-border-color);
+    border-radius: 8px;
+    padding: 0.65rem;
+    background: #fff;
+}
+
+.chat-data-form-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: var(--chat-text-primary);
+}
+
+.chat-data-form-card__head em {
+    font-style: normal;
+    font-size: 0.7rem;
+    color: var(--chat-primary);
+    background: var(--chat-primary-light);
+    border-radius: 999px;
+    padding: 0.12rem 0.45rem;
+    white-space: nowrap;
+}
+
+.chat-data-form-summary,
+.chat-data-form-meta,
+.chat-file-meta,
+.chat-file-desc {
+    color: var(--chat-text-secondary);
+    font-size: 0.75rem;
+}
+
+.chat-data-form-summary {
+    margin-top: 0.25rem;
+    overflow-wrap: anywhere;
+}
+
+.chat-data-form-values {
+    display: grid;
+    gap: 0.2rem;
+    margin-top: 0.45rem;
+}
+
+.chat-data-form-row {
+    display: grid;
+    grid-template-columns: minmax(70px, 0.8fr) minmax(0, 1.2fr);
+    gap: 0.45rem;
+    font-size: 0.75rem;
+}
+
+.chat-data-form-row span {
+    color: var(--chat-text-secondary);
+}
+
+.chat-data-form-row strong {
+    color: var(--chat-text-primary);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.chat-file-list {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.chat-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--chat-border-color);
+    border-radius: 8px;
+    padding: 0.7rem;
+    background: #fff;
+}
+
+.chat-file-main {
+    min-width: 0;
+}
+
+.chat-file-title {
+    color: var(--chat-text-primary);
+    font-weight: 800;
+    font-size: 0.88rem;
+}
+
+.chat-file-desc {
+    overflow-wrap: anywhere;
 }
 
 /* ========================================

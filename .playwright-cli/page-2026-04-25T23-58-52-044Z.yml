@@ -1,0 +1,17 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 
+      - heading "เข้าสู่ระบบผู้ดูแล" [level=1] [ref=e6]
+      - paragraph [ref=e7]: กรอกรหัสผ่านที่ได้รับจากแอดมินใหญ่เพื่อใช้งานระบบ
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - generic [ref=e10]: รหัสผ่านสำหรับเข้าใช้งาน
+        - textbox "รหัสผ่านสำหรับเข้าใช้งาน" [active] [ref=e11]:
+          - /placeholder: เช่น A8K9-TEAM หรือ 123456
+        - generic [ref=e12]: ระบบจะจำสถานะล็อกอินไว้จนกว่าจะออกจากระบบหรือหมดเวลา
+      - button " เข้าสู่ระบบ" [ref=e13] [cursor=pointer]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: 
+          - text: เข้าสู่ระบบ
+    - paragraph [ref=e17]: ต้องการความช่วยเหลือ? ติดต่อแอดมินใหญ่ของระบบเพื่อรีเซ็ตรหัสผ่าน

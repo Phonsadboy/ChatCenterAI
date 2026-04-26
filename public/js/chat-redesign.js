@@ -17,10 +17,12 @@ class ChatManager {
 
         // Filter state
         this.currentFilters = {
+            inboxKey: 'all',
             status: 'all',
             tags: [],
             search: ''
         };
+        this.inboxes = [];
 
         // Tags
         this.availableTags = [];
@@ -32,6 +34,9 @@ class ChatManager {
 
         // Orders
         this.currentOrders = [];
+        this.currentDataFormSubmissions = [];
+        this.currentFileAssets = [];
+        this.chatFileModal = null;
         this.debugPanelVisible = false;
         this.currentMobileSheet = null;
         this.currentContextTab = 'overview';
@@ -45,6 +50,14 @@ class ChatManager {
 
         // URL focus param
         this.pendingFocusUserId = this.getFocusUserIdFromQuery();
+        this.pendingFocusPlatform = this.getQueryParam('platform');
+        this.pendingFocusBotId = this.getQueryParam('botId');
+        if (this.pendingFocusPlatform) {
+            this.currentFilters.inboxKey = this.buildInboxKey(
+                this.pendingFocusPlatform,
+                this.pendingFocusBotId || 'default'
+            );
+        }
         this.focusHandled = false;
 
         // Initialize
@@ -146,6 +159,7 @@ class ChatManager {
             overview: 'mobileContextPanelOverview',
             tags: 'mobileContextPanelTags',
             orders: 'mobileContextPanelOrders',
+            forms: 'mobileContextPanelForms',
         };
         Object.entries(panelMap).forEach(([key, id]) => {
             const panel = document.getElementById(id);
@@ -160,6 +174,7 @@ class ChatManager {
         console.log('Initializing Chat Manager...');
         this.initializeSocket();
         this.setupEventListeners();
+        this.loadInboxes();
         this.loadUsers();
         this.loadAvailableTags();
         this.setupAutoRefresh();
@@ -181,13 +196,138 @@ class ChatManager {
         }
     }
 
+    getQueryParam(name) {
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            return (params.get(name) || '').trim();
+        } catch (_) {
+            return '';
+        }
+    }
+
+    buildInboxKey(platform = '', botId = '') {
+        const normalizedPlatform = String(platform || '').trim().toLowerCase();
+        if (!normalizedPlatform) return 'all';
+        const normalizedBotId = String(botId || '').trim() || 'default';
+        return `${normalizedPlatform}:${normalizedBotId}`;
+    }
+
+    parseInboxKey(inboxKey = this.currentFilters.inboxKey) {
+        const key = String(inboxKey || '').trim();
+        if (!key || key === 'all' || !key.includes(':')) return null;
+        const [platformPart, ...botParts] = key.split(':');
+        const platform = platformPart.trim().toLowerCase();
+        const botKey = botParts.join(':').trim();
+        if (!platform) return null;
+        return {
+            platform,
+            botId: botKey && botKey !== 'default' ? botKey : ''
+        };
+    }
+
+    getUserInboxKey(user) {
+        if (!user) return 'all';
+        return this.buildInboxKey(user.platform || 'line', user.botId || 'default');
+    }
+
+    getCurrentConversationContext() {
+        const user = this.findCurrentUser();
+        if (user?.platform) {
+            return {
+                platform: user.platform,
+                botId: user.botId || 'default'
+            };
+        }
+        const inbox = this.parseInboxKey();
+        return inbox
+            ? { platform: inbox.platform, botId: inbox.botId || 'default' }
+            : { platform: '', botId: '' };
+    }
+
+    syncInboxFilterControls() {
+        const selected = this.currentFilters.inboxKey || 'all';
+        ['inboxFilterSelect', 'mobileInboxFilterSelect'].forEach((id) => {
+            const select = document.getElementById(id);
+            if (select) select.value = selected;
+        });
+    }
+
+    setInboxFilter(inboxKey = 'all', options = {}) {
+        this.currentFilters.inboxKey = inboxKey || 'all';
+        this.syncInboxFilterControls();
+        if (options.reload === false) {
+            this.applyFilters();
+            return;
+        }
+        this.loadUsers();
+    }
+
+    async loadInboxes() {
+        try {
+            const response = await fetch('/admin/chat/inboxes');
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'load inboxes failed');
+            this.inboxes = Array.isArray(data.inboxes) ? data.inboxes : [];
+            this.renderInboxFilters();
+        } catch (error) {
+            console.error('Error loading inboxes:', error);
+            this.inboxes = [];
+            this.renderInboxFilters();
+        }
+    }
+
+    renderInboxFilters() {
+        const selected = this.currentFilters.inboxKey || 'all';
+        const options = [
+            { inboxKey: 'all', channelLabel: 'ทุก Inbox', conversationCount: this.allUsers.length || 0 },
+            ...this.inboxes
+        ];
+        if (
+            selected !== 'all' &&
+            !options.some((entry) => entry.inboxKey === selected)
+        ) {
+            const parsed = this.parseInboxKey(selected);
+            if (parsed) {
+                options.push({
+                    inboxKey: selected,
+                    channelLabel: `${parsed.platform.toUpperCase()} · ${parsed.botId || 'Default'}`,
+                    conversationCount: 0
+                });
+            }
+        }
+
+        const html = options.map((entry) => {
+            const count = Number(entry.conversationCount || 0);
+            const suffix = entry.inboxKey === 'all' || !count ? '' : ` (${count})`;
+            return `
+                <option value="${this.escapeHtml(entry.inboxKey)}">
+                    ${this.escapeHtml(entry.channelLabel || entry.inboxKey)}${suffix}
+                </option>
+            `;
+        }).join('');
+
+        ['inboxFilterSelect', 'mobileInboxFilterSelect'].forEach((id) => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = html;
+            select.value = selected;
+        });
+    }
+
     async tryAutoFocusUser() {
         if (this.focusHandled || !this.pendingFocusUserId) return;
         const targetId = this.pendingFocusUserId;
-        const exists = this.allUsers.find(u => u.userId === targetId);
+        const exists = this.allUsers.find((u) => {
+            if (u.userId !== targetId) return false;
+            if (this.pendingFocusPlatform && u.platform !== this.pendingFocusPlatform) return false;
+            if (this.pendingFocusBotId && String(u.botId || '') !== this.pendingFocusBotId) return false;
+            return true;
+        }) || this.allUsers.find(u => u.userId === targetId);
         if (!exists) return;
         this.focusHandled = true;
         this.pendingFocusUserId = null;
+        this.pendingFocusPlatform = '';
+        this.pendingFocusBotId = '';
         await this.selectUser(targetId);
     }
 
@@ -201,8 +341,10 @@ class ChatManager {
         }
         this.renderUserList();
         this.updateChatHeader();
+        this.renderInboxFilters();
         this.renderTagFilters();
         this.renderOrders();
+        this.renderDataFormSubmissions();
     }
 
     // ========================================
@@ -296,6 +438,22 @@ class ChatManager {
             // Update latest message state (e.g., delivered/read)
             this.updateMessageStatus(data.messageId, data.status);
         });
+
+        this.socket.on('dataFormSubmissionUpdated', (submission) => {
+            if (submission?.userId === this.currentUserId) {
+                this.loadDataFormSubmissions();
+            }
+        });
+
+        this.socket.on('voxtronWorkflowEvent', (event) => {
+            if (!event) return;
+            const label = event.eventType === 'form_submitted'
+                ? 'มี Data Form ใหม่'
+                : event.eventType === 'ai_stuck'
+                    ? 'AI ต้องการความช่วยเหลือ'
+                    : 'มีคำขอให้เจ้าหน้าที่รับต่อ';
+            this.showToast(label, 'info');
+        });
     }
 
     // ========================================
@@ -318,6 +476,13 @@ class ChatManager {
                 this.applyFilters();
             });
         }
+        ['inboxFilterSelect', 'mobileInboxFilterSelect'].forEach((id) => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.addEventListener('change', (e) => {
+                this.setInboxFilter(e.target.value || 'all');
+            });
+        });
 
         // Clear filters
         const clearFilters = document.getElementById('clearFilters');
@@ -503,6 +668,8 @@ class ChatManager {
         // Header actions
         const btnTogglePurchase = document.getElementById('btnTogglePurchase');
         const btnManageTags = document.getElementById('btnManageTags');
+        const btnCopyChatUrl = document.getElementById('btnCopyChatUrl');
+        const btnAttachFile = document.getElementById('btnAttachFile');
         const btnToggleAI = document.getElementById('btnToggleAI');
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const btnClearChat = document.getElementById('btnClearChat');
@@ -522,6 +689,18 @@ class ChatManager {
         if (btnManageTags) {
             btnManageTags.addEventListener('click', () => {
                 this.openTagModal();
+            });
+        }
+
+        if (btnCopyChatUrl) {
+            btnCopyChatUrl.addEventListener('click', () => {
+                this.copyCurrentChatUrl();
+            });
+        }
+
+        if (btnAttachFile) {
+            btnAttachFile.addEventListener('click', () => {
+                this.openFileModal();
             });
         }
 
@@ -608,6 +787,12 @@ class ChatManager {
                     case 'manageTags':
                         this.openTagModal();
                         break;
+                    case 'copyChatUrl':
+                        this.copyCurrentChatUrl();
+                        break;
+                    case 'attachFile':
+                        this.openFileModal();
+                        break;
                     case 'userNotes':
                         this.openUserNotesModal();
                         break;
@@ -638,6 +823,20 @@ class ChatManager {
         }
 
         this.syncOrderSidebarCollapseForViewport();
+
+        const chatFileUploadSendBtn = document.getElementById('chatFileUploadSendBtn');
+        if (chatFileUploadSendBtn) {
+            chatFileUploadSendBtn.addEventListener('click', () => this.sendUploadedFile());
+        }
+
+        const chatFileLibraryList = document.getElementById('chatFileLibraryList');
+        if (chatFileLibraryList) {
+            chatFileLibraryList.addEventListener('click', (event) => {
+                const btn = event.target.closest('button[data-file-id]');
+                if (!btn) return;
+                this.sendLibraryFile(btn.dataset.fileId);
+            });
+        }
         let resizeTimer = null;
         window.addEventListener('resize', () => {
             if (resizeTimer) window.clearTimeout(resizeTimer);
@@ -1070,6 +1269,7 @@ class ChatManager {
                 orders: orders.length
             },
             filters: {
+                inboxKey: this.currentFilters.inboxKey,
                 status: this.currentFilters.status,
                 tags: [...this.currentFilters.tags],
                 search: this.currentFilters.search
@@ -1147,9 +1347,16 @@ class ChatManager {
 
     async fetchUsers() {
         try {
-            const focusQuery = this.pendingFocusUserId
-                ? `?focus=${encodeURIComponent(this.pendingFocusUserId)}`
-                : '';
+            const focusParams = new URLSearchParams();
+            if (this.pendingFocusUserId) focusParams.set('focus', this.pendingFocusUserId);
+            if (this.pendingFocusPlatform) focusParams.set('platform', this.pendingFocusPlatform);
+            if (this.pendingFocusBotId) focusParams.set('botId', this.pendingFocusBotId);
+            const inboxFilter = this.parseInboxKey();
+            if (inboxFilter) {
+                focusParams.set('platform', inboxFilter.platform);
+                focusParams.set('botId', inboxFilter.botId || 'default');
+            }
+            const focusQuery = focusParams.toString() ? `?${focusParams.toString()}` : '';
             const response = await fetch(`/admin/chat/users${focusQuery}`);
             const data = await response.json();
 
@@ -1165,6 +1372,13 @@ class ChatManager {
                     }
                     return normalizedUser;
                 });
+                if (
+                    this.currentUserId &&
+                    !this.allUsers.some(user => user.userId === this.currentUserId)
+                ) {
+                    this.clearSelectedConversation();
+                }
+                this.renderInboxFilters();
                 this.applyFilters();
                 await this.tryAutoFocusUser();
             } else {
@@ -1178,6 +1392,16 @@ class ChatManager {
 
     applyFilters() {
         let filtered = [...this.allUsers];
+
+        // Inbox filter
+        const inboxFilter = this.parseInboxKey();
+        if (inboxFilter) {
+            const expectedKey = this.buildInboxKey(
+                inboxFilter.platform,
+                inboxFilter.botId || 'default'
+            );
+            filtered = filtered.filter(user => this.getUserInboxKey(user) === expectedKey);
+        }
 
         // Status filter
         if (this.currentFilters.status !== 'all') {
@@ -1430,6 +1654,7 @@ class ChatManager {
 
     async selectUser(userId) {
         this.currentUserId = userId;
+        this.currentDataFormSubmissions = [];
         this.userNotesState = { notes: '', updatedAt: null };
 
         // Close sidebar on mobile
@@ -1451,6 +1676,7 @@ class ChatManager {
 
         // Load orders
         await this.loadOrders();
+        await this.loadDataFormSubmissions();
         this.loadUserNotes();
         this.updateDebugPanel();
 
@@ -1675,13 +1901,47 @@ class ChatManager {
         }
     }
 
+    clearSelectedConversation() {
+        this.currentUserId = null;
+        this.currentOrders = [];
+        this.currentDataFormSubmissions = [];
+        this.userNotesState = { notes: '', updatedAt: null };
+
+        const messageInputArea = document.getElementById('messageInputArea');
+        if (messageInputArea) messageInputArea.style.display = 'none';
+
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = `
+                <div class="empty-state app-empty" id="emptyState">
+                    <div class="app-empty__icon">
+                        <i class="fab fa-facebook-messenger"></i>
+                    </div>
+                    <div class="app-empty__title">เลือกแชทเพื่อเริ่มการสนทนา</div>
+                    <div class="app-empty__desc">เลือกผู้ใช้จากรายการเพื่อดูข้อความและตอบกลับได้ทันที</div>
+                </div>
+            `;
+        }
+
+        this.updateChatHeader();
+        this.renderOrders();
+        this.renderDataFormSubmissions();
+        this.renderMobileContextSummary();
+        this.renderMobileContextSheet();
+    }
+
     // ========================================
     // Chat History
     // ========================================
 
     async loadChatHistory(userId) {
         try {
-            const response = await fetch(`/admin/chat/history/${userId}`);
+            const context = this.getCurrentConversationContext();
+            const params = new URLSearchParams();
+            if (context.platform) params.set('platform', context.platform);
+            if (context.botId) params.set('botId', context.botId);
+            const query = params.toString() ? `?${params.toString()}` : '';
+            const response = await fetch(`/admin/chat/history/${userId}${query}`);
             const data = await response.json();
 
             if (data.success) {
@@ -1786,7 +2046,7 @@ class ChatManager {
         const displayText = this.extractDisplayText(message);
         const hasImages = Array.isArray(message.images) && message.images.length > 0;
         const textForRender = displayText || (hasImages ? '[ไฟล์แนบ]' : '');
-        const content = this.escapeHtml(textForRender);
+        const content = this.renderMessageText(textForRender);
         const time = message.timestamp ? this.formatTime(message.timestamp) : '';
         const messageId = this.resolveMessageId(message);
         const isSending = message.sending;
@@ -1826,6 +2086,13 @@ class ChatManager {
                 </div>
             </div>
         `;
+    }
+
+    renderMessageText(text) {
+        const escaped = this.escapeHtml(text || '');
+        return escaped
+            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+            .replace(/\n/g, '<br>');
     }
 
     renderDeliveryStatus(status) {
@@ -2025,6 +2292,7 @@ class ChatManager {
         }
 
         try {
+            const context = this.getCurrentConversationContext();
             const response = await fetch('/admin/chat/send', {
                 method: 'POST',
                 headers: {
@@ -2032,7 +2300,9 @@ class ChatManager {
                 },
                 body: JSON.stringify({
                     userId: this.currentUserId,
-                    message: message
+                    message: message,
+                    platform: context.platform || undefined,
+                    botId: context.botId || undefined
                 })
             });
 
@@ -3007,10 +3277,13 @@ class ChatManager {
 
     clearFilters() {
         this.currentFilters = {
+            inboxKey: 'all',
             status: 'all',
             tags: [],
             search: ''
         };
+        this.pendingFocusPlatform = '';
+        this.pendingFocusBotId = '';
 
         // Reset UI
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
@@ -3029,8 +3302,9 @@ class ChatManager {
             mobileUserSearch.value = '';
         }
 
+        this.renderInboxFilters();
         this.renderTagFilters();
-        this.applyFilters();
+        this.loadUsers();
     }
 
     updateFilterBadge() {
@@ -3038,6 +3312,7 @@ class ChatManager {
         if (!filterBadge) return;
 
         let count = 0;
+        if (this.currentFilters.inboxKey && this.currentFilters.inboxKey !== 'all') count++;
         if (this.currentFilters.status !== 'all') count++;
         count += this.currentFilters.tags.length;
         if (this.currentFilters.search) count++;
@@ -3058,6 +3333,7 @@ class ChatManager {
         // Refresh user list every 30 seconds
         setInterval(() => {
             if (!document.hidden) {
+                this.loadInboxes();
                 this.scheduleLoadUsers();
             }
         }, 30000);
@@ -3287,6 +3563,10 @@ class ChatManager {
             typeof message?.rawContent !== 'undefined' ? message.rawContent : message?.content;
         if (typeof rawContent === 'string') {
             const trimmed = rawContent.trim();
+            if (trimmed.startsWith('<')) {
+                const textFromHtml = this.stripHtmlToText(rawContent);
+                if (textFromHtml) return textFromHtml;
+            }
             if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
                 try {
                     const parsed = JSON.parse(trimmed);
@@ -3328,6 +3608,10 @@ class ChatManager {
             ) {
                 return content.content;
             }
+            const nonTextMessage = this.extractNonTextMessageText(content);
+            if (nonTextMessage) {
+                return nonTextMessage;
+            }
             if (content.data) {
                 return this.extractPlainTextFromStructured(content.data);
             }
@@ -3338,6 +3622,59 @@ class ChatManager {
         }
 
         return '';
+    }
+
+    formatNonTextDuration(duration) {
+        const rawDuration = Number(duration);
+        if (!Number.isFinite(rawDuration) || rawDuration <= 0) return '';
+        const totalSeconds = rawDuration > 1000 ? Math.round(rawDuration / 1000) : Math.round(rawDuration);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes > 0) return `${minutes} นาที ${String(seconds).padStart(2, '0')} วินาที`;
+        return `${seconds} วินาที`;
+    }
+
+    extractNonTextMessageText(content) {
+        if (!content || typeof content !== 'object' || Array.isArray(content)) return '';
+        const data = content.data && typeof content.data === 'object' && !Array.isArray(content.data)
+            ? content.data
+            : content;
+        const rawType = typeof data.type === 'string' ? data.type.trim().toLowerCase() : '';
+        const messageType = rawType === 'unsupported'
+            ? (typeof data.messageType === 'string' ? data.messageType.trim().toLowerCase() : 'unknown')
+            : (typeof data.messageType === 'string' && data.messageType.trim()
+                ? data.messageType.trim().toLowerCase()
+                : rawType);
+        const labels = {
+            sticker: 'ลูกค้าส่งสติกเกอร์ LINE',
+            audio: 'ลูกค้าส่งไฟล์เสียง',
+            video: 'ลูกค้าส่งวิดีโอ',
+            file: 'ลูกค้าส่งไฟล์',
+            location: 'ลูกค้าส่งตำแหน่งที่ตั้ง',
+            imagemap: 'ลูกค้าส่งข้อความ LINE ประเภท imagemap',
+            unknown: 'ลูกค้าส่งข้อความประเภทที่ระบบยังไม่รองรับ',
+        };
+        if (!rawType && !messageType) return '';
+        if (rawType !== 'unsupported' && !labels[messageType]) return '';
+
+        const label = typeof data.text === 'string' && data.text.trim()
+            ? data.text.trim()
+            : labels[messageType] || labels.unknown;
+        const details = [];
+        if (messageType === 'sticker' && data.packageId && data.stickerId) {
+            details.push(`Sticker ${data.packageId}/${data.stickerId}`);
+        }
+        const fileName = (typeof data.fileName === 'string' && data.fileName.trim())
+            || (typeof data.filename === 'string' && data.filename.trim())
+            || '';
+        if (fileName) details.push(fileName);
+        const durationLabel = this.formatNonTextDuration(data.duration);
+        if (durationLabel) details.push(durationLabel);
+        if (messageType === 'location') {
+            if (typeof data.title === 'string' && data.title.trim()) details.push(data.title.trim());
+            if (typeof data.address === 'string' && data.address.trim()) details.push(data.address.trim());
+        }
+        return details.length ? `${label} (${details.join(' / ')})` : label;
     }
 
     stripHtmlToText(html) {
@@ -3432,6 +3769,152 @@ class ChatManager {
         setTimeout(removeToast, 3200);
     }
 
+    buildCurrentChatUrl() {
+        if (!this.currentUserId) return '';
+        const user = this.findCurrentUser();
+        const params = new URLSearchParams({ user: this.currentUserId });
+        if (user?.platform) params.set('platform', user.platform);
+        if (user?.botId) params.set('botId', String(user.botId));
+        return `${window.location.origin}/admin/chat?${params.toString()}`;
+    }
+
+    async copyCurrentChatUrl() {
+        const url = this.buildCurrentChatUrl();
+        if (!url) {
+            this.showToast('กรุณาเลือกแชทก่อน', 'warning');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(url);
+            this.showToast('คัดลอกลิงก์แชทแล้ว', 'success');
+        } catch (_) {
+            prompt('คัดลอกลิงก์แชท', url);
+        }
+    }
+
+    async openFileModal() {
+        if (!this.currentUserId) {
+            this.showToast('กรุณาเลือกแชทก่อน', 'warning');
+            return;
+        }
+        const modalEl = document.getElementById('chatFileModal');
+        if (!modalEl || !window.bootstrap?.Modal) return;
+        if (!this.chatFileModal) {
+            this.chatFileModal = new window.bootstrap.Modal(modalEl);
+        }
+        const caption = document.getElementById('chatFileCaption');
+        const fileInput = document.getElementById('chatFileUploadInput');
+        const labelInput = document.getElementById('chatFileUploadLabel');
+        if (caption) caption.value = '';
+        if (fileInput) fileInput.value = '';
+        if (labelInput) labelInput.value = '';
+        await this.loadFileAssetsForCurrentChat();
+        this.chatFileModal.show();
+    }
+
+    async loadFileAssetsForCurrentChat() {
+        const listEl = document.getElementById('chatFileLibraryList');
+        if (!listEl || !this.currentUserId) return;
+        listEl.innerHTML = '<div class="text-center text-muted p-3">กำลังโหลดไฟล์...</div>';
+        const user = this.findCurrentUser();
+        const params = new URLSearchParams();
+        if (user?.platform) params.set('platform', user.platform);
+        if (user?.botId) params.set('botId', String(user.botId));
+        try {
+            const response = await fetch(`/admin/api/file-assets?${params.toString()}`);
+            const data = await response.json();
+            this.currentFileAssets = data.success ? (data.assets || []) : [];
+            this.renderChatFileLibrary();
+        } catch (error) {
+            console.error('Error loading file assets:', error);
+            this.currentFileAssets = [];
+            listEl.innerHTML = '<div class="text-danger p-3">โหลดไฟล์ไม่สำเร็จ</div>';
+        }
+    }
+
+    renderChatFileLibrary() {
+        const listEl = document.getElementById('chatFileLibraryList');
+        if (!listEl) return;
+        const files = this.currentFileAssets || [];
+        if (!files.length) {
+            listEl.innerHTML = '<div class="text-center text-muted p-3">ยังไม่มีไฟล์ที่ใช้ได้กับบอท/เพจนี้</div>';
+            return;
+        }
+        listEl.innerHTML = files.map((file) => {
+            const sizeMb = (Number(file.sizeBytes || 0) / (1024 * 1024)).toFixed(2);
+            return `
+                <div class="chat-file-item">
+                    <div class="chat-file-main">
+                        <div class="chat-file-title">${this.escapeHtml(file.label || file.originalName || 'ไฟล์')}</div>
+                        <div class="chat-file-meta">${this.escapeHtml(file.mimeType || '-')} • ${sizeMb} MB</div>
+                        <div class="chat-file-desc">${this.escapeHtml(file.description || file.originalName || '')}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="button" data-file-id="${this.escapeHtml(file.id)}">
+                        ส่ง
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    buildFileSendFormData(extra = {}) {
+        const user = this.findCurrentUser();
+        const formData = new FormData();
+        formData.append('userId', this.currentUserId || '');
+        if (user?.platform) formData.append('platform', user.platform);
+        if (user?.botId) formData.append('botId', String(user.botId));
+        const caption = document.getElementById('chatFileCaption')?.value?.trim?.() || '';
+        if (caption) formData.append('caption', caption);
+        Object.entries(extra).forEach(([key, value]) => {
+            if (value !== null && typeof value !== 'undefined' && value !== '') {
+                formData.append(key, value);
+            }
+        });
+        return formData;
+    }
+
+    async sendLibraryFile(fileId) {
+        if (!fileId || !this.currentUserId) return;
+        try {
+            const formData = this.buildFileSendFormData({ fileAssetId: fileId });
+            const response = await fetch('/admin/chat/files/send', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'ส่งไฟล์ไม่สำเร็จ');
+            this.chatFileModal?.hide();
+            this.showToast('ส่งไฟล์แล้ว', 'success');
+        } catch (error) {
+            console.error('Error sending library file:', error);
+            this.showToast(error.message || 'ส่งไฟล์ไม่สำเร็จ', 'error');
+        }
+    }
+
+    async sendUploadedFile() {
+        const input = document.getElementById('chatFileUploadInput');
+        if (!input?.files?.length) {
+            this.showToast('กรุณาเลือกไฟล์', 'warning');
+            return;
+        }
+        try {
+            const label = document.getElementById('chatFileUploadLabel')?.value?.trim?.() || '';
+            const formData = this.buildFileSendFormData({ label });
+            formData.append('file', input.files[0]);
+            const response = await fetch('/admin/chat/files/send', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'ส่งไฟล์ไม่สำเร็จ');
+            this.chatFileModal?.hide();
+            this.showToast('อัปโหลดและส่งไฟล์แล้ว', 'success');
+        } catch (error) {
+            console.error('Error sending uploaded file:', error);
+            this.showToast(error.message || 'ส่งไฟล์ไม่สำเร็จ', 'error');
+        }
+    }
+
     // ========================================
     // Order Management
     // ========================================
@@ -3481,18 +3964,115 @@ class ChatManager {
                     </p>
                 </div>
             `;
-            if (orderContent) orderContent.innerHTML = emptyHtml;
+            if (orderContent) orderContent.innerHTML = emptyHtml + this.renderDataFormSidebarSection();
             if (mobileOrderList) mobileOrderList.innerHTML = emptyHtml;
+            this.renderDataFormSubmissions();
             this.updateDebugPanel();
             this.renderMobileContextSummary();
             return;
         }
 
         const rendered = this.currentOrders.map(order => this.renderOrderCard(order)).join('');
-        if (orderContent) orderContent.innerHTML = rendered;
+        if (orderContent) orderContent.innerHTML = rendered + this.renderDataFormSidebarSection();
         if (mobileOrderList) mobileOrderList.innerHTML = rendered;
+        this.renderDataFormSubmissions();
         this.updateDebugPanel();
         this.renderMobileContextSummary();
+    }
+
+    async loadDataFormSubmissions() {
+        if (!this.currentUserId) return;
+        try {
+            const user = this.findCurrentUser();
+            const params = new URLSearchParams({
+                userId: this.currentUserId,
+                limit: '50',
+            });
+            if (user?.platform) params.set('platform', user.platform);
+            if (user?.botId) params.set('botId', String(user.botId));
+            const response = await fetch(`/admin/api/data-form-submissions?${params.toString()}`);
+            const data = await response.json();
+            this.currentDataFormSubmissions = data.success ? (data.submissions || []) : [];
+        } catch (error) {
+            console.error('Error loading data form submissions:', error);
+            this.currentDataFormSubmissions = [];
+        }
+        this.renderDataFormSubmissions();
+        this.renderOrders();
+    }
+
+    renderDataFormSidebarSection() {
+        const submissions = this.currentDataFormSubmissions || [];
+        const cards = submissions.length
+            ? submissions.map((submission) => this.renderDataFormCard(submission)).join('')
+            : `
+                <div class="order-empty-state order-empty-state--compact">
+                    <div class="order-empty-icon"><i class="fas fa-clipboard-list"></i></div>
+                    <h6 class="order-empty-title">ไม่มีฟอร์ม</h6>
+                    <p class="order-empty-description">Data Form submissions จะแสดงที่นี่</p>
+                </div>
+            `;
+        return `
+            <div class="chat-data-form-section">
+                <div class="chat-data-form-title">
+                    <i class="fas fa-clipboard-list"></i>
+                    <span>Data Forms</span>
+                    <strong>${submissions.length}</strong>
+                </div>
+                ${cards}
+            </div>
+        `;
+    }
+
+    renderDataFormSubmissions() {
+        const mobileList = document.getElementById('mobileDataFormList');
+        if (!mobileList) return;
+        const submissions = this.currentDataFormSubmissions || [];
+        if (!submissions.length) {
+            mobileList.innerHTML = `
+                <div class="order-empty-state">
+                    <div class="order-empty-icon"><i class="fas fa-clipboard-list"></i></div>
+                    <h6 class="order-empty-title">ไม่มีฟอร์ม</h6>
+                    <p class="order-empty-description">ยังไม่มี Data Form submissions</p>
+                </div>
+            `;
+            return;
+        }
+        mobileList.innerHTML = submissions.map((submission) => this.renderDataFormCard(submission)).join('');
+    }
+
+    renderDataFormCard(submission) {
+        const createdAt = submission.createdAt
+            ? new Date(submission.createdAt).toLocaleString('th-TH', { hour12: false })
+            : '-';
+        const values = submission.values && typeof submission.values === 'object' ? submission.values : {};
+        const rows = Object.entries(values)
+            .filter(([, value]) => value !== '' && value !== null && typeof value !== 'undefined')
+            .slice(0, 6)
+            .map(([key, value]) => `
+                <div class="chat-data-form-row">
+                    <span>${this.escapeHtml(key)}</span>
+                    <strong>${this.escapeHtml(this.formatSubmissionValue(value))}</strong>
+                </div>
+            `)
+            .join('');
+        return `
+            <div class="chat-data-form-card">
+                <div class="chat-data-form-card__head">
+                    <span>${this.escapeHtml(submission.formName || 'Data Form')}</span>
+                    <em>${this.escapeHtml(submission.status || 'submitted')}</em>
+                </div>
+                <div class="chat-data-form-summary">${this.escapeHtml(submission.summary || '-')}</div>
+                ${rows ? `<div class="chat-data-form-values">${rows}</div>` : ''}
+                <div class="chat-data-form-meta">${this.escapeHtml(createdAt)}</div>
+            </div>
+        `;
+    }
+
+    formatSubmissionValue(value) {
+        if (Array.isArray(value)) return value.join(', ');
+        if (value && typeof value === 'object') return JSON.stringify(value);
+        return String(value ?? '');
     }
 
     renderOrderCard(order) {

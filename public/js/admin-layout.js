@@ -85,18 +85,34 @@
 
   function bindFontSelector() {
     const selector = document.getElementById('globalFontSelector');
-    if (!selector) return;
-    const savedFont = localStorage.getItem('adminFont');
+    const savedFont = window.AdminFont?.getSavedFont
+      ? window.AdminFont.getSavedFont()
+      : localStorage.getItem('adminFont');
     if (savedFont) {
-      document.documentElement.style.setProperty('--font-family-base', savedFont);
-      document.documentElement.style.setProperty('--font-family-heading', savedFont);
-      selector.value = savedFont;
+      if (window.AdminFont?.apply) {
+        window.AdminFont.apply(savedFont);
+      } else {
+        document.documentElement.style.setProperty('--font-family-base', savedFont);
+        document.documentElement.style.setProperty('--font-family-heading', savedFont);
+      }
+      if (selector) {
+        selector.value = savedFont;
+      }
     }
+    if (!selector) return;
     selector.addEventListener('change', (e) => {
       const font = e.target.value;
-      document.documentElement.style.setProperty('--font-family-base', font);
-      document.documentElement.style.setProperty('--font-family-heading', font);
-      localStorage.setItem('adminFont', font);
+      if (window.AdminFont?.apply) {
+        window.AdminFont.apply(font);
+      } else {
+        document.documentElement.style.setProperty('--font-family-base', font);
+        document.documentElement.style.setProperty('--font-family-heading', font);
+      }
+      if (window.AdminFont?.saveFont) {
+        window.AdminFont.saveFont(font);
+      } else {
+        localStorage.setItem('adminFont', font);
+      }
     });
   }
 

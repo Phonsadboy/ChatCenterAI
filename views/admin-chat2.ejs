@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>แชท | จัดการ AI</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Mali:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
+  <link href="/css/theme.css" rel="stylesheet">
+  <link href="/css/chat2.css?v=20260426-filter-v2" rel="stylesheet">
+</head>
+
+<body class="app-shell page-chat2">
+  <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
+
+  <div class="app-content">
+    <div class="cc2-shell" id="chat2App">
+      <button type="button" class="cc2-mobile-scrim" id="chat2MobileScrim" aria-label="ปิดแผง" hidden></button>
+
+      <aside class="cc2-inbox" aria-label="รายการแชท">
+        <div class="cc2-panel-head">
+          <div>
+            <div class="cc2-kicker">Inbox</div>
+            <h1 class="cc2-title">บทสนทนา</h1>
+          </div>
+          <div class="cc2-panel-actions">
+            <button type="button" class="cc2-icon-btn" id="chat2ReloadUsers" title="โหลดใหม่">
+              <i class="fas fa-rotate"></i>
+            </button>
+            <button type="button" class="cc2-icon-btn cc2-mobile-close" id="chat2MobileCloseInbox" title="ปิด Inbox" aria-label="ปิด Inbox">
+              <i class="fas fa-xmark"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="cc2-search">
+          <i class="fas fa-search"></i>
+          <input type="search" id="chat2Search" placeholder="ค้นหาชื่อหรือช่องทาง">
+        </div>
+
+        <div class="cc2-filter-panel is-collapsed" id="chat2FilterPanel">
+          <button type="button" class="cc2-filter-toggle" id="chat2FilterToggle" aria-expanded="false" aria-controls="chat2FilterBody">
+            <span class="cc2-filter-toggle-main">
+              <i class="fas fa-sliders"></i>
+              <span>
+                <strong>ตัวกรอง</strong>
+                <small id="chat2FilterSummary">ทุก Inbox · ทั้งหมด</small>
+              </span>
+            </span>
+            <i class="fas fa-chevron-down cc2-filter-chevron"></i>
+          </button>
+
+          <div class="cc2-filter-body" id="chat2FilterBody" hidden>
+            <div class="cc2-inbox-filter">
+              <div class="cc2-filter-label">Inbox</div>
+              <div class="cc2-inbox-options" id="chat2InboxFilter" role="group" aria-label="เลือก Inbox">
+                <span class="cc2-muted">กำลังโหลด Inbox...</span>
+              </div>
+            </div>
+
+            <div class="cc2-filter-label">สถานะ</div>
+            <div class="cc2-segment" id="chat2StatusFilters">
+              <button type="button" class="is-active" data-status="all">ทั้งหมด</button>
+              <button type="button" data-status="mine">ของฉัน</button>
+              <button type="button" data-status="unassigned">ยังไม่รับ</button>
+              <button type="button" data-status="overdue">เกิน SLA</button>
+              <button type="button" data-status="open">Open</button>
+              <button type="button" data-status="pending">Pending</button>
+              <button type="button" data-status="resolved">Resolved</button>
+              <button type="button" data-status="unread">ไม่อ่าน</button>
+              <button type="button" data-status="followup">ติดตาม</button>
+              <button type="button" data-status="purchased">ซื้อแล้ว</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="cc2-filter-head">
+          <span id="chat2UserCount">0 แชท</span>
+          <button type="button" id="chat2ClearFilters">ล้าง</button>
+        </div>
+        <div class="cc2-tag-filter-wrap" id="chat2TagFilterWrap">
+          <div class="cc2-tag-strip cc2-filter-tags" id="chat2TagFilters">
+            <span class="cc2-muted">ไม่มีแท็ก</span>
+          </div>
+          <button type="button" class="cc2-tag-toggle" id="chat2ToggleTagFilters" aria-expanded="false" aria-controls="chat2TagFilters" title="แสดงแท็กทั้งหมด" hidden>
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </div>
+
+        <div class="cc2-user-list" id="chat2UserList">
+          <div class="cc2-loading">
+            <span class="spinner-border spinner-border-sm"></span>
+            กำลังโหลด...
+          </div>
+        </div>
+      </aside>
+
+      <main class="cc2-chat" aria-label="หน้าสนทนา">
+        <div class="cc2-mobile-bar" aria-label="แผงควบคุมมือถือ">
+          <button type="button" class="cc2-mobile-action" id="chat2MobileInboxToggle" aria-expanded="false" aria-controls="chat2UserList">
+            <i class="fas fa-inbox"></i>
+            <span>Inbox</span>
+            <strong id="chat2MobileUserCount">0</strong>
+          </button>
+          <button type="button" class="cc2-mobile-action" id="chat2MobileContextToggle" aria-expanded="false" aria-controls="chat2Tabs">
+            <i class="fas fa-circle-info"></i>
+            <span>ข้อมูล</span>
+          </button>
+        </div>
+
+        <header class="cc2-chat-head">
+          <div class="cc2-current">
+            <div class="cc2-avatar" id="chat2Avatar"><i class="fas fa-user"></i></div>
+            <div class="cc2-current-main">
+              <div class="cc2-current-name" id="chat2CurrentName">เลือกแชทเพื่อเริ่มงาน</div>
+              <div class="cc2-current-meta" id="chat2CurrentMeta">รายชื่ออยู่ด้านซ้าย ข้อมูลลูกค้าอยู่ด้านขวา</div>
+            </div>
+          </div>
+          <div class="cc2-head-actions" id="chat2HeadActions" hidden>
+            <button type="button" class="cc2-tool-btn" id="chat2ToggleAi" title="เปิด/ปิด AI">
+              <i class="fas fa-robot"></i>
+              <span>AI</span>
+            </button>
+            <button type="button" class="cc2-tool-btn" id="chat2TogglePurchase" title="สถานะซื้อแล้ว">
+              <i class="fas fa-shopping-cart"></i>
+              <span>ซื้อ</span>
+            </button>
+            <button type="button" class="cc2-icon-btn" id="chat2CopyLink" title="คัดลอกลิงก์">
+              <i class="fas fa-link"></i>
+            </button>
+            <button type="button" class="cc2-icon-btn" id="chat2RefreshProfile" title="อัปเดตโปรไฟล์ Facebook">
+              <i class="fas fa-sync"></i>
+            </button>
+            <button type="button" class="cc2-icon-btn cc2-danger" id="chat2ClearChat" title="ล้างแชท">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </header>
+
+        <div class="cc2-message-search" id="chat2MessageSearchBar" hidden>
+          <i class="fas fa-magnifying-glass"></i>
+          <input type="search" id="chat2MessageSearch" placeholder="ค้นหาในบทสนทนานี้">
+          <span id="chat2MessageSearchCount">0</span>
+        </div>
+
+        <section class="cc2-messages" id="chat2Messages">
+          <div class="cc2-empty">
+            <div class="cc2-empty-icon"><i class="fas fa-comments"></i></div>
+            <strong>ยังไม่ได้เลือกบทสนทนา</strong>
+            <span>เลือกแชทจาก Inbox เพื่อดูประวัติ ตอบกลับ และจัดการข้อมูลลูกค้า</span>
+          </div>
+        </section>
+
+        <footer class="cc2-composer" id="chat2Composer" hidden>
+          <div class="cc2-composer-tools">
+            <button type="button" class="cc2-icon-btn" id="chat2OpenTemplates" title="Templates">
+              <i class="fas fa-bolt"></i>
+            </button>
+            <button type="button" class="cc2-icon-btn" id="chat2OpenFiles" title="ส่งไฟล์">
+              <i class="fas fa-paperclip"></i>
+            </button>
+            <button type="button" class="cc2-icon-btn" id="chat2OpenEmoji" title="Emoji">
+              <i class="far fa-smile"></i>
+            </button>
+          </div>
+          <textarea id="chat2Input" rows="1" maxlength="1000" placeholder="พิมพ์ข้อความตอบกลับ..."></textarea>
+          <button type="button" class="cc2-send" id="chat2Send" title="ส่งข้อความ">
+            <i class="fas fa-paper-plane"></i>
+          </button>
+        </footer>
+      </main>
+
+      <aside class="cc2-context" aria-label="ข้อมูลลูกค้า">
+        <div class="cc2-panel-head cc2-context-head">
+          <div>
+            <div class="cc2-kicker">Workspace</div>
+            <h2 class="cc2-title">ข้อมูลลูกค้า</h2>
+          </div>
+          <div class="cc2-panel-actions">
+            <span class="cc2-chip" id="chat2SocketState">offline</span>
+            <button type="button" class="cc2-icon-btn cc2-mobile-close" id="chat2MobileCloseContext" title="ปิดข้อมูลลูกค้า" aria-label="ปิดข้อมูลลูกค้า">
+              <i class="fas fa-xmark"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="cc2-tabs" id="chat2Tabs" role="tablist">
+          <button type="button" class="is-active" data-tab="overview"><i class="fas fa-circle-info"></i><span>รวม</span></button>
+          <button type="button" data-tab="tags"><i class="fas fa-tags"></i><span>แท็ก</span></button>
+          <button type="button" data-tab="forms"><i class="fas fa-clipboard-list"></i><span>ฟอร์ม</span></button>
+          <button type="button" data-tab="orders"><i class="fas fa-basket-shopping"></i><span>Order</span></button>
+          <button type="button" data-tab="files"><i class="fas fa-folder-open"></i><span>ไฟล์</span></button>
+          <button type="button" data-tab="notes"><i class="fas fa-note-sticky"></i><span>โน้ต</span></button>
+          <button type="button" data-tab="tools"><i class="fas fa-screwdriver-wrench"></i><span>Tools</span></button>
+        </div>
+
+        <div class="cc2-context-body">
+          <section class="cc2-tab-panel is-active" id="chat2PanelOverview" data-panel="overview">
+            <div id="chat2Overview"></div>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelTags" data-panel="tags" hidden>
+            <div class="cc2-section-head">
+              <span>แท็กของลูกค้า</span>
+              <span class="cc2-counter" id="chat2TagCount">0</span>
+            </div>
+            <div class="cc2-pill-list" id="chat2CurrentTags"></div>
+            <div class="cc2-inline-form">
+              <input type="text" id="chat2NewTag" placeholder="เพิ่มแท็กใหม่">
+              <button type="button" id="chat2AddTag"><i class="fas fa-plus"></i></button>
+            </div>
+            <div class="cc2-section-head cc2-section-head--spaced">
+              <span>แท็กที่ใช้บ่อย</span>
+            </div>
+            <div class="cc2-pill-list" id="chat2PopularTags"></div>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelForms" data-panel="forms" hidden>
+            <div class="cc2-section-head">
+              <span>Data Forms</span>
+              <button type="button" class="cc2-mini-btn" id="chat2ResetForm">ฟอร์มใหม่</button>
+            </div>
+            <div class="cc2-form-builder">
+              <input type="hidden" id="chat2SubmissionId">
+              <label for="chat2FormSelect">เลือกฟอร์ม</label>
+              <select id="chat2FormSelect"></select>
+              <label for="chat2FormStatus">สถานะ</label>
+              <select id="chat2FormStatus"></select>
+              <div id="chat2FormFields" class="cc2-form-fields"></div>
+              <textarea id="chat2FormSummary" rows="2" placeholder="สรุปฟอร์ม (ไม่บังคับ)"></textarea>
+              <div class="cc2-form-actions">
+                <button type="button" class="cc2-secondary-btn" id="chat2SaveDraft">บันทึก Draft</button>
+                <button type="button" class="cc2-primary-btn" id="chat2SubmitForm">Submit</button>
+              </div>
+            </div>
+            <div class="cc2-section-head cc2-section-head--spaced">
+              <span>Submissions</span>
+              <span class="cc2-counter" id="chat2SubmissionCount">0</span>
+            </div>
+            <div id="chat2SubmissionList" class="cc2-stack"></div>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelOrders" data-panel="orders" hidden>
+            <div class="cc2-section-head">
+              <span>ออเดอร์</span>
+              <span class="cc2-counter" id="chat2OrderCount">0</span>
+            </div>
+            <div id="chat2OrderList" class="cc2-stack"></div>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelFiles" data-panel="files" hidden>
+            <div class="cc2-section-head">
+              <span>ส่งไฟล์ให้ลูกค้า</span>
+              <span class="cc2-counter" id="chat2FileCount">0</span>
+            </div>
+            <input type="text" id="chat2FileCaption" class="cc2-full-input" placeholder="Caption ก่อนส่งไฟล์ (ไม่บังคับ)">
+            <div id="chat2FileList" class="cc2-stack"></div>
+            <div class="cc2-upload-box">
+              <input type="file" id="chat2UploadFile">
+              <input type="text" id="chat2UploadLabel" placeholder="ชื่อไฟล์ที่จะแสดง">
+              <button type="button" class="cc2-primary-btn" id="chat2SendUpload">
+                <i class="fas fa-upload"></i> อัปโหลดและส่ง
+              </button>
+            </div>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelNotes" data-panel="notes" hidden>
+            <div class="cc2-section-head">
+              <span>โน้ตลูกค้า</span>
+              <span class="cc2-muted" id="chat2NotesUpdated">ยังไม่มีโน้ต</span>
+            </div>
+            <textarea id="chat2Notes" rows="12" placeholder="บันทึกสิ่งที่ทีมต้องรู้เกี่ยวกับลูกค้าคนนี้"></textarea>
+            <button type="button" class="cc2-primary-btn cc2-full-btn" id="chat2SaveNotes">บันทึกโน้ต</button>
+          </section>
+
+          <section class="cc2-tab-panel" id="chat2PanelTools" data-panel="tools" hidden>
+            <div class="cc2-tool-section">
+              <div class="cc2-section-head">
+                <span>Templates</span>
+                <button type="button" class="cc2-mini-btn" id="chat2TemplateNew">ใหม่</button>
+              </div>
+              <div class="cc2-template-editor" id="chat2TemplateEditor" hidden>
+                <input type="hidden" id="chat2TemplateId">
+                <input type="text" id="chat2TemplateTitle" placeholder="ชื่อ Template">
+                <input type="text" id="chat2TemplateShortcut" placeholder="Shortcut เช่น /thanks">
+                <textarea id="chat2TemplateMessage" rows="3" placeholder="ข้อความ"></textarea>
+                <div class="cc2-form-actions">
+                  <button type="button" class="cc2-secondary-btn" id="chat2TemplateCancel">ยกเลิก</button>
+                  <button type="button" class="cc2-primary-btn" id="chat2TemplateSave">บันทึก</button>
+                </div>
+              </div>
+              <div id="chat2TemplateList" class="cc2-stack"></div>
+            </div>
+
+            <div class="cc2-tool-section">
+              <div class="cc2-section-head">
+                <span>ส่งต่อข้อความ</span>
+              </div>
+              <textarea id="chat2ForwardMessage" rows="3" placeholder="ข้อความที่จะส่งต่อ"></textarea>
+              <div class="cc2-forward-list" id="chat2ForwardTargets"></div>
+              <button type="button" class="cc2-secondary-btn cc2-full-btn" id="chat2ForwardSend">ส่งต่อ</button>
+            </div>
+
+            <div class="cc2-tool-section">
+              <div class="cc2-section-head">
+                <span>มอบหมายแชท</span>
+              </div>
+              <label class="cc2-tool-label" for="chat2AssigneeSelect">Owner</label>
+              <select id="chat2AssigneeSelect"></select>
+              <div class="cc2-assignment-grid">
+                <label class="cc2-tool-label" for="chat2QueueStatus">
+                  Queue status
+                  <select id="chat2QueueStatus">
+                    <option value="open">Open</option>
+                    <option value="pending">Pending</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                </label>
+                <label class="cc2-tool-label" for="chat2SlaMinutes">
+                  SLA นาที
+                  <input type="number" id="chat2SlaMinutes" min="1" max="1440" placeholder="ค่าเริ่มต้น">
+                </label>
+              </div>
+              <textarea id="chat2AssignmentNote" rows="2" placeholder="หมายเหตุการมอบหมาย"></textarea>
+              <button type="button" class="cc2-secondary-btn cc2-full-btn" id="chat2Assign">บันทึกการมอบหมาย</button>
+            </div>
+
+            <div class="cc2-tool-section">
+              <div class="cc2-section-head">
+                <span>Export / Debug</span>
+              </div>
+              <div class="cc2-form-actions">
+                <button type="button" class="cc2-secondary-btn" id="chat2ExportTxt">TXT</button>
+                <button type="button" class="cc2-secondary-btn" id="chat2ExportJson">JSON</button>
+                <button type="button" class="cc2-secondary-btn" id="chat2ToggleSearch">ค้นหาในแชท</button>
+              </div>
+              <pre id="chat2Debug" class="cc2-debug">เลือกแชทเพื่อดูข้อมูล debug</pre>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="modal fade" id="chat2ImageModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">รูปภาพ</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-center">
+          <img id="chat2ModalImage" src="" alt="รูปภาพ" class="img-fluid">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="chat2OrderModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">แก้ไขออเดอร์</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="chat2EditOrderId">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">สถานะ</label>
+              <select class="form-select" id="chat2EditOrderStatus">
+                <option value="pending">รอดำเนินการ</option>
+                <option value="confirmed">ยืนยันแล้ว</option>
+                <option value="shipped">จัดส่งแล้ว</option>
+                <option value="completed">เสร็จสิ้น</option>
+                <option value="cancelled">ยกเลิก</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">ชื่อลูกค้า</label>
+              <input type="text" class="form-control" id="chat2EditCustomerName">
+            </div>
+            <div class="col-12">
+              <label class="form-label">รายการสินค้า</label>
+              <div id="chat2EditOrderItems" class="cc2-order-edit-items"></div>
+              <button type="button" class="cc2-mini-btn mt-2" id="chat2AddOrderItem">เพิ่มสินค้า</button>
+            </div>
+            <div class="col-12">
+              <label class="form-label">ที่อยู่</label>
+              <input type="text" class="form-control" id="chat2EditShippingAddress">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">ตำบล/แขวง</label>
+              <input type="text" class="form-control" id="chat2EditAddressSubDistrict">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">อำเภอ/เขต</label>
+              <input type="text" class="form-control" id="chat2EditAddressDistrict">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">จังหวัด</label>
+              <input type="text" class="form-control" id="chat2EditAddressProvince">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">รหัสไปรษณีย์</label>
+              <input type="text" class="form-control" id="chat2EditAddressPostalCode">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">เบอร์โทร</label>
+              <input type="text" class="form-control" id="chat2EditPhone">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">ชำระเงิน</label>
+              <select class="form-select" id="chat2EditPaymentMethod">
+                <option value="เก็บเงินปลายทาง">เก็บเงินปลายทาง</option>
+                <option value="โอนเงิน">โอนเงิน</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">ค่าส่ง</label>
+              <input type="number" class="form-control" id="chat2EditShippingCost" min="0" step="1">
+            </div>
+            <div class="col-12">
+              <label class="form-label">หมายเหตุ</label>
+              <textarea class="form-control" id="chat2EditOrderNotes" rows="3"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button>
+          <button type="button" class="btn btn-primary" id="chat2SaveOrder">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/chat2.js?v=20260426-filter-v2"></script>
+  <script>
+    window.chat2FollowUpConfig = <%- JSON.stringify(typeof followUpConfig !== 'undefined' ? followUpConfig : {}).replace(/</g, '\\u003c') %>;
+    window.chat2Manager = new Chat2Manager();
+  </script>
+</body>
+
+</html>

@@ -179,6 +179,35 @@ function normalizeAppDocumentRow(row) {
   };
 }
 
+function normalizeSqlPlatformFilter(value) {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().toLowerCase();
+  return ["facebook", "line", "instagram", "whatsapp"].includes(normalized)
+    ? normalized
+    : "";
+}
+
+function normalizeSqlBotFilter(value) {
+  if (value === null || typeof value === "undefined") return "default";
+  const normalized =
+    typeof value === "string" ? value.trim() : String(value).trim();
+  if (!normalized || normalized === "default") return "default";
+  return normalized;
+}
+
+function appendConversationSqlFilters(clauses, params, options = {}) {
+  const platform = normalizeSqlPlatformFilter(options.platform);
+  if (platform) {
+    params.push(platform);
+    clauses.push(`LOWER(COALESCE(NULLIF(platform, ''), 'line')) = $${params.length}`);
+  }
+
+  if (options.filterByBot === true) {
+    params.push(normalizeSqlBotFilter(options.botId));
+    clauses.push(`COALESCE(NULLIF(bot_id, ''), 'default') = $${params.length}`);
+  }
+}
+
 function createChatStorageService({
   postgresRuntime,
   bucketClient,
@@ -593,6 +622,8 @@ function createChatStorageService({
         : null;
     const order = options.order === "desc" ? "DESC" : "ASC";
     const params = [userId];
+    const clauses = ["user_id = $1"];
+    appendConversationSqlFilters(clauses, params, options);
     const limitClause = limit && limit > 0 ? ` LIMIT $${params.length + 1}` : "";
     if (limit && limit > 0) {
       params.push(limit);
@@ -610,7 +641,7 @@ function createChatStorageService({
           message_at,
           order_extraction_round_id
         FROM chat_messages
-        WHERE user_id = $1
+        WHERE ${clauses.join(" AND ")}
         ORDER BY message_at ${order}${limitClause}
       `,
       params,
@@ -636,8 +667,19 @@ function createChatStorageService({
     const limit = Number.isFinite(options.limit) ? options.limit : 50;
     const focusUserId =
       typeof options.focusUserId === "string" ? options.focusUserId.trim() : "";
+    const buildWhere = (initialClauses = [], initialParams = []) => {
+      const clauses = [...initialClauses];
+      const params = [...initialParams];
+      appendConversationSqlFilters(clauses, params, options);
+      return {
+        params,
+        whereSql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+      };
+    };
 
     if (useConversationHeads) {
+      const headQuery = buildWhere();
+      headQuery.params.push(limit);
       const headsResult = await postgresRuntime.query(
         `
           SELECT
@@ -648,10 +690,11 @@ function createChatStorageService({
             platform,
             NULLIF(bot_id, 'default') AS bot_id
           FROM chat_conversation_heads
+          ${headQuery.whereSql}
           ORDER BY last_message_at DESC NULLS LAST
-          LIMIT $1
+          LIMIT $${headQuery.params.length}
         `,
-        [limit],
+        headQuery.params,
       );
       const headRows = headsResult.rows.map((row) => ({
         _id: row.user_id,
@@ -666,6 +709,7 @@ function createChatStorageService({
         focusUserId &&
         !headRows.some((row) => String(row._id || "") === focusUserId)
       ) {
+        const focusQuery = buildWhere(["user_id = $1"], [focusUserId]);
         const focusResult = await postgresRuntime.query(
           `
             SELECT
@@ -676,11 +720,11 @@ function createChatStorageService({
               platform,
               NULLIF(bot_id, 'default') AS bot_id
             FROM chat_conversation_heads
-            WHERE user_id = $1
+            ${focusQuery.whereSql}
             ORDER BY last_message_at DESC NULLS LAST
             LIMIT 1
           `,
-          [focusUserId],
+          focusQuery.params,
         );
         if (focusResult.rows[0]) {
           headRows.unshift({
@@ -699,6 +743,8 @@ function createChatStorageService({
       }
     }
 
+    const usersQuery = buildWhere();
+    usersQuery.params.push(limit);
     const usersResult = await postgresRuntime.query(
       `
         SELECT
@@ -709,10 +755,11 @@ function createChatStorageService({
           platform,
           bot_id
         FROM chat_conversations
+        ${usersQuery.whereSql}
         ORDER BY last_message_at DESC NULLS LAST
-        LIMIT $1
+        LIMIT $${usersQuery.params.length}
       `,
-      [limit],
+      usersQuery.params,
     );
 
     const rows = usersResult.rows.map((row) => ({
@@ -728,6 +775,7 @@ function createChatStorageService({
       focusUserId &&
       !rows.some((row) => String(row._id || "") === focusUserId)
     ) {
+      const focusQuery = buildWhere(["user_id = $1"], [focusUserId]);
       const focusResult = await postgresRuntime.query(
         `
           SELECT
@@ -738,10 +786,10 @@ function createChatStorageService({
             platform,
             bot_id
           FROM chat_conversations
-          WHERE user_id = $1
+          ${focusQuery.whereSql}
           LIMIT 1
         `,
-        [focusUserId],
+        focusQuery.params,
       );
       if (focusResult.rows[0]) {
         rows.unshift({
@@ -756,6 +804,55 @@ function createChatStorageService({
     }
 
     return rows;
+  }
+
+  async function listConversationInboxes(options = {}) {
+    if (!isConfigured()) return [];
+    await ensureReady();
+
+    const limit = Number.isFinite(options.limit) ? options.limit : 200;
+    const mapRows = (rows = []) =>
+      rows.map((row) => ({
+        platform: row.platform || "line",
+        botId: row.bot_id === "default" ? null : row.bot_id || null,
+        conversationCount: Number(row.conversation_count || 0),
+        lastTimestamp: row.last_message_at || null,
+      }));
+
+    if (useConversationHeads) {
+      const result = await postgresRuntime.query(
+        `
+          SELECT
+            LOWER(COALESCE(NULLIF(platform, ''), 'line')) AS platform,
+            COALESCE(NULLIF(bot_id, ''), 'default') AS bot_id,
+            COUNT(DISTINCT user_id) AS conversation_count,
+            MAX(last_message_at) AS last_message_at
+          FROM chat_conversation_heads
+          GROUP BY 1, 2
+          ORDER BY last_message_at DESC NULLS LAST
+          LIMIT $1
+        `,
+        [limit],
+      );
+      const rows = mapRows(result.rows);
+      if (rows.length > 0) return rows;
+    }
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT
+          LOWER(COALESCE(NULLIF(platform, ''), 'line')) AS platform,
+          COALESCE(NULLIF(bot_id, ''), 'default') AS bot_id,
+          COUNT(DISTINCT user_id) AS conversation_count,
+          MAX(last_message_at) AS last_message_at
+        FROM chat_conversations
+        GROUP BY 1, 2
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return mapRows(result.rows);
   }
 
   async function getAttachment(messageId, attachmentIndex) {
@@ -1353,6 +1450,7 @@ function createChatStorageService({
     listTopDocumentArrayValues,
     getMessageById,
     isConfigured,
+    listConversationInboxes,
     listConversationUsers,
     listDocuments,
     listMessagesForUser,

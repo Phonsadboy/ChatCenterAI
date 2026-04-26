@@ -14,6 +14,7 @@
         rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
     <link href="/css/admin-settings-v2.css" rel="stylesheet">
+    <link href="/css/voxtron-phase1.css" rel="stylesheet">
 </head>
 
 <body class="app-shell">
@@ -29,11 +30,17 @@
                         <a href="#image-collections" class="settings-topnav-item" data-section="image-collections">
                             <i class="fas fa-images"></i><span>คลังรูปภาพ</span>
                         </a>
+                        <a href="#data-forms" class="settings-topnav-item" data-section="data-forms">
+                            <i class="fas fa-clipboard-list"></i><span>Data Forms</span>
+                        </a>
+                        <a href="#file-library" class="settings-topnav-item" data-section="file-library">
+                            <i class="fas fa-file-arrow-up"></i><span>คลังไฟล์</span>
+                        </a>
                         <a href="#chat-settings" class="settings-topnav-item" data-section="chat-settings">
                             <i class="fas fa-comments"></i><span>แชทและคิว</span>
                         </a>
                         <a href="#order-notifications" class="settings-topnav-item" data-section="order-notifications">
-                            <i class="fas fa-bell"></i><span>แจ้งเตือนออเดอร์</span>
+                            <i class="fas fa-bell"></i><span>แจ้งเตือนงาน</span>
                         </a>
                         <a href="#system-settings" class="settings-topnav-item" data-section="system-settings">
                             <i class="fas fa-server"></i><span>ตั้งค่าทั่วไป</span>
@@ -160,6 +167,165 @@
                     <!-- Image Collections Section (redesigned) -->
                     <%- include('./partials/settings/image-library') %>
 
+                    <!-- Data Forms Section -->
+                    <section id="data-forms" class="settings-section d-none">
+                        <div class="section-header">
+                            <div>
+                                <h2 class="section-title">Data Forms</h2>
+                                <p class="section-desc">สร้างฟอร์มกลางให้ AI เลือกใช้และดู submission ที่เข้ามาจากแชท</p>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="dataFormsRefreshBtn">
+                                    <i class="fas fa-sync-alt"></i> รีเฟรช
+                                </button>
+                                <button class="btn-v2 btn-v2-primary btn-v2-sm" id="dataFormsCreateBtn">
+                                    <i class="fas fa-plus"></i> สร้างฟอร์ม
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fas fa-chart-simple me-2"></i>Data Form Dashboard</h3>
+                                <div class="d-flex gap-2">
+                                    <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="dataFormExportCsvBtn">
+                                        <i class="fas fa-file-csv"></i> CSV
+                                    </button>
+                                    <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="dataFormExportXlsxBtn">
+                                        <i class="fas fa-file-excel"></i> XLSX
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body-v2">
+                                <div class="voxtron-dashboard-grid" id="dataFormDashboardMetrics">
+                                    <div class="voxtron-metric"><span>Total</span><strong>0</strong></div>
+                                    <div class="voxtron-metric"><span>Draft</span><strong>0</strong></div>
+                                    <div class="voxtron-metric"><span>Submitted</span><strong>0</strong></div>
+                                    <div class="voxtron-metric"><span>Pending</span><strong>0</strong></div>
+                                </div>
+                                <div class="voxtron-filter-grid mt-3">
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Form</span>
+                                        <select class="form-select form-select-sm" id="dataFormDashboardFormFilter">
+                                            <option value="">ทุกฟอร์ม</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Status</span>
+                                        <select class="form-select form-select-sm" id="dataFormDashboardStatusFilter">
+                                            <option value="">ทุกสถานะ</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Inbox</span>
+                                        <select class="form-select form-select-sm" id="dataFormDashboardInboxFilter">
+                                            <option value="">ทุก Inbox</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Agent</span>
+                                        <input type="search" class="form-control form-control-sm" id="dataFormDashboardAgentFilter"
+                                            placeholder="ชื่อผู้แก้/ผู้ส่ง">
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">From</span>
+                                        <input type="date" class="form-control form-control-sm" id="dataFormDashboardStartDate">
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">To</span>
+                                        <input type="date" class="form-control form-control-sm" id="dataFormDashboardEndDate">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="voxtron-two-col">
+                            <div class="settings-card">
+                                <div class="card-header-v2">
+                                    <h3 class="card-title-v2"><i class="fas fa-clipboard-list me-2"></i>ฟอร์มที่ใช้งาน</h3>
+                                </div>
+                                <div class="card-body-v2 p-0">
+                                    <div id="dataFormsList" class="voxtron-list">
+                                        <div class="text-center p-3 text-muted-v2">กำลังโหลดฟอร์ม...</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="settings-card">
+                                <div class="card-header-v2">
+                                    <h3 class="card-title-v2"><i class="fas fa-inbox me-2"></i>Submissions ล่าสุด</h3>
+                                </div>
+                                <div class="card-body-v2 p-0">
+                                    <div id="dataFormSubmissionsList" class="voxtron-list">
+                                        <div class="text-center p-3 text-muted-v2">กำลังโหลด submissions...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- File Library Section -->
+                    <section id="file-library" class="settings-section d-none">
+                        <div class="section-header">
+                            <div>
+                                <h2 class="section-title">คลังไฟล์ (File Library)</h2>
+                                <p class="section-desc">อัปโหลดไฟล์สำหรับให้ Agent หรือ AI ส่งเป็น public download link</p>
+                            </div>
+                            <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="fileAssetsRefreshBtn">
+                                <i class="fas fa-sync-alt"></i> รีเฟรช
+                            </button>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fas fa-upload me-2"></i>อัปโหลดไฟล์ใหม่</h3>
+                            </div>
+                            <div class="card-body-v2">
+                                <form id="fileAssetUploadForm" class="voxtron-upload-form">
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label-v2" for="fileAssetFile">ไฟล์</label>
+                                            <input type="file" class="form-control form-control-sm" id="fileAssetFile" required>
+                                            <div class="form-text-v2">สูงสุด 50MB: images, PDF, Office, text/csv</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label-v2" for="fileAssetLabel">ชื่อที่ใช้เรียกใน AI</label>
+                                            <input type="text" class="form-control-v2" id="fileAssetLabel" placeholder="เช่น ใบสมัคร Voxtron">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label-v2" for="fileAssetDescription">คำอธิบาย</label>
+                                            <input type="text" class="form-control-v2" id="fileAssetDescription" placeholder="ใช้เมื่อไหร่ / ส่งให้ใคร">
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="voxtron-assignment-head">
+                                                <span>เปิดใช้กับบอท/เพจ</span>
+                                                <small>ไม่เลือก = ใช้ได้ทุกบอท</small>
+                                            </div>
+                                            <div id="fileAssetEnabledPages" class="voxtron-check-grid">
+                                                <div class="text-muted small">กำลังโหลดบอท...</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 text-end">
+                                            <button type="submit" class="btn-v2 btn-v2-primary">
+                                                <i class="fas fa-upload"></i> อัปโหลด
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fas fa-folder-open me-2"></i>ไฟล์ทั้งหมด</h3>
+                            </div>
+                            <div class="card-body-v2 p-0">
+                                <div id="fileAssetsList" class="voxtron-list">
+                                    <div class="text-center p-3 text-muted-v2">กำลังโหลดไฟล์...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
 
                     <!-- Chat Settings Section -->
                     <section id="chat-settings" class="settings-section d-none">
@@ -241,6 +407,14 @@
                                                     (กรณีระบบยังไม่รองรับการถอดเสียง)</div>
                                             </div>
                                         </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2" for="chatQueueSlaMinutes">SLA คิวแชท (นาที)</label>
+                                                <input type="number" class="form-control-v2" id="chatQueueSlaMinutes"
+                                                    min="1" max="1440">
+                                                <div class="form-text-v2">ใช้คำนวณแชทที่รอนาน/เกิน SLA ในหน้า Inbox</div>
+                                            </div>
+                                        </div>
                                         <div class="col-12 text-end">
                                             <button type="submit" class="btn-v2 btn-v2-primary">
                                                 <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
@@ -252,13 +426,13 @@
                         </div>
                     </section>
 
-                    <!-- Order Notifications Section -->
+                    <!-- Workflow Notifications Section -->
                     <section id="order-notifications" class="settings-section d-none">
                         <div class="section-header">
                             <div>
-                                <h2 class="section-title">แจ้งเตือนออเดอร์ (Order Notifications)</h2>
-                                <p class="section-desc">ส่งแจ้งเตือนเมื่อมีออเดอร์ใหม่ไปยังกลุ่ม LINE หรือ Telegram
-                                    และเลือกได้ว่าจะรับออเดอร์จากบอทไหนบ้าง</p>
+                                <h2 class="section-title">แจ้งเตือนงาน (Workflow Notifications)</h2>
+                                <p class="section-desc">ส่งแจ้งเตือนออเดอร์, handoff, AI stuck และ Data Form submitted ไปยังกลุ่ม LINE หรือ Telegram
+                                    พร้อมเลือกได้ว่าจะรับ event จากบอท/เพจไหนบ้าง</p>
                             </div>
                             <div class="d-flex gap-2">
                                 <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="notificationsRefreshBtn">
@@ -279,7 +453,7 @@
                                     <li>เพิ่ม Telegram Sender Bot (ถ้าต้องการส่ง Telegram) และเพิ่ม LINE Bot (ถ้าต้องการส่ง LINE)</li>
                                     <li>เชิญบอทเข้ากลุ่มปลายทาง (LINE/Telegram) แล้วส่งข้อความ 1 ครั้งในกลุ่ม</li>
                                     <li>กด “รีเฟรช” เพื่อให้ระบบจับกลุ่ม และตรวจสอบว่ากลุ่มแสดงในรายการ</li>
-                                    <li>กด “สร้างช่องทาง” เลือกปลายทาง LINE หรือ Telegram และเลือกบอทต้นทางออเดอร์ที่ต้องการแจ้งเตือน
+                                    <li>กด “สร้างช่องทาง” เลือกปลายทาง LINE หรือ Telegram เลือก event และเลือกบอท/เพจต้นทางที่ต้องการแจ้งเตือน
                                     </li>
                                 </ol>
                             </div>
@@ -527,27 +701,57 @@
                         <!-- Passcode Management (Superadmin Only) -->
                         <div class="settings-card mb-3" id="passcodeManagementCard" style="display: none;">
                             <div class="card-header-v2">
-                                <h3 class="card-title-v2"><i class="fas fa-key me-2"></i>การจัดการรหัสเข้าใช้งานทีม</h3>
+                                <div>
+                                    <h3 class="card-title-v2"><i class="fas fa-key me-2"></i>การจัดการรหัสเข้าใช้งานทีม</h3>
+                                    <div class="passcode-card-subtitle">กำหนด role, permission, inbox และ layout ของทีมงานที่เข้าใช้งานผ่าน passcode</div>
+                                </div>
                                 <button class="btn-v2 btn-v2-primary btn-v2-sm" id="togglePasscodeCreateBtn">
                                     <i class="fas fa-plus-circle"></i> สร้างรหัสใหม่
                                 </button>
                             </div>
                             <div class="card-body-v2">
                                 <div class="alert alert-info d-none" id="passcodeMessageBox" role="alert"></div>
+                                <div class="passcode-stats" id="passcodeStats">
+                                    <div class="passcode-stat">
+                                        <span>ทั้งหมด</span>
+                                        <strong>0</strong>
+                                    </div>
+                                    <div class="passcode-stat">
+                                        <span>เปิดใช้งาน</span>
+                                        <strong>0</strong>
+                                    </div>
+                                    <div class="passcode-stat">
+                                        <span>เห็นทุก Inbox</span>
+                                        <strong>0</strong>
+                                    </div>
+                                    <div class="passcode-stat">
+                                        <span>ยังไม่เคยใช้</span>
+                                        <strong>0</strong>
+                                    </div>
+                                </div>
 
                                 <!-- Create Passcode Form -->
-                                <div class="card mb-3" id="passcodeCreateContainer" style="display: none;">
-                                    <div class="card-body">
-                                        <form id="createPasscodeForm" class="row g-3 align-items-end">
-                                            <div class="col-md-5">
+                                <div class="passcode-editor-panel mb-3" id="passcodeCreateContainer" style="display: none;">
+                                    <div class="passcode-editor-head">
+                                        <div>
+                                            <div class="passcode-panel-title" id="passcodeEditorTitle">สร้างผู้ใช้ทีมงาน</div>
+                                            <div class="passcode-panel-desc">Agent/Team Leader จะไม่เห็น Inbox จนกว่าจะเลือกสิทธิ์ให้</div>
+                                        </div>
+                                        <button type="button" class="btn-v2 btn-v2-secondary btn-v2-sm" id="passcodeResetBtn">
+                                            <i class="fas fa-rotate-left"></i> รีเซ็ตฟอร์ม
+                                        </button>
+                                    </div>
+                                        <form id="createPasscodeForm" class="row g-3 align-items-end passcode-editor-form">
+                                            <input type="hidden" id="editingPasscodeId">
+                                            <div class="col-md-4">
                                                 <label for="newPasscodeLabel" class="form-label-v2">ชื่อรหัส <span
                                                         class="text-danger">*</span></label>
                                                 <input type="text" id="newPasscodeLabel" class="form-control-v2"
-                                                    placeholder="เช่น ทีมขาย, ทีมบริการลูกค้า" required>
+                                                    placeholder="เช่น Agent A, Team Leader LINE1" required>
                                             </div>
-                                            <div class="col-md-4">
+                                            <div class="col-md-3">
                                                 <label for="newPasscodeValue" class="form-label-v2">รหัสสำหรับเข้าใช้งาน
-                                                    <span class="text-danger">*</span></label>
+                                                    <span class="text-danger" id="newPasscodeRequiredMark">*</span></label>
                                                 <div class="input-group">
                                                     <input type="text" id="newPasscodeValue" class="form-control-v2"
                                                         placeholder="กำหนดเองหรือกดสุ่ม" minlength="4" required>
@@ -559,22 +763,81 @@
                                                 <div class="form-text-v2">แนะนำใช้ความยาว 6-12 ตัวอักษร
                                                     มีทั้งตัวเลข/ตัวอักษร</div>
                                             </div>
+                                            <div class="col-md-2">
+                                                <label for="newPasscodeRole" class="form-label-v2">Role</label>
+                                                <select id="newPasscodeRole" class="form-select">
+                                                    <option value="agent">Agent</option>
+                                                    <option value="team_leader">Team Leader</option>
+                                                    <option value="admin">Admin</option>
+                                                </select>
+                                            </div>
                                             <div class="col-md-3">
                                                 <button type="submit" class="btn-v2 btn-v2-primary w-100"
                                                     id="createPasscodeSubmitBtn">
-                                                    <i class="fas fa-save"></i> บันทึกรหัส
+                                                    <i class="fas fa-save"></i> บันทึกผู้ใช้
                                                 </button>
                                             </div>
+                                            <div class="col-12">
+                                                <div class="passcode-config-grid">
+                                                    <div>
+                                                        <div class="passcode-control-panel h-100">
+                                                            <div class="passcode-control-title">
+                                                                <span>Menu / Settings</span>
+                                                                <small>เลือกเมนูและหน้าตั้งค่าที่เข้าได้</small>
+                                                            </div>
+                                                            <div id="passcodePermissionGrid" class="small"></div>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div class="passcode-control-panel h-100">
+                                                            <div class="passcode-control-title passcode-control-title--split">
+                                                                <div>
+                                                                    <span>Inbox Permission</span>
+                                                                    <small>กำหนดช่องทางที่เห็นในหน้าแชท</small>
+                                                                </div>
+                                                                <select id="passcodeInboxMode" class="form-select form-select-sm w-auto">
+                                                                    <option value="selected">เลือก Inbox</option>
+                                                                    <option value="all">ทุก Inbox</option>
+                                                                </select>
+                                                            </div>
+                                                            <div id="passcodeInboxGrid" class="small"></div>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div class="passcode-control-panel h-100">
+                                                            <div class="passcode-control-title passcode-control-title--split">
+                                                                <div>
+                                                                    <span>Chat Layout</span>
+                                                                    <small>ควบคุม panel ด้านขวาของ Agent</small>
+                                                                </div>
+                                                                <select id="passcodeChatLayoutMode" class="form-select form-select-sm w-auto">
+                                                                    <option value="forms_only">Chat + Form</option>
+                                                                    <option value="full">เต็มทั้งหมด</option>
+                                                                    <option value="custom">เลือกเอง</option>
+                                                                </select>
+                                                            </div>
+                                                            <div id="passcodeChatLayoutTabs" class="small"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </form>
-                                    </div>
                                 </div>
 
                                 <!-- Passcode List -->
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle">
+                                <div class="passcode-list-head">
+                                    <div>
+                                        <div class="passcode-panel-title">ผู้ใช้ทีมงานทั้งหมด</div>
+                                        <div class="passcode-panel-desc">แก้ role/permission ได้จากปุ่มดินสอ และปิดใช้ passcode ได้ทันที</div>
+                                    </div>
+                                </div>
+                                <div class="table-responsive passcode-table-wrap">
+                                    <table class="table table-sm align-middle passcode-table">
                                         <thead class="table-light">
                                             <tr>
                                                 <th style="min-width: 160px;">ชื่อรหัส</th>
+                                                <th style="min-width: 120px;">Role</th>
+                                                <th style="min-width: 180px;">Inbox</th>
                                                 <th style="min-width: 120px;">สถานะ</th>
                                                 <th style="min-width: 160px;">ใช้งานล่าสุด</th>
                                                 <th style="min-width: 100px;">จำนวนครั้งที่ใช้</th>
@@ -583,13 +846,76 @@
                                         </thead>
                                         <tbody id="passcodeTableBody">
                                             <tr id="passcodeEmptyState">
-                                                <td colspan="5" class="text-center text-muted py-4">
+                                                <td colspan="7" class="text-center text-muted py-4">
                                                     <i class="fas fa-key me-2"></i>ยังไม่มีรหัสสำหรับทีมงาน
                                                     เริ่มสร้างรหัสชุดแรกได้เลย
                                                 </td>
                                             </tr>
                                         </tbody>
                                     </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-card mb-3" id="auditLogsCard">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fas fa-clock-rotate-left me-2"></i>Audit Log</h3>
+                                <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="auditLogsRefreshBtn">
+                                    <i class="fas fa-sync-alt"></i> รีเฟรช
+                                </button>
+                            </div>
+                            <div class="card-body-v2">
+                                <div class="voxtron-filter-grid mb-3">
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">ค้นหา</span>
+                                        <input type="search" class="form-control form-control-sm" id="auditLogSearch"
+                                            placeholder="actor, target, user, summary">
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Event</span>
+                                        <select class="form-select form-select-sm" id="auditLogEventType">
+                                            <option value="">ทุก event</option>
+                                            <option value="user_created">user_created</option>
+                                            <option value="user_permissions_updated">user_permissions_updated</option>
+                                            <option value="user_access_toggled">user_access_toggled</option>
+                                            <option value="user_deleted">user_deleted</option>
+                                            <option value="chat_queue_updated">chat_queue_updated</option>
+                                            <option value="chat_file_sent">chat_file_sent</option>
+                                            <option value="chat_cleared">chat_cleared</option>
+                                            <option value="data_form_created">data_form_created</option>
+                                            <option value="data_form_updated">data_form_updated</option>
+                                            <option value="data_form_deleted">data_form_deleted</option>
+                                            <option value="data_form_submitted">data_form_submitted</option>
+                                            <option value="data_form_draft_saved">data_form_draft_saved</option>
+                                            <option value="data_form_submission_updated">data_form_submission_updated</option>
+                                            <option value="file_asset_created">file_asset_created</option>
+                                            <option value="file_asset_updated">file_asset_updated</option>
+                                            <option value="file_asset_deleted">file_asset_deleted</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">Target</span>
+                                        <select class="form-select form-select-sm" id="auditLogTargetType">
+                                            <option value="">ทุก target</option>
+                                            <option value="admin_passcode">admin_passcode</option>
+                                            <option value="conversation">conversation</option>
+                                            <option value="chat_assignment">chat_assignment</option>
+                                            <option value="data_form">data_form</option>
+                                            <option value="data_form_submission">data_form_submission</option>
+                                            <option value="file_asset">file_asset</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">From</span>
+                                        <input type="date" class="form-control form-control-sm" id="auditLogFrom">
+                                    </label>
+                                    <label class="form-group-v2">
+                                        <span class="form-label-v2">To</span>
+                                        <input type="date" class="form-control form-control-sm" id="auditLogTo">
+                                    </label>
+                                </div>
+                                <div id="auditLogsList" class="voxtron-list">
+                                    <div class="text-center p-3 text-muted-v2">กำลังโหลด Audit Log...</div>
                                 </div>
                             </div>
                         </div>
@@ -726,6 +1052,74 @@
             <%- include('partials/modals/bot-keyword-modal') %>
             <%- include('partials/modals/api-key-modal') %>
             <%- include('partials/modals/notification-channel-modal') %>
+            <div class="modal fade" id="dataFormModal" tabindex="-1"
+                aria-labelledby="dataFormModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="dataFormModalLabel">
+                                <i class="fas fa-clipboard-list me-2"></i>จัดการ Data Form
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <form id="dataFormEditor">
+                                <input type="hidden" id="dataFormId">
+                                <div class="row g-3">
+                                    <div class="col-md-5">
+                                        <label class="form-label" for="dataFormName">ชื่อฟอร์ม <span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control" id="dataFormName" required>
+                                    </div>
+                                    <div class="col-md-7">
+                                        <label class="form-label" for="dataFormDescription">Description สำหรับ AI</label>
+                                        <input type="text" class="form-control" id="dataFormDescription"
+                                            placeholder="อธิบายว่าใช้ฟอร์มนี้เมื่อไหร่">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="dataFormStatuses">Statuses</label>
+                                        <input type="text" class="form-control" id="dataFormStatuses"
+                                            placeholder="draft, submitted, reviewing">
+                                        <div class="form-text">ระบบจะบังคับมี draft และ submitted เสมอ</div>
+                                    </div>
+                                    <div class="col-md-6 d-flex align-items-end">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="dataFormIsActive" checked>
+                                            <label class="form-check-label" for="dataFormIsActive">เปิดใช้งานฟอร์มนี้</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="form-label mb-0">Fields</label>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="dataFormAddFieldBtn">
+                                                <i class="fas fa-plus"></i> เพิ่ม field
+                                            </button>
+                                        </div>
+                                        <div id="dataFormFieldsList" class="voxtron-field-list"></div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="voxtron-assignment-head">
+                                            <span>เปิดใช้กับบอท/เพจ</span>
+                                            <small>ไม่เลือก = ใช้ได้ทุกบอท</small>
+                                        </div>
+                                        <div id="dataFormEnabledPages" class="voxtron-check-grid">
+                                            <div class="text-muted small">กำลังโหลดบอท...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-danger me-auto d-none" id="dataFormDeleteBtn">
+                                <i class="fas fa-trash me-1"></i>ปิดฟอร์ม
+                            </button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                            <button type="button" class="btn btn-primary" id="dataFormSaveBtn">
+                                <i class="fas fa-save me-1"></i>บันทึก
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="modal fade" id="telegramNotificationBotModal" tabindex="-1"
                 aria-labelledby="telegramNotificationBotModalLabel" aria-hidden="true">
                 <div class="modal-dialog modal-lg">
@@ -744,7 +1138,7 @@
                                     <label for="telegramNotificationBotName" class="form-label">ชื่อ Telegram Bot <span
                                             class="text-danger">*</span></label>
                                     <input type="text" class="form-control" id="telegramNotificationBotName"
-                                        placeholder="เช่น: Telegram แจ้งเตือนออเดอร์หลัก" required>
+                                        placeholder="เช่น: Telegram แจ้งเตือนงานหลัก" required>
                                 </div>
 
                                 <div class="mb-3">
@@ -894,6 +1288,7 @@
         <script src="/js/admin-settings-v2.js"></script>
         <script src="/js/image-collections-management.js"></script>
         <script src="/js/notification-channels.js"></script>
+        <script src="/js/voxtron-phase1.js"></script>
 </body>
 
 </html>

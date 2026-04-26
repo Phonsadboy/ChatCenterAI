@@ -44,6 +44,12 @@
                                 <input type="text" id="mobileUserSearch" placeholder="ค้นหาลูกค้า, user ID">
                             </div>
                             <div class="mobile-sheet-filters">
+                                <label class="mobile-filter-field" for="mobileInboxFilterSelect">
+                                    <span>Inbox</span>
+                                    <select id="mobileInboxFilterSelect">
+                                        <option value="all">ทุก Inbox</option>
+                                    </select>
+                                </label>
                                 <div class="mobile-filter-row" id="mobileStatusFilters">
                                     <button type="button" class="mobile-filter-chip active" data-mobile-filter="all">ทั้งหมด</button>
                                     <button type="button" class="mobile-filter-chip" data-mobile-filter="unread">ยังไม่อ่าน</button>
@@ -82,6 +88,7 @@
                                 <button type="button" class="mobile-context-tab active" data-context-tab="overview">ภาพรวม</button>
                                 <button type="button" class="mobile-context-tab" data-context-tab="tags">แท็ก</button>
                                 <button type="button" class="mobile-context-tab" data-context-tab="orders">ออเดอร์</button>
+                                <button type="button" class="mobile-context-tab" data-context-tab="forms">ฟอร์ม</button>
                             </div>
                             <div class="mobile-context-panels">
                                 <section class="mobile-context-panel active" id="mobileContextPanelOverview">
@@ -122,6 +129,17 @@
                                             </div>
                                             <h6 class="order-empty-title">ไม่มีออเดอร์</h6>
                                             <p class="order-empty-description">เลือกผู้ใช้เพื่อดูออเดอร์</p>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="mobile-context-panel" id="mobileContextPanelForms" hidden>
+                                    <div class="mobile-order-list" id="mobileDataFormList">
+                                        <div class="order-empty-state">
+                                            <div class="order-empty-icon">
+                                                <i class="fas fa-clipboard-list"></i>
+                                            </div>
+                                            <h6 class="order-empty-title">ไม่มีฟอร์ม</h6>
+                                            <p class="order-empty-description">เลือกผู้ใช้เพื่อดู Data Form submissions</p>
                                         </div>
                                     </div>
                                 </section>
@@ -201,6 +219,14 @@
                                 <div class="filter-header">
                                     <span class="filter-title">ตัวกรอง</span>
                                     <button class="btn-clear-filter" id="clearFilters">ล้างทั้งหมด</button>
+                                </div>
+
+                                <!-- Inbox Filter -->
+                                <div class="filter-section">
+                                    <label class="filter-section-title" for="inboxFilterSelect">Inbox</label>
+                                    <select class="filter-select" id="inboxFilterSelect">
+                                        <option value="all">ทุก Inbox</option>
+                                    </select>
                                 </div>
 
                                 <!-- Status Filters -->
@@ -317,6 +343,10 @@
                                             aria-label="จัดการแท็ก">
                                             <i class="fas fa-tags"></i>
                                         </button>
+                                        <button class="btn-header-action" id="btnCopyChatUrl" title="คัดลอกลิงก์แชท"
+                                            aria-label="คัดลอกลิงก์แชท">
+                                            <i class="fas fa-link"></i>
+                                        </button>
                                         <button class="btn-header-action" id="btnUserNotes" title="โน้ตลูกค้า"
                                             aria-label="โน้ตลูกค้า">
                                             <i class="fas fa-sticky-note"></i>
@@ -365,6 +395,18 @@
                                                     <button class="dropdown-item" type="button"
                                                         data-chat-action="manageTags">
                                                         <i class="fas fa-tags me-2"></i>จัดการแท็ก
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="copyChatUrl">
+                                                        <i class="fas fa-link me-2"></i>คัดลอกลิงก์แชท
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="attachFile">
+                                                        <i class="fas fa-paperclip me-2"></i>ส่งไฟล์
                                                     </button>
                                                 </li>
                                                 <li>
@@ -457,6 +499,10 @@
                                 <div class="message-input-container">
                                     <button class="btn-input-action" id="btnTemplate" title="Templates">
                                         <i class="fas fa-magic"></i>
+                                    </button>
+                                    <button class="btn-input-action" id="btnAttachFile" title="ส่งไฟล์"
+                                        aria-label="ส่งไฟล์">
+                                        <i class="fas fa-paperclip"></i>
                                     </button>
                                     <button class="btn-input-action btn-input-action--mobile" id="btnMobileTools"
                                         title="เครื่องมือข้อความ" aria-label="เปิดเครื่องมือข้อความ">
@@ -666,6 +712,62 @@
                         <button type="button" class="btn btn-primary" id="saveUserNotesBtn">
                             <i class="fas fa-save me-2"></i>บันทึก
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Send File Modal -->
+        <div class="modal fade" id="chatFileModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-paperclip me-2"></i>ส่งไฟล์ให้ลูกค้า
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold" for="chatFileCaption">Caption</label>
+                            <input type="text" class="form-control" id="chatFileCaption"
+                                placeholder="ข้อความนำหน้าไฟล์ (ไม่บังคับ)">
+                        </div>
+                        <ul class="nav nav-tabs mb-3" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="chatFileLibraryTab" data-bs-toggle="tab"
+                                    data-bs-target="#chatFileLibraryPane" type="button" role="tab">คลังไฟล์</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="chatFileUploadTab" data-bs-toggle="tab"
+                                    data-bs-target="#chatFileUploadPane" type="button" role="tab">Upload สด</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content">
+                            <div class="tab-pane fade show active" id="chatFileLibraryPane" role="tabpanel">
+                                <div id="chatFileLibraryList" class="chat-file-list">
+                                    <div class="text-center text-muted p-3">กำลังโหลดไฟล์...</div>
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="chatFileUploadPane" role="tabpanel">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold" for="chatFileUploadInput">ไฟล์</label>
+                                    <input type="file" class="form-control" id="chatFileUploadInput">
+                                    <div class="form-text">สูงสุด 50MB: images, PDF, Office, text/csv</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold" for="chatFileUploadLabel">ชื่อไฟล์ที่จะแสดง</label>
+                                    <input type="text" class="form-control" id="chatFileUploadLabel"
+                                        placeholder="เว้นว่างเพื่อใช้ชื่อไฟล์จริง">
+                                </div>
+                                <button type="button" class="btn btn-primary" id="chatFileUploadSendBtn">
+                                    <i class="fas fa-paper-plane me-2"></i>อัปโหลดและส่ง
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                     </div>
                 </div>
             </div>

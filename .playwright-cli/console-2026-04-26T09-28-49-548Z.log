@@ -1,0 +1,14 @@
+[     725ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/chat/templates:0
+[     727ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/users:0
+[   99215ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/chat/templates:0
+[   99215ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/users:0
+[  150599ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/chat/context/U-mobile-demo-001?platform=line:0
+[  150599ms] [ERROR] selectUser failed Error: DATABASE_URL is required. Legacy document-store fallback has been removed.
+    at Chat2Manager.fetchJson (http://localhost:3000/js/chat2.js:583:13)
+    at async Chat2Manager.loadContext (http://localhost:3000/js/chat2.js:878:18)
+    at async Promise.all (index 1)
+    at async Chat2Manager.selectUser (http://localhost:3000/js/chat2.js:847:7) @ http://localhost:3000/js/chat2.js:854
+[  188170ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/chat/templates:0
+[  188172ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/users:0
+[  332542ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/chat/templates:0
+[  332543ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/admin/users:0

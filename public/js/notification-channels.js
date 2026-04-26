@@ -103,6 +103,7 @@
     els.receiveSelected = document.getElementById("notificationReceiveSelected");
     els.sourcesBox = document.getElementById("notificationChannelSourcesBox");
     els.sourcesList = document.getElementById("notificationChannelSourcesList");
+    els.eventTypeChecks = document.querySelectorAll(".notif-event-type-check");
 
     els.deliveryRealtime = document.getElementById("notificationDeliveryRealtime");
     els.deliveryScheduled = document.getElementById("notificationDeliveryScheduled");
@@ -347,7 +348,9 @@
       .map((bot) => ({
         id: bot?.id?.toString?.() || String(bot?.id || ""),
         name: bot?.name || "Bot",
-        platform: bot?.platform === "facebook" ? "facebook" : "line",
+        platform: ["line", "facebook", "instagram", "whatsapp"].includes(bot?.platform)
+          ? bot.platform
+          : "line",
       }))
       .filter((bot) => bot.id);
     return state.allBots;
@@ -501,9 +504,13 @@
       if (!sources.length) return "ยังไม่ได้เลือกบอทต้นทาง";
       const lineCount = sources.filter((s) => s.platform === "line").length;
       const fbCount = sources.filter((s) => s.platform === "facebook").length;
+      const igCount = sources.filter((s) => s.platform === "instagram").length;
+      const waCount = sources.filter((s) => s.platform === "whatsapp").length;
       const parts = [];
       if (lineCount) parts.push(`LINE ${lineCount}`);
       if (fbCount) parts.push(`Facebook ${fbCount}`);
+      if (igCount) parts.push(`Instagram ${igCount}`);
+      if (waCount) parts.push(`WhatsApp ${waCount}`);
       return `เลือกบอทต้นทาง: ${parts.join(", ")}`;
     };
 
@@ -513,6 +520,19 @@
       const times = Array.isArray(channel.summaryTimes) ? channel.summaryTimes : [];
       if (!times.length) return "สรุปตามเวลา: ยังไม่ตั้งเวลา";
       return `สรุปตามเวลา: ${times.join(", ")}`;
+    };
+
+    const summarizeEvents = (channel) => {
+      const labels = {
+        new_order: "Order",
+        handoff_requested: "Handoff",
+        ai_stuck: "AI stuck",
+        form_submitted: "Form",
+      };
+      const eventTypes = Array.isArray(channel.eventTypes) && channel.eventTypes.length
+        ? channel.eventTypes
+        : ["new_order"];
+      return `Events: ${eventTypes.map((type) => labels[type] || type).join(", ")}`;
     };
 
     els.channelsList.innerHTML = state.channels
@@ -546,6 +566,7 @@
                 ปลายทาง: ${escapeHtml(destinationLabel)} • ส่งด้วย: ${escapeHtml(senderLabel)} • กลุ่ม: ${escapeHtml(targetLabel)}
                 • ${escapeHtml(summarizeSources(channel))}
                 • ${escapeHtml(summarizeDelivery(channel))}
+                • ${escapeHtml(summarizeEvents(channel))}
               </div>
             </div>
             <div class="bot-actions-compact">
@@ -650,6 +671,7 @@
       },
       deliveryMode: "realtime",
       summaryTimes: [],
+      eventTypes: ["new_order"],
       isActive: true,
     });
   }
@@ -661,8 +683,8 @@
   function setModalTitle(isEdit) {
     if (!els.modalLabel) return;
     els.modalLabel.innerHTML = isEdit
-      ? '<i class="fas fa-bell me-2"></i>แก้ไขช่องทางแจ้งเตือนออเดอร์'
-      : '<i class="fas fa-bell me-2"></i>สร้างช่องทางแจ้งเตือนออเดอร์';
+      ? '<i class="fas fa-bell me-2"></i>แก้ไขช่องทางแจ้งเตือนงาน'
+      : '<i class="fas fa-bell me-2"></i>สร้างช่องทางแจ้งเตือนงาน';
   }
 
   function syncSlipOkUI() {
@@ -721,6 +743,7 @@
     if (els.destinationTelegram) {
       els.destinationTelegram.checked = type === "telegram_group";
     }
+    setSelectedEventTypes(channel?.eventTypes || ["new_order"]);
 
     els.includeCustomer.checked = channel?.settings?.includeCustomer !== false;
     if (els.includePhone) {
@@ -868,7 +891,11 @@
         const icon =
           bot.platform === "facebook"
             ? '<i class="fab fa-facebook text-primary me-1"></i>'
-            : '<i class="fab fa-line text-success me-1"></i>';
+            : bot.platform === "instagram"
+              ? '<i class="fab fa-instagram text-danger me-1"></i>'
+              : bot.platform === "whatsapp"
+                ? '<i class="fab fa-whatsapp text-success me-1"></i>'
+                : '<i class="fab fa-line text-success me-1"></i>';
 
         return `
           <div class="form-check">
@@ -895,7 +922,7 @@
     const normalized = Array.isArray(sources) ? sources : [];
     const desired = new Set(
       normalized
-        .map((s) => `${s.platform === "facebook" ? "facebook" : "line"}:${s.botId}`)
+        .map((s) => `${["line", "facebook", "instagram", "whatsapp"].includes(s.platform) ? s.platform : "line"}:${s.botId}`)
         .filter(Boolean),
     );
 
@@ -918,6 +945,29 @@
         sources.push({ platform, botId });
       });
     return sources;
+  }
+
+  function setSelectedEventTypes(eventTypes) {
+    const selected = new Set(
+      (Array.isArray(eventTypes) && eventTypes.length ? eventTypes : ["new_order"])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    );
+    els.eventTypeChecks?.forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+    if (selected.size === 0) {
+      const newOrder = document.getElementById("notificationEventNewOrder");
+      if (newOrder) newOrder.checked = true;
+    }
+  }
+
+  function readSelectedEventTypes() {
+    const eventTypes = [];
+    els.eventTypeChecks?.forEach((input) => {
+      if (input.checked && input.value) eventTypes.push(input.value);
+    });
+    return eventTypes.length ? eventTypes : ["new_order"];
   }
 
   async function saveChannel() {
@@ -962,6 +1012,7 @@
     const deliveryMode =
       els.deliveryScheduled?.checked === true ? "scheduled" : "realtime";
     const summaryTimes = parseSummaryTimesInput(els.summaryTimesInput?.value || "");
+    const eventTypes = readSelectedEventTypes();
     if (deliveryMode === "scheduled" && summaryTimes.length === 0) {
       toast("กรุณาระบุเวลาสรุปอย่างน้อย 1 เวลา", "danger");
       return;
@@ -997,6 +1048,7 @@
       },
       deliveryMode,
       summaryTimes,
+      eventTypes,
       isActive: els.isActive?.checked === true,
     };
 
@@ -1240,6 +1292,12 @@
   function init() {
     cacheElements();
     if (!els.channelsList && !els.telegramBotsList) return;
+    const user = window.adminAuth?.user || null;
+    const canManageNotifications =
+      !user ||
+      user.role === "superadmin" ||
+      (Array.isArray(user.permissions) && user.permissions.includes("notifications:manage"));
+    if (!canManageNotifications) return;
     initModal();
     bindEvents();
 

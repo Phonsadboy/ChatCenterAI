@@ -1,0 +1,267 @@
+.voxtron-two-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.75rem;
+}
+
+.voxtron-list {
+    min-height: 120px;
+}
+
+.voxtron-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+
+.voxtron-metric {
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.8rem 0.9rem;
+}
+
+.voxtron-metric span {
+    display: block;
+    color: var(--text-sub, #5C6372);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.voxtron-metric strong {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--text-main, #1E2430);
+    font-size: 1.35rem;
+    line-height: 1.15;
+}
+
+.voxtron-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.65rem;
+    align-items: end;
+}
+
+.voxtron-filter-grid .form-group-v2 {
+    margin: 0;
+}
+
+.voxtron-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid var(--border, #E1E5EF);
+    background: var(--bg-card, #fff);
+}
+
+.voxtron-item:last-child {
+    border-bottom: 0;
+}
+
+.voxtron-item-main {
+    min-width: 0;
+    flex: 1;
+}
+
+.voxtron-item-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 700;
+    color: var(--text-main, #1E2430);
+    font-size: 0.9rem;
+}
+
+.voxtron-item-title span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.voxtron-item-desc {
+    color: var(--text-sub, #5C6372);
+    font-size: 0.8rem;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
+}
+
+.voxtron-item-meta {
+    color: var(--text-sub, #5C6372);
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+.voxtron-item-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.voxtron-link {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+}
+
+.voxtron-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 0.45rem;
+    padding: 0.55rem;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: var(--radius-md, 8px);
+    background: #fff;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.voxtron-check {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 0.45rem;
+    row-gap: 0.05rem;
+    align-items: start;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 8px;
+    padding: 0.45rem 0.5rem;
+    cursor: pointer;
+    margin: 0;
+}
+
+.voxtron-check input {
+    grid-row: 1 / span 2;
+    margin-top: 0.2rem;
+}
+
+.voxtron-check span {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+    min-width: 0;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-main, #1E2430);
+}
+
+.voxtron-check small {
+    font-size: 0.72rem;
+    color: var(--text-sub, #5C6372);
+}
+
+.voxtron-assignment-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+
+.voxtron-assignment-head small {
+    color: var(--text-sub, #5C6372);
+    font-weight: 400;
+}
+
+.voxtron-field-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.voxtron-field-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1.2fr) minmax(100px, 1fr) 120px minmax(120px, 1fr) auto auto;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.voxtron-mini-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.78rem;
+    color: var(--text-main, #1E2430);
+    white-space: nowrap;
+    margin: 0;
+}
+
+.voxtron-inline-edit {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+    margin-top: 0.45rem;
+    max-width: 260px;
+}
+
+.voxtron-details {
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--text-main, #1E2430);
+}
+
+.voxtron-details summary {
+    cursor: pointer;
+    color: var(--color-primary, #4A6FA5);
+}
+
+.voxtron-timeline {
+    display: grid;
+    gap: 0.25rem;
+    margin-top: 0.35rem;
+    color: var(--text-sub, #5C6372);
+    font-size: 0.75rem;
+}
+
+.voxtron-timeline-row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 0.5rem;
+}
+
+.voxtron-upload-form .form-control-sm {
+    font-size: 0.82rem;
+}
+
+@media (max-width: 991px) {
+    .voxtron-two-col {
+        grid-template-columns: 1fr;
+    }
+
+    .voxtron-dashboard-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .voxtron-field-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .voxtron-field-row .btn-ghost-sm,
+    .voxtron-field-row .voxtron-mini-check {
+        justify-self: start;
+    }
+}
+
+@media (max-width: 575px) {
+    .voxtron-dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .voxtron-item {
+        flex-direction: column;
+    }
+
+    .voxtron-item-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .voxtron-field-row {
+        grid-template-columns: 1fr;
+    }
+}

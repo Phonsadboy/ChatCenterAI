@@ -5,7 +5,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="notificationChannelModalLabel">
-                    <i class="fas fa-bell me-2"></i>ตั้งค่าช่องทางแจ้งเตือนออเดอร์
+                    <i class="fas fa-bell me-2"></i>ตั้งค่าช่องทางแจ้งเตือนงาน
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -17,7 +17,7 @@
                         <label for="notificationChannelName" class="form-label">ชื่อช่องทาง <span
                                 class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="notificationChannelName"
-                            placeholder="เช่น: กลุ่มออเดอร์หลัก" required>
+                            placeholder="เช่น: กลุ่มแจ้งเตือนงานหลัก" required>
                     </div>
 
                     <div class="mb-3">
@@ -91,7 +91,7 @@
                     <hr class="my-3">
 
                     <div class="mb-2">
-                        <label class="form-label mb-1">ออเดอร์จากบอทไหนบ้าง</label>
+                        <label class="form-label mb-1">รับ event จากบอท/เพจไหนบ้าง</label>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="notificationReceiveMode"
                                 id="notificationReceiveAll" value="all" checked>
@@ -117,7 +117,7 @@
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="notificationDeliveryMode"
                             id="notificationDeliveryRealtime" value="realtime" checked>
-                        <label class="form-check-label" for="notificationDeliveryRealtime">เรียลไทม์ (ส่งทันทีเมื่อมีออเดอร์)</label>
+                        <label class="form-check-label" for="notificationDeliveryRealtime">เรียลไทม์ (ส่งทันทีเมื่อเกิด event)</label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="notificationDeliveryMode"
@@ -134,7 +134,42 @@
 
                     <hr class="my-3">
 
-                    <label class="form-label mb-1">รูปแบบข้อความ</label>
+                    <label class="form-label mb-1">Event ที่ต้องแจ้งเตือน</label>
+                    <div class="row g-2 mb-2" id="notificationEventTypesBox">
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input notif-event-type-check" type="checkbox"
+                                    id="notificationEventNewOrder" value="new_order" checked>
+                                <label class="form-check-label" for="notificationEventNewOrder">ออเดอร์ใหม่</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input notif-event-type-check" type="checkbox"
+                                    id="notificationEventHandoffRequested" value="handoff_requested">
+                                <label class="form-check-label" for="notificationEventHandoffRequested">ลูกค้าขอคุยกับคน</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input notif-event-type-check" type="checkbox"
+                                    id="notificationEventAiStuck" value="ai_stuck">
+                                <label class="form-check-label" for="notificationEventAiStuck">AI ตอบต่อไม่ได้</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input notif-event-type-check" type="checkbox"
+                                    id="notificationEventFormSubmitted" value="form_submitted">
+                                <label class="form-check-label" for="notificationEventFormSubmitted">Data Form submitted</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <label class="form-label mb-1">รูปแบบข้อความออเดอร์</label>
+                    <div class="form-text mb-2">ตัวเลือกชุดนี้ใช้กับ event ออเดอร์ใหม่ (new_order)</div>
                     <div class="row g-2">
                         <div class="col-md-6">
                             <div class="form-check">
@@ -232,7 +267,7 @@
                                 id="notificationChannelIsActive" checked>
                             <label class="form-check-label" for="notificationChannelIsActive">เปิดใช้งาน</label>
                         </div>
-                        <div class="small text-muted">Event: ออเดอร์ใหม่ (new_order)</div>
+                        <div class="small text-muted">รองรับ new_order และ Voxtron workflow events</div>
                     </div>
                 </form>
             </div>

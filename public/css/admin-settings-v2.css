@@ -580,6 +580,497 @@ input:checked + .toggle-slider:before {
     font-size: 0.75rem;
 }
 
+/* Team access management */
+#passcodeManagementCard {
+    --passcode-ink: #17202A;
+    --passcode-sub: #4D5A68;
+    --passcode-muted: #667586;
+    --passcode-line: #D9E1EA;
+    --passcode-soft: #F6F8FB;
+    --passcode-soft-strong: #EEF3F8;
+    --passcode-blue: #315F8F;
+    --passcode-blue-soft: #E7F0F8;
+    --passcode-green: #23775F;
+    --passcode-green-soft: #E5F4EF;
+    --passcode-amber: #946012;
+    --passcode-amber-soft: #FBF0DC;
+    --passcode-red: #B83F45;
+    --passcode-red-soft: #FAE7E8;
+}
+
+#passcodeManagementCard .card-header-v2 {
+    align-items: flex-start;
+    background: #fff;
+}
+
+.passcode-card-subtitle,
+.passcode-panel-desc,
+.passcode-cell-note {
+    color: var(--passcode-sub);
+    font-size: 0.76rem;
+    line-height: 1.4;
+}
+
+.passcode-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 0.75rem;
+}
+
+.passcode-stat {
+    border: 1px solid var(--passcode-line);
+    border-radius: 8px;
+    background: var(--passcode-soft);
+    padding: 0.75rem 0.85rem;
+}
+
+.passcode-stat span {
+    display: block;
+    color: var(--passcode-sub);
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.passcode-stat strong {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--passcode-ink);
+    font-size: 1.28rem;
+    line-height: 1.1;
+}
+
+.passcode-editor-panel {
+    border: 1px solid var(--passcode-line);
+    border-radius: 8px;
+    background: var(--passcode-soft);
+    padding: 0.85rem;
+}
+
+.passcode-editor-head,
+.passcode-list-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 0.8rem;
+}
+
+.passcode-panel-title {
+    color: var(--passcode-ink);
+    font-size: 0.9rem;
+    font-weight: 800;
+}
+
+.passcode-editor-form {
+    display: grid !important;
+    grid-template-columns: minmax(240px, 1.45fr) minmax(240px, 1.1fr) minmax(150px, 0.65fr) minmax(190px, 0.85fr);
+    gap: 0.75rem;
+    align-items: start !important;
+    margin: 0;
+}
+
+.passcode-editor-form > [class*="col-"] {
+    width: auto;
+    max-width: none;
+    flex: none;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.passcode-editor-form > input[type="hidden"] {
+    display: none;
+}
+
+.passcode-editor-form > .col-12 {
+    grid-column: 1 / -1;
+}
+
+.passcode-editor-form .form-control-v2,
+.passcode-editor-form .form-select {
+    min-height: 42px;
+    color: var(--passcode-ink);
+    background-color: #fff;
+    border-color: var(--passcode-line);
+}
+
+.passcode-editor-form .input-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    align-items: stretch;
+    width: 100%;
+}
+
+.passcode-editor-form .input-group .form-control-v2 {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+#generatePasscodeBtn {
+    min-width: 42px;
+    width: 42px;
+    min-height: 42px;
+    padding: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-color: var(--passcode-line);
+    background: #fff;
+    color: var(--passcode-blue);
+}
+
+#generatePasscodeBtn:hover {
+    background: var(--passcode-blue-soft);
+    border-color: rgba(49, 95, 143, 0.32);
+}
+
+#createPasscodeSubmitBtn {
+    min-height: 42px;
+    margin-top: 1.45rem;
+    background: #5775AB;
+    border-color: #5775AB;
+    color: #fff;
+}
+
+#createPasscodeSubmitBtn:hover {
+    background: #46659B;
+    border-color: #46659B;
+}
+
+.passcode-config-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    align-items: start;
+}
+
+.passcode-control-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    min-height: 0;
+    max-height: 420px;
+    overflow: auto;
+    border: 1px solid var(--passcode-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.75rem;
+}
+
+.passcode-control-panel.h-100 {
+    height: auto !important;
+}
+
+.passcode-control-title {
+    display: grid;
+    gap: 0.1rem;
+    color: var(--passcode-ink);
+}
+
+.passcode-control-title--split {
+    grid-template-columns: minmax(0, 1fr) minmax(116px, auto);
+    align-items: start;
+    gap: 0.65rem;
+}
+
+.passcode-control-title--split .form-select {
+    min-height: 38px;
+    color: var(--passcode-ink);
+    background-color: #fff;
+    border-color: var(--passcode-line);
+    font-weight: 700;
+}
+
+.passcode-control-title span,
+.passcode-permission-group-title span {
+    color: var(--passcode-ink);
+    font-weight: 800;
+}
+
+.passcode-control-title small,
+.passcode-permission-group-title small {
+    color: var(--passcode-sub);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.passcode-permission-group {
+    display: grid;
+    gap: 0.45rem;
+    margin-bottom: 0.65rem;
+}
+
+.passcode-permission-group:last-child {
+    margin-bottom: 0;
+}
+
+.passcode-permission-group-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.passcode-check-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+}
+
+.passcode-check-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.45rem;
+    align-items: start;
+    margin: 0;
+    border: 1px solid var(--passcode-line);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--passcode-ink);
+    padding: 0.45rem 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    min-height: 40px;
+}
+
+.passcode-check-item:hover {
+    background: var(--passcode-soft);
+    border-color: #C8D5E3;
+}
+
+.passcode-check-item:has(input:checked) {
+    background: var(--passcode-blue-soft);
+    border-color: rgba(49, 95, 143, 0.38);
+    color: var(--passcode-blue);
+}
+
+.passcode-check-item input {
+    margin-top: 0.12rem;
+    accent-color: var(--passcode-blue);
+}
+
+.passcode-check-item span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.passcode-check-item small {
+    display: block;
+    margin-top: 0.05rem;
+    color: var(--passcode-sub);
+    font-size: 0.68rem;
+    font-weight: 600;
+}
+
+.passcode-check-item--stack {
+    align-items: start;
+}
+
+.passcode-empty-note,
+.passcode-empty-state {
+    color: var(--passcode-sub);
+    background: var(--passcode-soft);
+    border: 1px dashed #C8D5E3;
+    border-radius: 8px;
+    padding: 0.75rem;
+}
+
+.passcode-empty-state {
+    display: grid;
+    justify-items: center;
+    gap: 0.35rem;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.passcode-empty-state i {
+    color: var(--passcode-blue);
+    font-size: 1.35rem;
+}
+
+.passcode-empty-state strong {
+    color: var(--passcode-ink);
+}
+
+.passcode-table-wrap {
+    border: 1px solid var(--passcode-line);
+    border-radius: 8px;
+    background: #fff;
+    overflow: auto;
+}
+
+.passcode-table {
+    margin: 0;
+}
+
+.passcode-table thead th {
+    background: var(--passcode-soft-strong) !important;
+    color: #344055;
+    border-bottom: 1px solid var(--passcode-line);
+    font-size: 0.74rem;
+    font-weight: 800;
+    text-transform: none;
+}
+
+.passcode-table tbody td {
+    color: var(--passcode-ink);
+    border-color: var(--passcode-line);
+    vertical-align: middle;
+}
+
+.passcode-table tbody tr:hover td {
+    background: #F8FAFC;
+}
+
+.passcode-table tbody tr.is-disabled td {
+    background: #FAFBFC;
+}
+
+.passcode-user-cell {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 0.55rem;
+    align-items: center;
+}
+
+.passcode-user-cell strong {
+    display: block;
+    color: var(--passcode-ink);
+    font-size: 0.86rem;
+}
+
+.passcode-user-cell small,
+.passcode-cell-note {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.passcode-avatar {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--passcode-blue-soft);
+    color: var(--passcode-blue);
+    font-weight: 800;
+}
+
+.passcode-role-badge,
+.passcode-status,
+.passcode-chip {
+    display: inline-flex;
+    align-items: center;
+    width: max-content;
+    max-width: 100%;
+    border-radius: 999px;
+    border: 1px solid var(--passcode-line);
+    background: #fff;
+    color: var(--passcode-ink);
+    padding: 0.2rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.passcode-role-badge.role-agent {
+    background: var(--passcode-blue-soft);
+    border-color: rgba(49, 95, 143, 0.24);
+    color: var(--passcode-blue);
+}
+
+.passcode-role-badge.role-team_leader {
+    background: var(--passcode-amber-soft);
+    border-color: rgba(148, 96, 18, 0.24);
+    color: var(--passcode-amber);
+}
+
+.passcode-role-badge.role-admin,
+.passcode-role-badge.role-superadmin {
+    background: var(--passcode-green-soft);
+    border-color: rgba(35, 119, 95, 0.24);
+    color: var(--passcode-green);
+}
+
+.passcode-status.is-active,
+.passcode-chip--green {
+    background: var(--passcode-green-soft);
+    border-color: rgba(35, 119, 95, 0.24);
+    color: var(--passcode-green);
+}
+
+.passcode-status.is-inactive,
+.passcode-chip--muted {
+    background: #F2F4F7;
+    border-color: #D8DEE6;
+    color: #596675;
+}
+
+.passcode-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    max-width: 340px;
+}
+
+.passcode-date,
+.passcode-usage-count {
+    color: var(--passcode-ink);
+    font-weight: 700;
+}
+
+.passcode-row-actions {
+    display: inline-flex;
+    justify-content: flex-end;
+    gap: 0.3rem;
+}
+
+.passcode-icon-action {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--passcode-line);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--passcode-blue);
+}
+
+.passcode-icon-action:hover {
+    background: var(--passcode-blue-soft);
+    border-color: rgba(49, 95, 143, 0.32);
+}
+
+.passcode-icon-action.is-warning {
+    color: var(--passcode-amber);
+}
+
+.passcode-icon-action.is-warning:hover {
+    background: var(--passcode-amber-soft);
+    border-color: rgba(148, 96, 18, 0.28);
+}
+
+.passcode-icon-action.is-success {
+    color: var(--passcode-green);
+}
+
+.passcode-icon-action.is-success:hover {
+    background: var(--passcode-green-soft);
+    border-color: rgba(35, 119, 95, 0.28);
+}
+
+.passcode-icon-action.is-danger {
+    color: var(--passcode-red);
+}
+
+.passcode-icon-action.is-danger:hover {
+    background: var(--passcode-red-soft);
+    border-color: rgba(184, 63, 69, 0.28);
+}
+
 .btn-action {
     display: inline-flex;
     align-items: center;
@@ -2060,6 +2551,32 @@ input:checked + .toggle-slider:before {
         padding: 0.5rem;
     }
 
+    .passcode-editor-form {
+        grid-template-columns: 1fr;
+    }
+
+    #createPasscodeSubmitBtn {
+        margin-top: 0;
+    }
+
+    .passcode-stats,
+    .passcode-config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .passcode-editor-head,
+    .passcode-list-head {
+        flex-direction: column;
+    }
+
+    .passcode-check-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .passcode-control-title--split {
+        grid-template-columns: 1fr;
+    }
+
     .section-header {
         flex-direction: column;
         align-items: flex-start;
@@ -2197,7 +2714,23 @@ input:checked + .toggle-slider:before {
     }
 }
 
-@media (max-width: 1100px) {
+@media (min-width: 769px) and (max-width: 1100px) {
+    .passcode-editor-form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    #createPasscodeSubmitBtn {
+        margin-top: 1.45rem;
+    }
+
+    .passcode-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .passcode-config-grid {
+        grid-template-columns: 1fr;
+    }
+
     .bot-inline-row {
         grid-template-columns: 1fr;
     }

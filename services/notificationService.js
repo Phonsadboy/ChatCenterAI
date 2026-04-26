@@ -268,6 +268,31 @@ function shouldNotifyChannelForOrder(channel, order) {
   );
 }
 
+function shouldNotifyChannelForWorkflowEvent(channel, event) {
+  if (!channel || channel.isActive !== true || !event) return false;
+  if (
+    typeof channel.deliveryMode === "string" &&
+    channel.deliveryMode.toLowerCase() === "scheduled"
+  ) {
+    return false;
+  }
+  const eventType = normalizeIdString(event.eventType);
+  if (!eventType) return false;
+  const eventTypes = Array.isArray(channel.eventTypes) ? channel.eventTypes : [];
+  if (!eventTypes.includes(eventType)) return false;
+
+  if (channel.receiveFromAllBots === true) return true;
+
+  const eventPlatform = normalizePlatform(event.platform);
+  const eventBotId = normalizeIdString(event.botId);
+  if (!eventBotId) return false;
+
+  const sources = uniqueSources(channel.sources);
+  return sources.some(
+    (source) => source.platform === eventPlatform && source.botId === eventBotId,
+  );
+}
+
 function shortenText(value, maxLength) {
   if (!value) return "";
   const text = String(value).trim();
@@ -279,6 +304,31 @@ function shortenText(value, maxLength) {
 function formatCurrency(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return `฿${value.toLocaleString()}`;
+}
+
+function formatWorkflowEventMessage(event = {}) {
+  const eventType = normalizeIdString(event.eventType);
+  const titleMap = {
+    handoff_requested: "🙋 ต้องให้เจ้าหน้าที่รับต่อ",
+    ai_stuck: "⚠️ AI ต้องการความช่วยเหลือ",
+    form_submitted: "📝 มี Data Form ใหม่",
+  };
+  const lines = [titleMap[eventType] || "🔔 แจ้งเตือน"];
+  const customerName = normalizeIdString(event.customerName);
+  const userId = normalizeIdString(event.userId);
+  if (customerName) lines.push(`ลูกค้า: ${customerName}`);
+  if (userId) lines.push(`User: ${userId}`);
+  const reason = normalizeIdString(event.reason);
+  if (reason) lines.push(`เหตุผล: ${shortenText(reason, 240)}`);
+  const formName = normalizeIdString(event.formName);
+  if (formName) lines.push(`ฟอร์ม: ${formName}`);
+  const summary = normalizeIdString(event.summary);
+  if (summary) lines.push(`สรุป: ${shortenText(summary, 500)}`);
+  const chatUrl = normalizeIdString(event.chatUrl);
+  if (chatUrl) lines.push(`เปิดแชท: ${chatUrl}`);
+  const submissionUrl = normalizeIdString(event.submissionUrl);
+  if (submissionUrl) lines.push(`ดูข้อมูล: ${submissionUrl}`);
+  return { type: "text", text: lines.filter(Boolean).join("\n") };
 }
 
 function buildOrderAddress(orderData) {
@@ -1163,6 +1213,95 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     return { success: true, sentCount };
   };
 
+  const sendWorkflowEvent = async (event = {}) => {
+    const eventType = normalizeIdString(event.eventType);
+    if (!eventType) {
+      throw new Error("eventType_required");
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const channels = await db
+      .collection("notification_channels")
+      .find({
+        isActive: true,
+        eventTypes: eventType,
+      })
+      .toArray();
+
+    const message = formatWorkflowEventMessage(event);
+    let sentCount = 0;
+
+    for (const channel of channels) {
+      if (!shouldNotifyChannelForWorkflowEvent(channel, event)) continue;
+
+      const channelId = normalizeIdString(channel?._id);
+      const channelType = normalizeNotificationChannelType(channel?.type);
+
+      if (channelType === "telegram_group") {
+        const telegramBotId = normalizeIdString(channel.telegramBotId);
+        const telegramChatId = normalizeTelegramChatId(channel.telegramChatId);
+        if (!telegramBotId || !telegramChatId) continue;
+        try {
+          const response = await sendTelegramMessagesInOrder(
+            db,
+            telegramBotId,
+            telegramChatId,
+            [message],
+          );
+          sentCount += 1;
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: null,
+            eventType,
+            status: "success",
+            response: response || null,
+          });
+        } catch (err) {
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: null,
+            eventType,
+            status: "failed",
+            errorMessage: err?.message || String(err),
+          });
+        }
+        continue;
+      }
+
+      const senderBotId =
+        normalizeIdString(channel.senderBotId) || normalizeIdString(channel.botId);
+      const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
+      if (!senderBotId || !targetId) continue;
+
+      try {
+        const response = await sendLineMessagesInChunks(
+          senderBotId,
+          targetId,
+          [message],
+        );
+        sentCount += 1;
+        await insertNotificationLog(db, {
+          channelId,
+          orderId: null,
+          eventType,
+          status: "success",
+          response: response || null,
+        });
+      } catch (err) {
+        await insertNotificationLog(db, {
+          channelId,
+          orderId: null,
+          eventType,
+          status: "failed",
+          errorMessage: err?.message || String(err),
+        });
+      }
+    }
+
+    return { success: true, sentCount };
+  };
+
   const sendOrderSummary = async (channel, options = {}) => {
     const channelDoc = channel && typeof channel === "object" ? channel : {};
     if (channelDoc.isActive !== true) {
@@ -1366,6 +1505,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
   return {
     sendNewOrder,
+    sendWorkflowEvent,
     sendOrderSummary,
     testChannel,
   };

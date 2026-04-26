@@ -1,7 +1,20 @@
 <%
   const current = typeof activePage !== 'undefined' ? activePage : '';
   const signedInUser = typeof adminUser !== 'undefined' && adminUser ? adminUser : null;
-  const roleBadgeLabel = signedInUser ? (signedInUser.role === 'superadmin' ? 'แอดมินใหญ่' : 'ผู้ดูแลระบบ') : '';
+  const roleLabels = {
+    superadmin: 'แอดมินใหญ่',
+    admin: 'Admin',
+    team_leader: 'Team Leader',
+    agent: 'Agent',
+  };
+  const roleBadgeLabel = signedInUser ? (roleLabels[signedInUser.role] || 'ผู้ดูแลระบบ') : '';
+  const userPermissions = Array.isArray(signedInUser?.permissions) ? signedInUser.permissions : [];
+  const canAccess = (permission) => {
+    if (!permission) return true;
+    if (!signedInUser) return true;
+    if (signedInUser.role === 'superadmin') return true;
+    return userPermissions.includes(permission);
+  };
 
   const pageTitles = {
     dashboard: 'แดชบอร์ด',
@@ -26,27 +39,27 @@
     {
       title: 'AI & ระบบ',
       items: [
-        { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
-        { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
-        { page: 'instruction-ai', label: 'InstructionAI2', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai' },
-        { page: 'api-usage', label: 'สถิติ API', icon: 'fa-chart-line', href: '/admin/api-usage' },
+        { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard', permission: 'menu:dashboard' },
+        { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2', permission: 'menu:settings' },
+        { page: 'instruction-ai', label: 'InstructionAI2', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai', permission: 'menu:instruction-ai' },
+        { page: 'api-usage', label: 'สถิติ API', icon: 'fa-chart-line', href: '/admin/api-usage', permission: 'menu:api-usage' },
       ],
     },
     {
       title: 'ลูกค้า',
       items: [
-        { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge' },
-        { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders' },
-        { page: 'followup', label: 'ติดตามลูกค้า', icon: 'fa-user-clock', href: '/admin/followup' },
-        { page: 'broadcast', label: 'บรอดแคสต์', icon: 'fa-bullhorn', href: '/admin/broadcast' },
-        { page: 'facebook-posts', label: 'FB โพสต์/คอมเมนต์', icon: 'fa-comment-dots', href: '/admin/facebook-posts' },
-        { page: 'customer-stats', label: 'สถิติลูกค้า', icon: 'fa-chart-bar', href: '/admin/customer-stats' },
+        { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge', permission: 'menu:chat' },
+        { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders', permission: 'menu:orders' },
+        { page: 'followup', label: 'ติดตามลูกค้า', icon: 'fa-user-clock', href: '/admin/followup', permission: 'menu:followup' },
+        { page: 'broadcast', label: 'บรอดแคสต์', icon: 'fa-bullhorn', href: '/admin/broadcast', permission: 'menu:broadcast' },
+        { page: 'facebook-posts', label: 'FB โพสต์/คอมเมนต์', icon: 'fa-comment-dots', href: '/admin/facebook-posts', permission: 'menu:facebook-posts' },
+        { page: 'customer-stats', label: 'สถิติลูกค้า', icon: 'fa-chart-bar', href: '/admin/customer-stats', permission: 'menu:customer-stats' },
       ],
     },
     {
       title: 'อื่น ๆ',
       items: [
-        { page: 'categories', label: 'จัดการข้อมูล', icon: 'fa-database', href: '/admin/categories' },
+        { page: 'categories', label: 'จัดการข้อมูล', icon: 'fa-database', href: '/admin/categories', permission: 'menu:categories' },
       ],
     },
   ];
@@ -60,15 +73,20 @@
 
   // Mobile bottom nav primary items (max 4 + more)
   const mobilePrimary = [
-    { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
-    { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge' },
-    { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders' },
-    { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
-  ];
+    { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard', permission: 'menu:dashboard' },
+    { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge', permission: 'menu:chat' },
+    { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders', permission: 'menu:orders' },
+    { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2', permission: 'menu:settings' },
+  ].filter((item) => canAccess(item.permission));
+  const visibleNavGroups = navGroups
+    .map((group) => ({ ...group, items: group.items.filter((item) => canAccess(item.permission)) }))
+    .filter((group) => group.items.length > 0);
+  const homeHref = visibleNavGroups[0]?.items?.[0]?.href || '/admin/chat';
 %>
 
 <!-- Layout CSS/JS -->
 <link href="/css/admin-layout.css" rel="stylesheet">
+<script src="/js/admin-font.js"></script>
 <script>
   /* FOUC prevention: add layout class immediately before first paint */
   (function () {
@@ -108,9 +126,12 @@
     <button class="app-topbar__toggle d-lg-none d-inline-flex" data-layout-toggle="mobile" data-mobile-toggle aria-label="เปิดเมนูด้านข้าง">
       <i class="fas fa-bars"></i>
     </button>
-    <a class="app-topbar__brand d-none d-sm-flex" href="/admin/dashboard">
-      <i class="fas fa-robot"></i>
-      <span>จัดการ AI</span>
+    <a class="app-topbar__brand d-none d-sm-flex" href="/admin/dashboard" aria-label="Voxtron">
+      <img
+        class="app-topbar__brand-logo"
+        src="/assets/brand/voxtron-logo.png"
+        alt="Voxtron"
+      >
     </a>
     <span class="app-topbar__title"><%= pageTitle %></span>
   </div>
@@ -145,7 +166,7 @@
 <!-- ======================== Sidebar (Desktop) ======================== -->
 <aside class="app-sidebar" id="appSidebar">
   <div class="app-sidebar__scroll">
-    <% navGroups.forEach((group, gIdx) => { %>
+    <% visibleNavGroups.forEach((group, gIdx) => { %>
       <div class="app-sidebar__section-title"><%= group.title %></div>
       <nav class="app-sidebar__nav" aria-label="<%= group.title %>">
         <% group.items.forEach((item) => { %>
@@ -168,7 +189,7 @@
   </div>
 
   <div class="app-sidebar__footer">
-    <a class="app-sidebar__back" href="/admin/dashboard">
+    <a class="app-sidebar__back" href="<%= homeHref %>">
       <i class="fas fa-arrow-left"></i>
       <span>กลับหน้าแดชบอร์ด</span>
     </a>
@@ -209,7 +230,7 @@
   <div class="app-mobile-nav__more-backdrop"></div>
   <div class="app-mobile-nav__more-panel">
     <div class="app-mobile-nav__more-handle" aria-hidden="true"></div>
-    <% navGroups.forEach((group) => { %>
+    <% visibleNavGroups.forEach((group) => { %>
       <div class="app-mobile-nav__more-title"><%= group.title %></div>
       <div class="app-mobile-nav__more-grid">
         <% group.items.forEach((item) => { %>

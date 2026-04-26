@@ -1,0 +1,136 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - button "พับ/ขยายเมนูด้านข้าง" [ref=e4] [cursor=pointer]:
+        - generic [ref=e5]: 
+      - text: 
+      - link " จัดการ AI" [ref=e6] [cursor=pointer]:
+        - /url: /admin/dashboard
+        - generic [ref=e7]: 
+        - generic [ref=e8]: จัดการ AI
+      - generic [ref=e9]: แชท
+    - combobox [ref=e11] [cursor=pointer]:
+      - option "Mali" [selected]
+      - option "Sarabun"
+      - option "Krub"
+      - option "Mitr"
+      - option "Pridi"
+      - option "Niramit"
+  - complementary [ref=e12]:
+    - generic [ref=e13]:
+      - navigation "AI & ระบบ" [ref=e14]:
+        - link "แดชบอร์ด" [ref=e15] [cursor=pointer]:
+          - /url: /admin/dashboard
+          - generic [ref=e16]: 
+        - link "ตั้งค่า" [ref=e17] [cursor=pointer]:
+          - /url: /admin/settings2
+          - generic [ref=e18]: 
+        - link "InstructionAI2" [ref=e19] [cursor=pointer]:
+          - /url: /admin/instruction-ai
+          - generic [ref=e20]: 
+        - link "สถิติ API" [ref=e21] [cursor=pointer]:
+          - /url: /admin/api-usage
+          - generic [ref=e22]: 
+      - navigation "ลูกค้า" [ref=e23]:
+        - link "แชท" [ref=e24] [cursor=pointer]:
+          - /url: /admin/chat
+          - generic [ref=e25]: 
+        - link "ออเดอร์" [ref=e26] [cursor=pointer]:
+          - /url: /admin/orders
+          - generic [ref=e27]: 
+        - link "ติดตามลูกค้า" [ref=e28] [cursor=pointer]:
+          - /url: /admin/followup
+          - generic [ref=e29]: 
+        - link "บรอดแคสต์" [ref=e30] [cursor=pointer]:
+          - /url: /admin/broadcast
+          - generic [ref=e31]: 
+        - link "FB โพสต์/คอมเมนต์" [ref=e32] [cursor=pointer]:
+          - /url: /admin/facebook-posts
+          - generic [ref=e33]: 
+        - link "สถิติลูกค้า" [ref=e34] [cursor=pointer]:
+          - /url: /admin/customer-stats
+          - generic [ref=e35]: 
+      - navigation "อื่น ๆ" [ref=e36]:
+        - link "จัดการข้อมูล" [ref=e37] [cursor=pointer]:
+          - /url: /admin/categories
+          - generic [ref=e38]: 
+    - generic:
+      - link " กลับหน้าแดชบอร์ด":
+        - /url: /admin/dashboard
+        - generic: 
+        - generic: กลับหน้าแดชบอร์ด
+  - text:                
+  - generic [ref=e40]:
+    - complementary "รายการแชท" [ref=e41]:
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]: Inbox
+          - heading "บทสนทนา" [level=1] [ref=e45]
+        - button "" [ref=e46] [cursor=pointer]:
+          - generic [ref=e47]: 
+      - generic [ref=e48]:
+        - generic [ref=e49]: 
+        - searchbox "ค้นหาชื่อหรือช่องทาง" [ref=e50]
+      - generic [ref=e51]:
+        - button "ทั้งหมด" [ref=e52] [cursor=pointer]
+        - button "ไม่อ่าน" [ref=e53] [cursor=pointer]
+        - button "ติดตาม" [ref=e54] [cursor=pointer]
+        - button "ซื้อแล้ว" [ref=e55] [cursor=pointer]
+      - generic [ref=e56]:
+        - generic [ref=e57]: 0 แชท
+        - button "ล้าง" [ref=e58] [cursor=pointer]
+      - generic [ref=e60]: ไม่มีแท็ก
+      - generic [ref=e62]:
+        - strong [ref=e63]: ไม่พบแชท
+        - generic [ref=e64]: ลองเปลี่ยนคำค้นหาหรือตัวกรอง
+    - main "หน้าสนทนา" [ref=e65]:
+      - generic [ref=e66]:
+        - generic [ref=e67]:
+          - generic [ref=e69]: 
+          - generic [ref=e70]:
+            - generic [ref=e71]: เลือกแชทเพื่อเริ่มงาน
+            - generic [ref=e72]: รายชื่ออยู่ด้านซ้าย ข้อมูลลูกค้าอยู่ด้านขวา
+        - text:     
+      - text: 
+      - generic [ref=e74]:
+        - generic [ref=e76]: 
+        - strong [ref=e77]: ยังไม่ได้เลือกบทสนทนา
+        - generic [ref=e78]: เลือกแชทจาก Inbox เพื่อดูประวัติ ตอบกลับ และจัดการข้อมูลลูกค้า
+      - text:    
+    - complementary "ข้อมูลลูกค้า" [ref=e79]:
+      - generic [ref=e80]:
+        - generic [ref=e81]:
+          - generic [ref=e82]: Workspace
+          - heading "ข้อมูลลูกค้า" [level=2] [ref=e83]
+        - generic [ref=e84]: online
+      - tablist [ref=e85]:
+        - button " รวม" [ref=e86] [cursor=pointer]:
+          - generic [ref=e87]: 
+          - generic [ref=e88]: รวม
+        - button " แท็ก" [ref=e89] [cursor=pointer]:
+          - generic [ref=e90]: 
+          - generic [ref=e91]: แท็ก
+        - button " ฟอร์ม" [ref=e92] [cursor=pointer]:
+          - generic [ref=e93]: 
+          - generic [ref=e94]: ฟอร์ม
+        - button " Order" [ref=e95] [cursor=pointer]:
+          - generic [ref=e96]: 
+          - generic [ref=e97]: Order
+        - button " ไฟล์" [ref=e98] [cursor=pointer]:
+          - generic [ref=e99]: 
+          - generic [ref=e100]: ไฟล์
+        - button " โน้ต" [ref=e101] [cursor=pointer]:
+          - generic [ref=e102]: 
+          - generic [ref=e103]: โน้ต
+        - button " Tools" [ref=e104] [cursor=pointer]:
+          - generic [ref=e105]: 
+          - generic [ref=e106]: Tools
+      - generic [ref=e107]:
+        - generic [ref=e110]:
+          - strong [ref=e111]: เลือกแชทก่อน
+          - generic [ref=e112]: ข้อมูลภาพรวมจะแสดงที่นี่
+        - text: + 
+  - tooltip
+  - generic [ref=e114]:
+    - generic [ref=e115]: 
+    - generic [ref=e116]: เชื่อมต่อ realtime แล้ว

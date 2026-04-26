@@ -37,9 +37,11 @@
   --focus-ring: #A5B8D9;
 
   /* Typography */
-  --font-family-base: 'Mali', 'Inter', sans-serif;
-  --font-family-heading: 'Mali', 'Inter', sans-serif;
+  --font-family-base: 'Mali', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family-heading: var(--font-family-base);
   --font-family-mono: 'Courier New', Monaco, monospace;
+  --bs-font-sans-serif: var(--font-family-base);
+  --bs-body-font-family: var(--font-family-base);
 
   /* Font Sizes */
   --font-size-xs: 0.75rem;
@@ -90,6 +92,16 @@ body {
   line-height: var(--line-height-base);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea,
+.form-control,
+.form-select {
+  font-family: inherit;
 }
 
 p {

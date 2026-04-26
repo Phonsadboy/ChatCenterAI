@@ -36,8 +36,51 @@ const botKeywordModalState = {
     botType: '',
     botId: ''
 };
+const SETTINGS_SECTION_PERMISSIONS = {
+    'bot-settings': 'settings:bot',
+    'image-collections': 'settings:image-library',
+    'data-forms': 'settings:data-forms',
+    'file-library': 'settings:file-library',
+    'chat-settings': 'settings:chat',
+    'order-notifications': 'settings:notifications',
+    'system-settings': 'settings:general',
+    'security-settings': 'settings:security-filter',
+    'api-keys-settings': 'settings:api-key'
+};
+
+function adminCan(permission) {
+    if (!permission) return true;
+    const user = window.adminAuth?.user || null;
+    if (!user) return true;
+    if (user.role === 'superadmin') return true;
+    return Array.isArray(user.permissions) && user.permissions.includes(permission);
+}
+
+function initSettingsPermissionVisibility() {
+    const navItems = Array.from(document.querySelectorAll('.settings-topnav-item[data-section]'));
+    const sections = Array.from(document.querySelectorAll('.settings-section'));
+    navItems.forEach((item) => {
+        const permission = SETTINGS_SECTION_PERMISSIONS[item.dataset.section];
+        item.hidden = !adminCan(permission);
+    });
+    sections.forEach((section) => {
+        const permission = SETTINGS_SECTION_PERMISSIONS[section.id];
+        section.dataset.permissionHidden = adminCan(permission) ? 'false' : 'true';
+        if (!adminCan(permission)) section.classList.add('d-none');
+    });
+    const firstVisibleNav = navItems.find((item) => !item.hidden);
+    const activeNav = navItems.find((item) => item.classList.contains('active') && !item.hidden);
+    const targetNav = activeNav || firstVisibleNav;
+    if (!targetNav) return;
+    navItems.forEach((item) => item.classList.toggle('active', item === targetNav));
+    sections.forEach((section) => {
+        const isVisible = section.id === targetNav.dataset.section && section.dataset.permissionHidden !== 'true';
+        section.classList.toggle('d-none', !isVisible);
+    });
+}
 
 document.addEventListener('DOMContentLoaded', function () {
+    initSettingsPermissionVisibility();
     initNavigation();
     initBotChannelTabs();
     loadAllSettings();
@@ -106,6 +149,7 @@ function initNavigation() {
     const sections = document.querySelectorAll('.settings-section');
 
     navItems.forEach(item => {
+        if (item.hidden) return;
         item.addEventListener('click', (e) => {
             const href = item.getAttribute('href') || '';
             if (!href.startsWith('#')) {
@@ -121,7 +165,9 @@ function initNavigation() {
 
             // Update Content
             sections.forEach(section => {
-                if (section.id === targetId) {
+                if (section.dataset.permissionHidden === 'true') {
+                    section.classList.add('d-none');
+                } else if (section.id === targetId) {
                     section.classList.remove('d-none');
                 } else {
                     section.classList.add('d-none');
@@ -137,6 +183,12 @@ function initNavigation() {
                 }
             } else if (targetId === 'order-notifications') {
                 window.notificationChannels?.refresh?.();
+            } else if (targetId === 'data-forms') {
+                window.voxtronPhase1?.refreshDataForms?.();
+            } else if (targetId === 'file-library') {
+                window.voxtronPhase1?.refreshFiles?.();
+            } else if (targetId === 'security-settings') {
+                loadAuditLogs();
             }
         });
     });
@@ -145,17 +197,23 @@ function initNavigation() {
 // --- Data Loading ---
 async function loadAllSettings() {
     try {
-        await Promise.all([
-            loadInstructionLibraries(),
-            loadImageCollections()
-        ]);
-        await Promise.all([
-            loadBotSettings(),
-            loadChatSettings(),
-            loadSystemSettings(),
-            loadSecuritySettings(),
-            window.imageCollectionsManager?.refreshAll?.()
-        ]);
+        const needsInstructionData = adminCan('settings:bot') || adminCan('bots:manage');
+        const needsImageData = adminCan('settings:image-library') || adminCan('bots:manage');
+        const preloadTasks = [];
+        if (needsInstructionData) preloadTasks.push(loadInstructionLibraries());
+        if (needsImageData) preloadTasks.push(loadImageCollections());
+        await Promise.all(preloadTasks);
+
+        const loadTasks = [];
+        if (adminCan('settings:bot') || adminCan('bots:manage')) loadTasks.push(loadBotSettings());
+        if (adminCan('settings:chat')) loadTasks.push(loadChatSettings());
+        if (adminCan('settings:general')) loadTasks.push(loadSystemSettings());
+        if (adminCan('settings:security-filter')) {
+            loadTasks.push(loadSecuritySettings());
+            loadTasks.push(loadAuditLogs());
+        }
+        if (adminCan('settings:image-library')) loadTasks.push(window.imageCollectionsManager?.refreshAll?.());
+        await Promise.all(loadTasks.filter(Boolean));
     } catch (error) {
         console.error('Error loading settings:', error);
         showToast('เกิดข้อผิดพลาดในการโหลดการตั้งค่า', 'danger');
@@ -1178,6 +1236,7 @@ async function loadChatSettings() {
         setCheckboxValue('enableMessageMerging', settings.enableMessageMerging ?? true);
         setCheckboxValue('showTokenUsage', settings.showTokenUsage ?? false);
         setInputValue('audioAttachmentResponse', settings.audioAttachmentResponse || '');
+        setInputValue('chatQueueSlaMinutes', settings.chatQueueSlaMinutes || 15);
 
     } catch (error) {
         console.error('Error loading chat settings:', error);
@@ -1194,7 +1253,8 @@ async function saveChatSettings(e) {
         maxQueueMessages: parseInt(getInputValue('maxQueueMessages')),
         enableMessageMerging: getCheckboxValue('enableMessageMerging'),
         showTokenUsage: getCheckboxValue('showTokenUsage'),
-        audioAttachmentResponse: getInputValue('audioAttachmentResponse')
+        audioAttachmentResponse: getInputValue('audioAttachmentResponse'),
+        chatQueueSlaMinutes: parseInt(getInputValue('chatQueueSlaMinutes') || '15', 10)
     };
 
     try {
@@ -1333,20 +1393,128 @@ async function saveSecuritySettings(e) {
     }
 }
 
+function setupAuditLogListeners() {
+    const refreshBtn = document.getElementById('auditLogsRefreshBtn');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => loadAuditLogs());
+    ['auditLogEventType', 'auditLogTargetType', 'auditLogFrom', 'auditLogTo'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', () => loadAuditLogs());
+    });
+    const search = document.getElementById('auditLogSearch');
+    if (search) search.addEventListener('input', debounceSettings(() => loadAuditLogs(), 350));
+}
+
+function buildAuditLogQuery() {
+    const params = new URLSearchParams();
+    params.set('limit', '120');
+    const search = getInputValue('auditLogSearch').trim();
+    const eventType = getInputValue('auditLogEventType');
+    const targetType = getInputValue('auditLogTargetType');
+    const from = getInputValue('auditLogFrom');
+    const to = getInputValue('auditLogTo');
+    if (search) params.set('search', search);
+    if (eventType) params.set('eventType', eventType);
+    if (targetType) params.set('targetType', targetType);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return params;
+}
+
+async function loadAuditLogs() {
+    const list = document.getElementById('auditLogsList');
+    if (!list || !adminCan('settings:security-filter')) return;
+    list.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Audit Log...</div>';
+    try {
+        const res = await fetch(`/admin/api/audit-logs?${buildAuditLogQuery().toString()}`);
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || payload?.success === false) {
+            throw new Error(payload?.error || 'โหลด Audit Log ไม่สำเร็จ');
+        }
+        renderAuditLogs(Array.isArray(payload.logs) ? payload.logs : []);
+    } catch (error) {
+        console.error('Error loading audit logs:', error);
+        list.innerHTML = `<div class="text-danger p-3">${escapeHtml(error.message || 'โหลด Audit Log ไม่สำเร็จ')}</div>`;
+    }
+}
+
+function renderAuditLogs(logs) {
+    const list = document.getElementById('auditLogsList');
+    if (!list) return;
+    if (!logs.length) {
+        list.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มี Audit Log ตามตัวกรองนี้</div>';
+        return;
+    }
+    list.innerHTML = `
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="min-width: 150px;">เวลา</th>
+                        <th style="min-width: 150px;">Event</th>
+                        <th style="min-width: 130px;">Actor</th>
+                        <th style="min-width: 160px;">Target</th>
+                        <th>Summary</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${logs.map((log) => `
+                        <tr>
+                            <td>${escapeHtml(formatAuditDate(log.createdAt))}</td>
+                            <td><span class="badge bg-light text-dark border">${escapeHtml(log.eventType || '-')}</span></td>
+                            <td>
+                                <div class="fw-semibold">${escapeHtml(log.actorLabel || log.actorId || '-')}</div>
+                                <small class="text-muted">${escapeHtml(log.actorRole || '')}</small>
+                            </td>
+                            <td>
+                                <div class="fw-semibold">${escapeHtml(log.targetLabel || log.targetId || '-')}</div>
+                                <small class="text-muted">${escapeHtml(log.targetType || '')}${log.userId ? ` • ${escapeHtml(log.userId)}` : ''}</small>
+                            </td>
+                            <td>
+                                <div>${escapeHtml(log.summary || '-')}</div>
+                                ${log.inboxKey ? `<small class="text-muted">${escapeHtml(log.inboxKey)}</small>` : ''}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function formatAuditDate(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('th-TH', { hour12: false });
+}
+
+function debounceSettings(fn, delay = 250) {
+    let timer = null;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+    };
+}
+
 // --- Utilities ---
 function setupEventListeners() {
     const refreshBtn = document.getElementById('refreshSettingsBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            Promise.all([
-                loadInstructionLibraries(),
-                loadImageCollections()
-            ])
-                .then(() => loadBotSettings());
-            loadChatSettings();
-            loadSystemSettings();
-            loadSecuritySettings();
-            if (window.imageCollectionsManager?.refreshAll) {
+            if (adminCan('settings:bot') || adminCan('bots:manage')) {
+                Promise.all([
+                    loadInstructionLibraries(),
+                    loadImageCollections()
+                ])
+                    .then(() => loadBotSettings());
+            }
+            if (adminCan('settings:chat')) loadChatSettings();
+            if (adminCan('settings:general')) loadSystemSettings();
+            if (adminCan('settings:security-filter')) {
+                loadSecuritySettings();
+                loadAuditLogs();
+            }
+            if (adminCan('settings:image-library') && window.imageCollectionsManager?.refreshAll) {
                 window.imageCollectionsManager.refreshAll();
             }
         });
@@ -1360,6 +1528,7 @@ function setupEventListeners() {
 
     const securityForm = document.getElementById('securitySettingsForm');
     if (securityForm) securityForm.addEventListener('submit', saveSecuritySettings);
+    setupAuditLogListeners();
 
     const lineBotForm = document.getElementById('lineBotForm');
     if (lineBotForm) {
@@ -2480,6 +2649,76 @@ function escapeHtml(value) {
 
 // --- Passcode Management ---
 let passcodeCache = [];
+let passcodeInboxOptions = [];
+const PASSCODE_ROLE_LABELS = {
+    agent: 'Agent',
+    team_leader: 'Team Leader',
+    admin: 'Admin',
+    superadmin: 'Superadmin'
+};
+const PASSCODE_ALL_PERMISSIONS = [
+    'menu:dashboard', 'menu:settings', 'menu:instruction-ai', 'menu:api-usage', 'menu:chat',
+    'menu:orders', 'menu:followup', 'menu:broadcast', 'menu:facebook-posts', 'menu:customer-stats',
+    'menu:categories', 'settings:bot', 'settings:image-library', 'settings:data-forms',
+    'settings:file-library', 'settings:chat', 'settings:notifications', 'settings:general',
+    'settings:security-filter', 'settings:api-key', 'chat:view', 'chat:send', 'chat:forms',
+    'chat:files', 'chat:notes', 'chat:tags', 'chat:orders', 'chat:templates', 'chat:forward',
+    'chat:assign', 'chat:debug', 'chat:clear', 'chat:ai-control', 'chat:purchase-status',
+    'chat:profile-refresh', 'chat:export', 'data-forms:manage', 'file-assets:manage',
+    'notifications:manage', 'categories:manage', 'bots:manage', 'api-keys:manage'
+];
+const PASSCODE_PERMISSION_GROUPS = [
+    {
+        title: 'เมนู',
+        items: [
+            ['menu:chat', 'แชท'], ['menu:orders', 'ออเดอร์'], ['menu:followup', 'ติดตามลูกค้า'],
+            ['menu:broadcast', 'บรอดแคสต์'], ['menu:facebook-posts', 'FB โพสต์'], ['menu:customer-stats', 'สถิติลูกค้า'],
+            ['menu:dashboard', 'แดชบอร์ด'], ['menu:settings', 'ตั้งค่า'], ['menu:instruction-ai', 'InstructionAI2'],
+            ['menu:api-usage', 'สถิติ API'], ['menu:categories', 'จัดการข้อมูล']
+        ]
+    },
+    {
+        title: 'Settings',
+        items: [
+            ['settings:bot', 'จัดการบอท'], ['settings:image-library', 'คลังรูปภาพ'], ['settings:data-forms', 'Data Forms'],
+            ['settings:file-library', 'คลังไฟล์'], ['settings:chat', 'แชทและคิว'], ['settings:notifications', 'แจ้งเตือนงาน'],
+            ['settings:general', 'ตั้งค่าทั่วไป'], ['settings:security-filter', 'Security/Filter'], ['settings:api-key', 'API Keys']
+        ]
+    },
+    {
+        title: 'Chat Actions',
+        items: [
+            ['chat:view', 'ดูแชท'], ['chat:send', 'ตอบแชท'], ['chat:forms', 'ฟอร์ม'], ['chat:files', 'ไฟล์'],
+            ['chat:notes', 'โน้ต'], ['chat:tags', 'แท็ก'], ['chat:orders', 'ออเดอร์'], ['chat:templates', 'Templates'],
+            ['chat:forward', 'ส่งต่อ'], ['chat:assign', 'มอบหมาย'], ['chat:debug', 'Debug'], ['chat:clear', 'ล้างแชท'],
+            ['chat:ai-control', 'เปิด/ปิด AI'], ['chat:purchase-status', 'สถานะซื้อ'], ['chat:profile-refresh', 'Refresh profile'],
+            ['chat:export', 'Export']
+        ]
+    },
+    {
+        title: 'จัดการข้อมูล',
+        items: [
+            ['bots:manage', 'Bot APIs'], ['data-forms:manage', 'จัดการ Data Forms'], ['file-assets:manage', 'จัดการไฟล์'],
+            ['notifications:manage', 'แจ้งเตือน'], ['categories:manage', 'Categories'], ['api-keys:manage', 'จัดการ API Keys']
+        ]
+    }
+];
+const PASSCODE_ROLE_DEFAULTS = {
+    agent: ['menu:chat', 'chat:view', 'chat:send', 'chat:forms'],
+    team_leader: PASSCODE_ALL_PERMISSIONS.filter(permission => ![
+        'settings:general', 'settings:security-filter', 'settings:api-key', 'api-keys:manage'
+    ].includes(permission)),
+    admin: PASSCODE_ALL_PERMISSIONS
+};
+const PASSCODE_CHAT_TABS = [
+    ['overview', 'รวม'], ['tags', 'แท็ก'], ['forms', 'ฟอร์ม'], ['orders', 'Order'],
+    ['files', 'ไฟล์'], ['notes', 'โน้ต'], ['tools', 'Tools']
+];
+const PASSCODE_LAYOUT_DEFAULTS = {
+    agent: { mode: 'forms_only', allowedTabs: ['forms'] },
+    team_leader: { mode: 'full', allowedTabs: PASSCODE_CHAT_TABS.map(([key]) => key) },
+    admin: { mode: 'full', allowedTabs: PASSCODE_CHAT_TABS.map(([key]) => key) }
+};
 
 function isSuperadmin() {
     return Boolean(window.adminAuth?.user?.role === 'superadmin');
@@ -2498,6 +2737,10 @@ function initPasscodeManagement() {
     if (card) card.style.display = 'block';
 
     setupPasscodeEventListeners();
+    renderPasscodePermissionGrid(PASSCODE_ROLE_DEFAULTS.agent);
+    renderPasscodeInboxGrid([]);
+    renderPasscodeChatLayoutTabs(PASSCODE_LAYOUT_DEFAULTS.agent.allowedTabs);
+    loadPasscodeInboxOptions();
     refreshPasscodeList();
 }
 
@@ -2506,7 +2749,11 @@ function setupPasscodeEventListeners() {
     const createContainer = document.getElementById('passcodeCreateContainer');
     const createForm = document.getElementById('createPasscodeForm');
     const generateBtn = document.getElementById('generatePasscodeBtn');
+    const resetBtn = document.getElementById('passcodeResetBtn');
     const tableBody = document.getElementById('passcodeTableBody');
+    const roleSelect = document.getElementById('newPasscodeRole');
+    const inboxMode = document.getElementById('passcodeInboxMode');
+    const layoutMode = document.getElementById('passcodeChatLayoutMode');
 
     if (toggleBtn && createContainer) {
         toggleBtn.addEventListener('click', () => {
@@ -2515,6 +2762,7 @@ function setupPasscodeEventListeners() {
             toggleBtn.innerHTML = isVisible
                 ? '<i class="fas fa-plus-circle"></i> สร้างรหัสใหม่'
                 : '<i class="fas fa-times-circle"></i> ยกเลิก';
+            if (isVisible) resetPasscodeForm();
         });
     }
 
@@ -2529,12 +2777,37 @@ function setupPasscodeEventListeners() {
         });
     }
 
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => resetPasscodeForm());
+    }
+
     if (createForm) {
         createForm.addEventListener('submit', handleCreatePasscode);
     }
 
     if (tableBody) {
         tableBody.addEventListener('click', handlePasscodeTableClick);
+    }
+
+    if (roleSelect) {
+        roleSelect.addEventListener('change', () => applyPasscodeRolePreset(roleSelect.value));
+    }
+    if (inboxMode) {
+        inboxMode.addEventListener('change', () => {
+            const grid = document.getElementById('passcodeInboxGrid');
+            if (grid) grid.classList.toggle('opacity-50', inboxMode.value === 'all');
+        });
+    }
+    if (layoutMode) {
+        layoutMode.addEventListener('change', () => {
+            const role = document.getElementById('newPasscodeRole')?.value || 'agent';
+            const preset = layoutMode.value === 'forms_only'
+                ? { allowedTabs: ['forms'] }
+                : layoutMode.value === 'full'
+                    ? PASSCODE_LAYOUT_DEFAULTS.admin
+                    : PASSCODE_LAYOUT_DEFAULTS[role] || PASSCODE_LAYOUT_DEFAULTS.agent;
+            renderPasscodeChatLayoutTabs(preset.allowedTabs);
+        });
     }
 }
 
@@ -2549,6 +2822,241 @@ function generateRandomPasscode() {
     return value.replace(/(.{4})/g, '$1-').replace(/-$/, '');
 }
 
+async function loadPasscodeInboxOptions() {
+    try {
+        const response = await fetch('/admin/chat/inboxes?limit=500');
+        const payload = await response.json();
+        passcodeInboxOptions = Array.isArray(payload.inboxes) ? payload.inboxes : [];
+    } catch (error) {
+        console.warn('[Passcode] cannot load inbox options:', error);
+        passcodeInboxOptions = [];
+    }
+    const selected = getCheckedValues('passcodeInboxKey');
+    renderPasscodeInboxGrid(selected);
+}
+
+function renderPasscodePermissionGrid(selected = []) {
+    const grid = document.getElementById('passcodePermissionGrid');
+    if (!grid) return;
+    const selectedSet = new Set(selected);
+    grid.innerHTML = PASSCODE_PERMISSION_GROUPS.map(group => `
+        <div class="passcode-permission-group">
+            <div class="passcode-permission-group-title">
+                <span>${escapeHtml(group.title)}</span>
+                <small>${group.items.length} สิทธิ์</small>
+            </div>
+            <div class="passcode-check-grid">
+                ${group.items.map(([value, label]) => `
+                    <label class="passcode-check-item">
+                        <input type="checkbox" name="passcodePermission" value="${escapeHtml(value)}" ${selectedSet.has(value) ? 'checked' : ''}>
+                        <span>${escapeHtml(label)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderPasscodeInboxGrid(selected = []) {
+    const grid = document.getElementById('passcodeInboxGrid');
+    if (!grid) return;
+    const selectedSet = new Set(selected);
+    if (!passcodeInboxOptions.length) {
+        grid.innerHTML = '<div class="passcode-empty-note">ยังไม่มี Inbox หรือยังโหลดรายการไม่ได้</div>';
+        return;
+    }
+    grid.innerHTML = passcodeInboxOptions.map(inbox => `
+        <label class="passcode-check-item passcode-check-item--stack">
+            <input type="checkbox" name="passcodeInboxKey" value="${escapeHtml(inbox.inboxKey)}" ${selectedSet.has(inbox.inboxKey) ? 'checked' : ''}>
+            <span>
+                <span>${escapeHtml(inbox.channelLabel || inbox.inboxKey)}</span>
+                ${inbox.conversationCount ? `<small>${inbox.conversationCount} conversations</small>` : ''}
+            </span>
+        </label>
+    `).join('');
+}
+
+function renderPasscodeChatLayoutTabs(selected = []) {
+    const grid = document.getElementById('passcodeChatLayoutTabs');
+    if (!grid) return;
+    const selectedSet = new Set(selected);
+    grid.innerHTML = PASSCODE_CHAT_TABS.map(([value, label]) => `
+        <label class="passcode-check-item">
+            <input type="checkbox" name="passcodeChatTab" value="${escapeHtml(value)}" ${selectedSet.has(value) ? 'checked' : ''}>
+            <span>${escapeHtml(label)}</span>
+        </label>
+    `).join('');
+}
+
+function getCheckedValues(name) {
+    return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`))
+        .map(input => input.value)
+        .filter(Boolean);
+}
+
+function applyPasscodeRolePreset(role) {
+    const normalizedRole = PASSCODE_ROLE_DEFAULTS[role] ? role : 'agent';
+    renderPasscodePermissionGrid(PASSCODE_ROLE_DEFAULTS[normalizedRole]);
+    const layout = PASSCODE_LAYOUT_DEFAULTS[normalizedRole] || PASSCODE_LAYOUT_DEFAULTS.agent;
+    const layoutMode = document.getElementById('passcodeChatLayoutMode');
+    if (layoutMode) layoutMode.value = layout.mode;
+    renderPasscodeChatLayoutTabs(layout.allowedTabs);
+    const inboxMode = document.getElementById('passcodeInboxMode');
+    if (inboxMode) inboxMode.value = normalizedRole === 'admin' ? 'all' : 'selected';
+    renderPasscodeInboxGrid([]);
+}
+
+function resetPasscodeForm() {
+    const form = document.getElementById('createPasscodeForm');
+    if (form) form.reset();
+    const editingInput = document.getElementById('editingPasscodeId');
+    if (editingInput) editingInput.value = '';
+    const passcodeInput = document.getElementById('newPasscodeValue');
+    if (passcodeInput) {
+        passcodeInput.required = true;
+        passcodeInput.placeholder = 'กำหนดเองหรือกดสุ่ม';
+    }
+    const requiredMark = document.getElementById('newPasscodeRequiredMark');
+    if (requiredMark) requiredMark.style.display = '';
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+    if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-save"></i> บันทึกผู้ใช้';
+    const editorTitle = document.getElementById('passcodeEditorTitle');
+    if (editorTitle) editorTitle.textContent = 'สร้างผู้ใช้ทีมงาน';
+    const roleSelect = document.getElementById('newPasscodeRole');
+    if (roleSelect) roleSelect.value = 'agent';
+    applyPasscodeRolePreset('agent');
+}
+
+function loadPasscodeIntoForm(passcode) {
+    if (!passcode) return;
+    const createContainer = document.getElementById('passcodeCreateContainer');
+    const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
+    if (createContainer) createContainer.style.display = 'block';
+    if (toggleBtn) toggleBtn.innerHTML = '<i class="fas fa-times-circle"></i> ยกเลิก';
+    document.getElementById('editingPasscodeId').value = passcode.id || '';
+    document.getElementById('newPasscodeLabel').value = passcode.label || '';
+    const passcodeInput = document.getElementById('newPasscodeValue');
+    if (passcodeInput) {
+        passcodeInput.value = '';
+        passcodeInput.required = false;
+        passcodeInput.placeholder = 'ไม่ต้องกรอกเมื่อแก้ไขสิทธิ์';
+    }
+    const requiredMark = document.getElementById('newPasscodeRequiredMark');
+    if (requiredMark) requiredMark.style.display = 'none';
+    const role = passcode.role || 'admin';
+    document.getElementById('newPasscodeRole').value = role === 'superadmin' ? 'admin' : role;
+    renderPasscodePermissionGrid(passcode.permissions || PASSCODE_ROLE_DEFAULTS[role] || PASSCODE_ROLE_DEFAULTS.admin);
+    const inboxMode = document.getElementById('passcodeInboxMode');
+    if (inboxMode) inboxMode.value = passcode.inboxAccess?.mode || 'selected';
+    renderPasscodeInboxGrid(passcode.inboxAccess?.inboxKeys || []);
+    const layout = passcode.chatLayout || PASSCODE_LAYOUT_DEFAULTS[role] || PASSCODE_LAYOUT_DEFAULTS.admin;
+    const layoutMode = document.getElementById('passcodeChatLayoutMode');
+    if (layoutMode) layoutMode.value = layout.mode || 'full';
+    renderPasscodeChatLayoutTabs(layout.allowedTabs || PASSCODE_LAYOUT_DEFAULTS.admin.allowedTabs);
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+    if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-save"></i> อัปเดตสิทธิ์';
+    const editorTitle = document.getElementById('passcodeEditorTitle');
+    if (editorTitle) editorTitle.textContent = `แก้ไขสิทธิ์: ${passcode.label || 'ผู้ใช้ทีมงาน'}`;
+    createContainer?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function collectPasscodePayload(includePasscode) {
+    const role = document.getElementById('newPasscodeRole')?.value || 'agent';
+    const inboxMode = document.getElementById('passcodeInboxMode')?.value || 'selected';
+    const layoutMode = document.getElementById('passcodeChatLayoutMode')?.value || 'forms_only';
+    const payload = {
+        label: (document.getElementById('newPasscodeLabel')?.value || '').trim(),
+        role,
+        permissions: getCheckedValues('passcodePermission'),
+        inboxAccess: {
+            mode: inboxMode,
+            inboxKeys: inboxMode === 'all' ? [] : getCheckedValues('passcodeInboxKey')
+        },
+        chatLayout: {
+            mode: layoutMode,
+            allowedTabs: layoutMode === 'full'
+                ? PASSCODE_LAYOUT_DEFAULTS.admin.allowedTabs
+                : getCheckedValues('passcodeChatTab')
+        }
+    };
+    if (includePasscode) {
+        payload.passcode = (document.getElementById('newPasscodeValue')?.value || '').trim();
+    }
+    return payload;
+}
+
+function summarizeInboxAccess(inboxAccess = {}) {
+    if (inboxAccess.mode === 'all') return 'ทุก Inbox';
+    const keys = Array.isArray(inboxAccess.inboxKeys) ? inboxAccess.inboxKeys : [];
+    if (!keys.length) return 'ไม่เห็น Inbox';
+    return keys.slice(0, 3).join(', ') + (keys.length > 3 ? ` +${keys.length - 3}` : '');
+}
+
+function summarizeChatLayout(chatLayout = {}) {
+    if (chatLayout.mode === 'full') return 'เต็มทั้งหมด';
+    if (chatLayout.mode === 'forms_only') return 'Chat + Form';
+    const tabs = Array.isArray(chatLayout.allowedTabs) ? chatLayout.allowedTabs : [];
+    if (!tabs.length) return 'ไม่ระบุ Layout';
+    return `${tabs.length} tabs`;
+}
+
+function getRoleClass(role = '') {
+    const normalized = String(role || 'admin').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+    return `role-${normalized}`;
+}
+
+function getPasscodeInitial(label = '') {
+    const text = String(label || 'A').trim();
+    return (text.charAt(0) || 'A').toUpperCase();
+}
+
+function formatPasscodeDate(value) {
+    if (!value) return 'ไม่เคยใช้';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'ไม่เคยใช้';
+    return date.toLocaleString('th-TH', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function renderPasscodeStats() {
+    const wrap = document.getElementById('passcodeStats');
+    if (!wrap) return;
+    const total = passcodeCache.length;
+    const active = passcodeCache.filter(passcode => passcode.isActive !== false).length;
+    const allInbox = passcodeCache.filter(passcode => passcode.inboxAccess?.mode === 'all').length;
+    const neverUsed = passcodeCache.filter(passcode => !passcode.lastUsedAt).length;
+    const cards = [
+        ['ทั้งหมด', total],
+        ['เปิดใช้งาน', active],
+        ['เห็นทุก Inbox', allInbox],
+        ['ยังไม่เคยใช้', neverUsed]
+    ];
+    wrap.innerHTML = cards.map(([label, value]) => `
+        <div class="passcode-stat">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `).join('');
+}
+
+function renderInboxAccess(inboxAccess = {}) {
+    if (inboxAccess.mode === 'all') {
+        return '<span class="passcode-chip passcode-chip--green">ทุก Inbox</span>';
+    }
+    const keys = Array.isArray(inboxAccess.inboxKeys) ? inboxAccess.inboxKeys : [];
+    if (!keys.length) {
+        return '<span class="passcode-chip passcode-chip--muted">ไม่เห็น Inbox</span>';
+    }
+    const chips = keys.slice(0, 2).map(key => `<span class="passcode-chip">${escapeHtml(key)}</span>`);
+    if (keys.length > 2) chips.push(`<span class="passcode-chip passcode-chip--muted">+${keys.length - 2}</span>`);
+    return chips.join('');
+}
+
 async function refreshPasscodeList() {
     if (!isSuperadmin()) return;
 
@@ -2559,10 +3067,12 @@ async function refreshPasscodeList() {
         }
         const payload = await response.json();
         passcodeCache = Array.isArray(payload.passcodes) ? payload.passcodes : [];
+        renderPasscodeStats();
         renderPasscodeTable();
         setPasscodeMessage('', '');
     } catch (error) {
         console.error('[Passcode] load error:', error);
+        renderPasscodeStats();
         setPasscodeMessage('danger', error.message || 'ไม่สามารถโหลดข้อมูลรหัสผ่านได้');
     }
 }
@@ -2570,12 +3080,17 @@ async function refreshPasscodeList() {
 function renderPasscodeTable() {
     const tbody = document.getElementById('passcodeTableBody');
     if (!tbody) return;
+    renderPasscodeStats();
 
     if (passcodeCache.length === 0) {
         tbody.innerHTML = `
             <tr id="passcodeEmptyState">
-                <td colspan="5" class="text-center text-muted py-4">
-                    <i class="fas fa-key me-2"></i>ยังไม่มีรหัสสำหรับทีมงาน เริ่มสร้างรหัสชุดแรกได้เลย
+                <td colspan="7">
+                    <div class="passcode-empty-state">
+                        <i class="fas fa-key"></i>
+                        <strong>ยังไม่มีรหัสสำหรับทีมงาน</strong>
+                        <span>เริ่มสร้างผู้ใช้ทีมงานชุดแรกจากปุ่มด้านบน</span>
+                    </div>
                 </td>
             </tr>
         `;
@@ -2583,26 +3098,53 @@ function renderPasscodeTable() {
     }
 
     tbody.innerHTML = passcodeCache.map(passcode => {
-        const statusClass = passcode.isActive ? 'success' : 'secondary';
         const statusText = passcode.isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const toggleIcon = passcode.isActive ? 'toggle-on' : 'toggle-off';
-        const lastUsed = passcode.lastUsedAt ? new Date(passcode.lastUsedAt).toLocaleDateString('th-TH') : 'ไม่เคยใช้';
+        const permissionCount = Array.isArray(passcode.permissions) ? passcode.permissions.length : 0;
+        const roleLabel = PASSCODE_ROLE_LABELS[passcode.role] || passcode.role || 'Admin';
+        const roleClass = getRoleClass(passcode.role);
+        const layoutSummary = summarizeChatLayout(passcode.chatLayout);
 
         return `
-            <tr>
-                <td>${escapeHtml(passcode.label)}</td>
-                <td><span class="badge bg-${statusClass}">${statusText}</span></td>
-                <td>${lastUsed}</td>
-                <td>${passcode.usageCount || 0}</td>
+            <tr class="${passcode.isActive ? '' : 'is-disabled'}">
+                <td>
+                    <div class="passcode-user-cell">
+                        <span class="passcode-avatar">${escapeHtml(getPasscodeInitial(passcode.label))}</span>
+                        <div>
+                            <strong>${escapeHtml(passcode.label)}</strong>
+                            <small>${escapeHtml(passcode.id || '')}</small>
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    <span class="passcode-role-badge ${escapeHtml(roleClass)}">${escapeHtml(roleLabel)}</span>
+                    <small class="passcode-cell-note">${permissionCount} permissions</small>
+                </td>
+                <td>
+                    <div class="passcode-chip-row">${renderInboxAccess(passcode.inboxAccess)}</div>
+                    <small class="passcode-cell-note">${escapeHtml(layoutSummary)}</small>
+                </td>
+                <td><span class="passcode-status ${passcode.isActive ? 'is-active' : 'is-inactive'}">${statusText}</span></td>
+                <td>
+                    <span class="passcode-date">${escapeHtml(formatPasscodeDate(passcode.lastUsedAt))}</span>
+                    ${passcode.updatedAt ? `<small class="passcode-cell-note">แก้ไข ${escapeHtml(formatPasscodeDate(passcode.updatedAt))}</small>` : ''}
+                </td>
+                <td><strong class="passcode-usage-count">${passcode.usageCount || 0}</strong></td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-${passcode.isActive ? 'warning' : 'success'}" 
-                            data-action="toggle" data-id="${passcode.id}">
+                    <div class="passcode-row-actions">
+                    <button class="passcode-icon-action"
+                            data-action="edit" data-id="${passcode.id}" title="แก้ไขสิทธิ์">
+                        <i class="fas fa-pen"></i>
+                    </button>
+                    <button class="passcode-icon-action ${passcode.isActive ? 'is-warning' : 'is-success'}"
+                            data-action="toggle" data-id="${passcode.id}" title="${passcode.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}">
                         <i class="fas fa-${toggleIcon}"></i>
                     </button>
-                    <button class="btn btn-sm btn-outline-danger" 
-                            data-action="delete" data-id="${passcode.id}">
+                    <button class="passcode-icon-action is-danger"
+                            data-action="delete" data-id="${passcode.id}" title="ลบผู้ใช้">
                         <i class="fas fa-trash"></i>
                     </button>
+                    </div>
                 </td>
             </tr>
         `;
@@ -2621,6 +3163,8 @@ function handlePasscodeTableClick(event) {
         togglePasscodeStatus(id, target);
     } else if (action === 'delete') {
         deletePasscode(id, target);
+    } else if (action === 'edit') {
+        loadPasscodeIntoForm(passcodeCache.find(item => item.id === id));
     }
 }
 
@@ -2701,18 +3245,20 @@ async function handleCreatePasscode(event) {
     const labelInput = document.getElementById('newPasscodeLabel');
     const passcodeInput = document.getElementById('newPasscodeValue');
     const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+    const editingId = document.getElementById('editingPasscodeId')?.value || '';
 
     if (!labelInput || !passcodeInput || !submitBtn) return;
 
-    const label = (labelInput.value || '').trim();
-    const passcode = (passcodeInput.value || '').trim();
+    const payload = collectPasscodePayload(!editingId);
+    const label = payload.label;
+    const passcode = payload.passcode || '';
 
     if (!label || label.length < 2) {
         setPasscodeMessage('warning', 'กรุณาระบุชื่อรหัสอย่างน้อย 2 ตัวอักษร');
         return;
     }
 
-    if (!passcode || passcode.length < 4) {
+    if (!editingId && (!passcode || passcode.length < 4)) {
         setPasscodeMessage('warning', 'กรุณาระบุรหัสอย่างน้อย 4 ตัวอักษร');
         return;
     }
@@ -2720,19 +3266,18 @@ async function handleCreatePasscode(event) {
     setLoading(submitBtn, true);
 
     try {
-        const response = await fetch('/api/admin-passcodes', {
-            method: 'POST',
+        const response = await fetch(editingId ? `/api/admin-passcodes/${editingId}` : '/api/admin-passcodes', {
+            method: editingId ? 'PATCH' : 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label, passcode })
+            body: JSON.stringify(payload)
         });
 
-        const payload = await response.json();
-        if (!response.ok || !payload.success) {
-            throw new Error(payload.error || 'ไม่สามารถสร้างรหัสได้');
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || (editingId ? 'ไม่สามารถอัปเดตสิทธิ์ได้' : 'ไม่สามารถสร้างรหัสได้'));
         }
 
-        labelInput.value = '';
-        passcodeInput.value = '';
+        resetPasscodeForm();
 
         const createContainer = document.getElementById('passcodeCreateContainer');
         const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
@@ -2740,10 +3285,10 @@ async function handleCreatePasscode(event) {
         if (toggleBtn) toggleBtn.innerHTML = '<i class="fas fa-plus-circle"></i> สร้างรหัสใหม่';
 
         await refreshPasscodeList();
-        setPasscodeMessage('success', 'สร้างรหัสใหม่เรียบร้อยแล้ว');
+        setPasscodeMessage('success', editingId ? 'อัปเดตสิทธิ์เรียบร้อยแล้ว' : 'สร้างรหัสใหม่เรียบร้อยแล้ว');
     } catch (error) {
         console.error('[Passcode] create error:', error);
-        setPasscodeMessage('danger', error.message || 'ไม่สามารถสร้างรหัสได้');
+        setPasscodeMessage('danger', error.message || 'ไม่สามารถบันทึกผู้ใช้ได้');
     } finally {
         setLoading(submitBtn, false);
     }
@@ -3171,7 +3716,7 @@ initNavigation = function () {
         mutations.forEach(function (mutation) {
             if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                 const section = document.getElementById('api-keys-settings');
-                if (section && !section.classList.contains('d-none')) {
+                if (section && !section.classList.contains('d-none') && adminCan('settings:api-key')) {
                     loadApiKeys();
                 }
             }
