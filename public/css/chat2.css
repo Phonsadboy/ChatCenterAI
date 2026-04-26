@@ -521,6 +521,24 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   font-weight: 700;
 }
 
+.cc2-tag-pill {
+  --tag-color: #315f8f;
+  --tag-rgb: 49, 95, 143;
+  border-color: rgba(var(--tag-rgb), 0.34);
+  background: rgba(var(--tag-rgb), 0.1);
+  color: var(--tag-color);
+}
+
+.cc2-tag-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--tag-color);
+  box-shadow: 0 0 0 2px rgba(var(--tag-rgb), 0.14);
+}
+
 .cc2-queue-badge {
   border-radius: 6px;
   padding: 2px 6px;
@@ -567,6 +585,93 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: var(--cc2-green-soft);
   border-color: rgba(35, 119, 95, 0.28);
   color: var(--cc2-green);
+}
+
+.cc2-tag-pill.is-active {
+  border-color: rgba(var(--tag-rgb), 0.48);
+  background: rgba(var(--tag-rgb), 0.17);
+  color: var(--tag-color);
+}
+
+.cc2-tag-pill.is-active::before {
+  box-shadow: 0 0 0 2px rgba(var(--tag-rgb), 0.2);
+}
+
+.cc2-color-modal .modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.cc2-color-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--cc2-line);
+  border-radius: var(--cc2-radius);
+  background: var(--cc2-panel-alt);
+}
+
+.cc2-color-preview-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(18, 28, 38, 0.14);
+  background: #315f8f;
+  flex: 0 0 auto;
+}
+
+.cc2-color-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.cc2-color-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--cc2-sub);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.cc2-color-field input[type="color"] {
+  width: 54px;
+  height: 32px;
+  border: 1px solid var(--cc2-line);
+  border-radius: 8px;
+  padding: 2px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.cc2-rgb-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cc2-rgb-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--cc2-sub);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.cc2-rgb-grid input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--cc2-line);
+  border-radius: 8px;
+  padding: 5px 6px;
+  color: var(--cc2-ink);
+  font-size: 0.78rem;
 }
 
 .cc2-user-list,

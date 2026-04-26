@@ -198,6 +198,59 @@
     gap: 0.45rem;
 }
 
+.chat-tag-color-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.chat-tag-color-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-sub, #5C6372);
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.chat-tag-color-picker input[type="color"],
+.chat-tag-row-color input[type="color"] {
+    width: 34px;
+    height: 28px;
+    flex: 0 0 auto;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 8px;
+    padding: 2px;
+    background: #fff;
+    cursor: pointer;
+}
+
+.chat-tag-rgb-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 54px);
+    gap: 0.35rem;
+}
+
+.chat-tag-rgb-grid label {
+    display: grid;
+    gap: 0.2rem;
+    color: var(--text-sub, #5C6372);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.chat-tag-rgb-grid input {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 8px;
+    padding: 0.25rem 0.35rem;
+    font-size: 0.76rem;
+}
+
 .chat-tag-row {
     display: flex;
     align-items: center;
@@ -216,21 +269,42 @@
     min-width: 0;
 }
 
+.chat-tag-row-color {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-sub, #5C6372);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
 .chat-tag-pill {
+    --tag-color: #315f8f;
+    --tag-rgb: 49, 95, 143;
     display: inline-flex;
     align-items: center;
     max-width: 100%;
     min-height: 26px;
     padding: 0.25rem 0.65rem;
     border-radius: 999px;
-    border: 1px solid rgba(74, 111, 165, 0.24);
-    background: rgba(74, 111, 165, 0.08);
-    color: var(--text-main, #1E2430);
+    border: 1px solid rgba(var(--tag-rgb), 0.34);
+    background: rgba(var(--tag-rgb), 0.1);
+    color: var(--tag-color);
     font-size: 0.8rem;
     font-weight: 700;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.chat-tag-pill::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    margin-right: 0.4rem;
+    border-radius: 999px;
+    background: var(--tag-color);
 }
 
 .chat-tag-count {
@@ -242,6 +316,11 @@
 @media (max-width: 640px) {
     .chat-tag-input-row {
         grid-template-columns: 1fr;
+    }
+
+    .chat-tag-color-row {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
     .chat-tag-row,

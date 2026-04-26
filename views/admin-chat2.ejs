@@ -14,7 +14,7 @@
     rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
   <link href="/css/theme.css" rel="stylesheet">
-  <link href="/css/chat2.css?v=20260426-filter-panel-fix1" rel="stylesheet">
+  <link href="/css/chat2.css?v=20260426-tag-colors1" rel="stylesheet">
 </head>
 
 <body class="app-shell page-chat2">
@@ -366,6 +366,36 @@
     </div>
   </div>
 
+  <div class="modal fade" id="chat2TagColorModal" tabindex="-1" aria-labelledby="chat2TagColorModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content cc2-color-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="chat2TagColorModalTitle">เลือกสีแท็ก</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="cc2-color-preview" id="chat2TagColorPreview">
+            <span class="cc2-color-preview-swatch"></span>
+            <strong id="chat2TagColorName">แท็กใหม่</strong>
+          </div>
+          <label class="cc2-color-field" for="chat2TagColorHex">
+            <span>สี</span>
+            <input type="color" id="chat2TagColorHex" value="#315f8f">
+          </label>
+          <div class="cc2-rgb-grid" aria-label="ค่า RGB">
+            <label>R<input type="number" id="chat2TagColorR" min="0" max="255" inputmode="numeric"></label>
+            <label>G<input type="number" id="chat2TagColorG" min="0" max="255" inputmode="numeric"></label>
+            <label>B<input type="number" id="chat2TagColorB" min="0" max="255" inputmode="numeric"></label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">ยกเลิก</button>
+          <button type="button" class="btn btn-primary btn-sm" id="chat2SaveTagColor">เพิ่มแท็ก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="chat2OrderModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
@@ -446,7 +476,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/chat2.js?v=20260426-filter-panel-fix1"></script>
+  <script src="/js/chat2.js?v=20260426-tag-colors1"></script>
   <script>
     window.chat2FollowUpConfig = <%- JSON.stringify(typeof followUpConfig !== 'undefined' ? followUpConfig : {}).replace(/</g, '\\u003c') %>;
     window.chat2Manager = new Chat2Manager();

@@ -27,6 +27,8 @@ class Chat2Manager {
     this.activeTab = this.allowedTabs.includes("overview") ? "overview" : (this.allowedTabs[0] || "forms");
     this.currentFormId = "";
     this.emojiPopover = null;
+    this.tagColorModal = null;
+    this.pendingSystemTag = "";
     this.pendingFocusUserId = this.getQueryParam("user") || this.getQueryParam("focus") || this.getQueryParam("userId");
     this.pendingFocusPlatform = this.getQueryParam("platform");
     this.pendingFocusBotId = this.getQueryParam("botId");
@@ -499,6 +501,11 @@ class Chat2Manager {
         this.createSystemTag(event.target.value || "");
       }
     });
+    this.$("chat2TagColorHex")?.addEventListener("input", (event) => this.syncTagColorFromHex(event.target.value));
+    ["chat2TagColorR", "chat2TagColorG", "chat2TagColorB"].forEach((id) => {
+      this.$(id)?.addEventListener("input", () => this.syncTagColorFromRgbInputs());
+    });
+    this.$("chat2SaveTagColor")?.addEventListener("click", () => this.savePendingSystemTag());
     this.$("chat2CurrentTags")?.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-remove-tag]");
       if (!btn) return;
@@ -852,9 +859,12 @@ class Chat2Manager {
       this.availableTags = (data.tags || []).map((entry) => ({
         tag: entry.tag || entry,
         count: entry.count || 0,
+        color: this.normalizeTagColor(entry.color || ""),
+        rgb: entry.rgb || null,
       })).filter((entry) => entry.tag);
       this.renderTagFilters();
       this.renderTags();
+      this.renderUserList();
     } catch (error) {
       console.warn("loadAvailableTags failed", error);
     }
@@ -959,10 +969,79 @@ class Chat2Manager {
     list.innerHTML = this.users.map((user) => this.renderUserItem(user)).join("");
   }
 
+  tagKey(tag) {
+    return String(tag || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("th-TH");
+  }
+
+  normalizeTagColor(color, fallback = "#315f8f") {
+    const value = String(color || "").trim();
+    const match = value.match(/^#?([0-9a-fA-F]{6})$/);
+    return match ? `#${match[1].toLowerCase()}` : fallback;
+  }
+
+  hexToRgb(color) {
+    const normalized = this.normalizeTagColor(color);
+    const numeric = Number.parseInt(normalized.slice(1), 16);
+    return {
+      r: (numeric >> 16) & 255,
+      g: (numeric >> 8) & 255,
+      b: numeric & 255,
+    };
+  }
+
+  rgbToHex(r, g, b) {
+    return [r, g, b]
+      .map((value) => Math.max(0, Math.min(255, Number.parseInt(value, 10) || 0)).toString(16).padStart(2, "0"))
+      .join("")
+      .replace(/^/, "#");
+  }
+
+  defaultTagColor(tag) {
+    const colors = ["#315f8f", "#23775f", "#a76918", "#b83f45", "#6f4aa5", "#28708a", "#7a6a1d", "#8a4b2a"];
+    const key = this.tagKey(tag);
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) {
+      hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
+    }
+    return colors[Math.abs(hash) % colors.length] || colors[0];
+  }
+
+  tagMeta(tag) {
+    const key = this.tagKey(tag);
+    return this.availableTags.find((entry) => this.tagKey(entry.tag) === key) || {
+      tag,
+      color: this.defaultTagColor(tag),
+    };
+  }
+
+  tagExists(tag) {
+    const key = this.tagKey(tag);
+    return !!key && this.availableTags.some((entry) => this.tagKey(entry.tag) === key);
+  }
+
+  tagStyleAttr(tagOrEntry) {
+    const entry = typeof tagOrEntry === "object" && tagOrEntry ? tagOrEntry : this.tagMeta(tagOrEntry);
+    const color = this.normalizeTagColor(entry.color || "", this.defaultTagColor(entry.tag || tagOrEntry));
+    const rgb = entry.rgb && Number.isFinite(Number(entry.rgb.r))
+      ? entry.rgb
+      : this.hexToRgb(color);
+    return `style="--tag-color:${this.escapeAttr(color)};--tag-rgb:${Number(rgb.r) || 0}, ${Number(rgb.g) || 0}, ${Number(rgb.b) || 0};"`;
+  }
+
+  tagPillHtml(tag, options = {}) {
+    const active = options.active ? " is-active" : "";
+    const attrs = options.attrs || "";
+    const count = Number(options.count || 0);
+    const closeButton = options.close
+      ? `<button type="button" data-remove-tag="${this.escapeAttr(tag)}"><i class="fas fa-times"></i></button>`
+      : "";
+    return `<span class="cc2-pill cc2-tag-pill${active}" ${this.tagStyleAttr(tag)} ${attrs}>${this.escapeHtml(tag)}${count ? `<span>${count}</span>` : ""}${closeButton}</span>`;
+  }
+
   renderUserItem(user) {
     const isActive = user.userId === this.currentUserId;
     const unread = Number(user.unreadCount || 0);
-    const tags = (user.tags || []).slice(0, 2).map((tag) => `<span class="cc2-pill">${this.escapeHtml(tag)}</span>`).join("");
+    const tags = (user.tags || []).slice(0, 2).map((tag) => this.tagPillHtml(tag)).join("");
     const preview = this.truncate(user.lastMessage || "ไม่มีข้อความ", 140);
     const assignment = this.normalizeAssignment(user.assignment, user);
     const unassigned = this.isUnassigned(assignment);
@@ -1008,7 +1087,7 @@ class Chat2Manager {
       return 0;
     });
     wrap.innerHTML = entries.map((entry) => `
-      <button type="button" class="cc2-pill ${this.filters.tags.includes(entry.tag) ? "is-active" : ""}" data-filter-tag="${this.escapeAttr(entry.tag)}">
+      <button type="button" class="cc2-pill cc2-tag-pill ${this.filters.tags.includes(entry.tag) ? "is-active" : ""}" data-filter-tag="${this.escapeAttr(entry.tag)}" ${this.tagStyleAttr(entry)}>
         ${this.escapeHtml(entry.tag)}
         ${entry.count ? `<span>${entry.count}</span>` : ""}
       </button>
@@ -1212,19 +1291,14 @@ class Chat2Manager {
     const current = this.$("chat2CurrentTags");
     if (current) {
       current.innerHTML = tags.length
-        ? tags.map((tag) => `
-          <span class="cc2-pill is-active">
-            ${this.escapeHtml(tag)}
-            <button type="button" data-remove-tag="${this.escapeAttr(tag)}"><i class="fas fa-times"></i></button>
-          </span>
-        `).join("")
+        ? tags.map((tag) => this.tagPillHtml(tag, { active: true, close: true })).join("")
         : `<span class="cc2-muted">ยังไม่มีแท็ก</span>`;
     }
     const popular = this.$("chat2PopularTags");
     if (popular) {
       popular.innerHTML = this.availableTags.length
         ? this.availableTags.slice(0, 30).map((entry) => `
-          <button type="button" class="cc2-pill ${tags.includes(entry.tag) ? "is-active" : ""}" data-add-tag="${this.escapeAttr(entry.tag)}">
+          <button type="button" class="cc2-pill cc2-tag-pill ${tags.includes(entry.tag) ? "is-active" : ""}" data-add-tag="${this.escapeAttr(entry.tag)}" ${this.tagStyleAttr(entry)}>
             ${this.escapeHtml(entry.tag)}
           </button>
         `).join("")
@@ -1236,14 +1310,70 @@ class Chat2Manager {
     if (!this.can("chat:tags")) return;
     const tag = String(rawTag || "").replace(/\s+/g, " ").trim();
     if (!tag) return;
+    if (this.tagExists(tag)) {
+      this.toast("แท็กนี้มีอยู่แล้วในระบบ", "warning");
+      return;
+    }
+    this.openTagColorModal(tag);
+  }
+
+  openTagColorModal(tag) {
+    this.pendingSystemTag = tag;
+    const color = this.defaultTagColor(tag);
+    const name = this.$("chat2TagColorName");
+    if (name) name.textContent = tag;
+    this.syncTagColorFromHex(color);
+    const modalEl = this.$("chat2TagColorModal");
+    if (!modalEl || !window.bootstrap?.Modal) return;
+    this.tagColorModal = window.bootstrap.Modal.getOrCreateInstance(modalEl);
+    this.tagColorModal.show();
+  }
+
+  updateTagColorPreview(color) {
+    const normalized = this.normalizeTagColor(color);
+    const swatch = this.$("chat2TagColorPreview")?.querySelector(".cc2-color-preview-swatch");
+    if (swatch) swatch.style.backgroundColor = normalized;
+  }
+
+  syncTagColorFromHex(color) {
+    const normalized = this.normalizeTagColor(color);
+    const rgb = this.hexToRgb(normalized);
+    const hexInput = this.$("chat2TagColorHex");
+    if (hexInput) hexInput.value = normalized;
+    const r = this.$("chat2TagColorR");
+    const g = this.$("chat2TagColorG");
+    const b = this.$("chat2TagColorB");
+    if (r) r.value = String(rgb.r);
+    if (g) g.value = String(rgb.g);
+    if (b) b.value = String(rgb.b);
+    this.updateTagColorPreview(normalized);
+  }
+
+  syncTagColorFromRgbInputs() {
+    const color = this.rgbToHex(
+      this.$("chat2TagColorR")?.value,
+      this.$("chat2TagColorG")?.value,
+      this.$("chat2TagColorB")?.value,
+    );
+    const hexInput = this.$("chat2TagColorHex");
+    if (hexInput) hexInput.value = color;
+    this.updateTagColorPreview(color);
+  }
+
+  async savePendingSystemTag() {
+    const tag = this.pendingSystemTag;
+    if (!tag) return;
+    const color = this.normalizeTagColor(this.$("chat2TagColorHex")?.value || this.defaultTagColor(tag));
     try {
       await this.fetchJson("/admin/chat/system-tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tag, source: "chat" }),
+        body: JSON.stringify({ tag, color, source: "chat" }),
       });
       const input = this.$("chat2NewTag");
       if (input) input.value = "";
+      this.pendingSystemTag = "";
+      this.tagColorModal?.hide();
       await this.loadAvailableTags();
       this.toast("เพิ่มแท็กเข้าระบบแล้ว", "success");
     } catch (error) {

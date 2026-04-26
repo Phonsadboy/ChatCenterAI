@@ -30867,6 +30867,16 @@ app.post(
 // ========== Tag Management APIs ==========
 
 const CHAT_TAG_MAX_LENGTH = 50;
+const CHAT_TAG_DEFAULT_COLORS = [
+  "#315f8f",
+  "#23775f",
+  "#a76918",
+  "#b83f45",
+  "#6f4aa5",
+  "#28708a",
+  "#7a6a1d",
+  "#8a4b2a",
+];
 
 function sanitizeChatTag(rawTag) {
   const tag = String(rawTag ?? "").replace(/\s+/g, " ").trim();
@@ -30883,6 +30893,36 @@ function normalizeChatTagKey(rawTag) {
   return String(rawTag ?? "").replace(/\s+/g, " ").trim().toLocaleLowerCase("th-TH");
 }
 
+function normalizeChatTagColor(rawColor, fallbackColor = "") {
+  const value = String(rawColor || "").trim();
+  const match = value.match(/^#?([0-9a-fA-F]{6})$/);
+  if (match) return `#${match[1].toLowerCase()}`;
+  return fallbackColor || "";
+}
+
+function defaultChatTagColor(tag) {
+  const key = normalizeChatTagKey(tag);
+  if (!key) return CHAT_TAG_DEFAULT_COLORS[0];
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
+  }
+  return CHAT_TAG_DEFAULT_COLORS[Math.abs(hash) % CHAT_TAG_DEFAULT_COLORS.length];
+}
+
+function chatTagColorPayload(rawColor, tag) {
+  const color = normalizeChatTagColor(rawColor, defaultChatTagColor(tag));
+  const numeric = Number.parseInt(color.slice(1), 16);
+  return {
+    color,
+    rgb: {
+      r: (numeric >> 16) & 255,
+      g: (numeric >> 8) & 255,
+      b: numeric & 255,
+    },
+  };
+}
+
 function invalidateChatTagCaches() {
   chatAdminAuxCache.delete("chat:available-tags");
 }
@@ -30891,10 +30931,13 @@ function normalizeChatTagDoc(doc = {}) {
   const tag = String(doc.tag || doc.name || doc.label || "").replace(/\s+/g, " ").trim();
   const key = normalizeChatTagKey(doc.tagKey || tag || doc._id);
   if (!tag || !key) return null;
+  const color = chatTagColorPayload(doc.color, tag);
   return {
     id: key,
     tag,
     tagKey: key,
+    color: color.color,
+    rgb: color.rgb,
     source: doc.source || "manual",
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -30969,10 +31012,13 @@ function mergeChatSystemTags(systemDocs = [], usageCounts = [], options = {}) {
   if (includeUsageTags) {
     usageByKey.forEach((usage, key) => {
       if (tagsByKey.has(key)) return;
+      const color = chatTagColorPayload("", usage.tag);
       tagsByKey.set(key, {
         id: key,
         tag: usage.tag,
         tagKey: key,
+        color: color.color,
+        rgb: color.rgb,
         count: usage.count,
         isSystem: false,
         source: "usage",
@@ -31000,9 +31046,10 @@ async function listChatSystemTags(db, options = {}) {
   return mergeChatSystemTags(systemDocs, usageCounts, options);
 }
 
-async function upsertChatSystemTag(db, rawTag, source = "manual") {
+async function upsertChatSystemTag(db, rawTag, source = "manual", rawColor = "") {
   const tag = sanitizeChatTag(rawTag);
   const tagKey = normalizeChatTagKey(tag);
+  const color = chatTagColorPayload(rawColor, tag);
   const now = new Date();
   const coll = db.collection("chat_tags");
   const existing = await coll.findOne({ $or: [{ _id: tagKey }, { tagKey }, { tag }] });
@@ -31013,6 +31060,8 @@ async function upsertChatSystemTag(db, rawTag, source = "manual") {
       $set: {
         tag,
         tagKey,
+        color: color.color,
+        rgb: color.rgb,
         source,
         isSystem: true,
         updatedAt: now,
@@ -31029,6 +31078,8 @@ async function upsertChatSystemTag(db, rawTag, source = "manual") {
     _id: tagKey,
     tag,
     tagKey,
+    color: color.color,
+    rgb: color.rgb,
     source,
     isSystem: true,
     createdAt: now,
@@ -31176,7 +31227,12 @@ app.post("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, 
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const tag = await upsertChatSystemTag(db, req.body?.tag, req.body?.source || "manual");
+    const tag = await upsertChatSystemTag(
+      db,
+      req.body?.tag,
+      req.body?.source || "manual",
+      req.body?.color,
+    );
     const tags = await listChatSystemTags(db, { limit: 1000, includeUsageTags: true });
     emitAdminRealtime("chatTagsUpdated", { action: "created", tag: tag.tag, tags });
     res.json({ success: true, tag, tags });

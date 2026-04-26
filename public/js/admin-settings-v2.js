@@ -1286,6 +1286,76 @@ async function saveChatSettings(e) {
 }
 
 // --- Chat Tag Settings ---
+function normalizeChatTagKey(tag) {
+    return String(tag || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+}
+
+function normalizeChatTagColor(color, fallback = '#315f8f') {
+    const value = String(color || '').trim();
+    const match = value.match(/^#?([0-9a-fA-F]{6})$/);
+    return match ? `#${match[1].toLowerCase()}` : fallback;
+}
+
+function hexToRgb(color) {
+    const normalized = normalizeChatTagColor(color);
+    const numeric = parseInt(normalized.slice(1), 16);
+    return {
+        r: (numeric >> 16) & 255,
+        g: (numeric >> 8) & 255,
+        b: numeric & 255
+    };
+}
+
+function rgbToHex(r, g, b) {
+    return [r, g, b]
+        .map((value) => Math.max(0, Math.min(255, parseInt(value, 10) || 0)).toString(16).padStart(2, '0'))
+        .join('')
+        .replace(/^/, '#');
+}
+
+function defaultChatTagColor(tag) {
+    const colors = ['#315f8f', '#23775f', '#a76918', '#b83f45', '#6f4aa5', '#28708a', '#7a6a1d', '#8a4b2a'];
+    const key = normalizeChatTagKey(tag);
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) {
+        hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
+    }
+    return colors[Math.abs(hash) % colors.length] || colors[0];
+}
+
+function chatTagStyleAttr(entry = {}) {
+    const color = normalizeChatTagColor(entry.color, defaultChatTagColor(entry.tag || 'tag'));
+    const rgb = entry.rgb && Number.isFinite(Number(entry.rgb.r)) ? entry.rgb : hexToRgb(color);
+    return `--tag-color:${escapeHtml(color)};--tag-rgb:${Number(rgb.r) || 0}, ${Number(rgb.g) || 0}, ${Number(rgb.b) || 0};`;
+}
+
+function getChatTagCreateColor() {
+    return normalizeChatTagColor(document.getElementById('chatTagColorInput')?.value || '#315f8f');
+}
+
+function updateChatTagCreateColor(color) {
+    const normalized = normalizeChatTagColor(color);
+    const rgb = hexToRgb(normalized);
+    const colorInput = document.getElementById('chatTagColorInput');
+    const colorText = document.getElementById('chatTagColorText');
+    if (colorInput) colorInput.value = normalized;
+    if (colorText) colorText.textContent = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    const r = document.getElementById('chatTagColorR');
+    const g = document.getElementById('chatTagColorG');
+    const b = document.getElementById('chatTagColorB');
+    if (r) r.value = String(rgb.r);
+    if (g) g.value = String(rgb.g);
+    if (b) b.value = String(rgb.b);
+}
+
+function syncChatTagCreateColorFromRgb() {
+    updateChatTagCreateColor(rgbToHex(
+        document.getElementById('chatTagColorR')?.value,
+        document.getElementById('chatTagColorG')?.value,
+        document.getElementById('chatTagColorB')?.value
+    ));
+}
+
 function renderChatSystemTags(tags = chatSystemTags) {
     const list = document.getElementById('chatSystemTagsList');
     if (!list) return;
@@ -1303,15 +1373,21 @@ function renderChatSystemTags(tags = chatSystemTags) {
     list.innerHTML = tags.map((entry) => {
         const tag = entry.tag || '';
         const count = Number(entry.count || 0);
+        const color = normalizeChatTagColor(entry.color, defaultChatTagColor(tag));
+        const rgb = entry.rgb && Number.isFinite(Number(entry.rgb.r)) ? entry.rgb : hexToRgb(color);
         return `
             <div class="chat-tag-row">
                 <div class="chat-tag-main">
-                    <span class="chat-tag-pill">${escapeHtml(tag)}</span>
+                    <span class="chat-tag-pill" style="${chatTagStyleAttr({ tag, color, rgb })}">${escapeHtml(tag)}</span>
                     <span class="chat-tag-count">${count} ลูกค้า</span>
                 </div>
-                <button type="button" class="btn-ghost-sm text-danger" data-delete-system-tag="${escapeHtml(tag)}" title="ลบแท็ก">
-                    <i class="fas fa-trash"></i>
-                </button>
+                <div class="chat-tag-row-color">
+                    <input type="color" value="${escapeHtml(color)}" data-update-system-tag-color="${escapeHtml(tag)}" title="เปลี่ยนสีแท็ก">
+                    <span>rgb(${rgb.r}, ${rgb.g}, ${rgb.b})</span>
+                    <button type="button" class="btn-ghost-sm text-danger" data-delete-system-tag="${escapeHtml(tag)}" title="ลบแท็ก">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
             </div>
         `;
     }).join('');
@@ -1350,7 +1426,7 @@ async function createChatSystemTag(event) {
         const response = await fetch('/admin/chat/system-tags', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tag, source: 'settings' })
+            body: JSON.stringify({ tag, color: getChatTagCreateColor(), source: 'settings' })
         });
         const data = await response.json();
         if (!response.ok || data.success === false) {
@@ -1358,6 +1434,7 @@ async function createChatSystemTag(event) {
         }
         chatSystemTags = Array.isArray(data.tags) ? data.tags : [];
         if (input) input.value = '';
+        updateChatTagCreateColor(defaultChatTagColor(''));
         renderChatSystemTags();
         showToast('เพิ่มแท็กเข้าระบบแล้ว', 'success');
     } catch (error) {
@@ -1365,6 +1442,30 @@ async function createChatSystemTag(event) {
         showToast(error.message || 'เพิ่มแท็กไม่สำเร็จ', 'danger');
     } finally {
         setLoading(btn, false);
+    }
+}
+
+async function updateChatSystemTagColor(tag, color) {
+    const normalizedTag = (tag || '').trim();
+    if (!normalizedTag) return;
+
+    try {
+        const response = await fetch('/admin/chat/system-tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: normalizedTag, color: normalizeChatTagColor(color), source: 'settings' })
+        });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || 'บันทึกสีไม่สำเร็จ');
+        }
+        chatSystemTags = Array.isArray(data.tags) ? data.tags : [];
+        renderChatSystemTags();
+        showToast('อัปเดตสีแท็กแล้ว', 'success');
+    } catch (error) {
+        console.error('Error updating chat tag color:', error);
+        showToast(error.message || 'บันทึกสีไม่สำเร็จ', 'danger');
+        renderChatSystemTags();
     }
 }
 
@@ -1647,6 +1748,14 @@ function setupEventListeners() {
     const chatTagForm = document.getElementById('chatTagCreateForm');
     if (chatTagForm) chatTagForm.addEventListener('submit', createChatSystemTag);
 
+    const chatTagColorInput = document.getElementById('chatTagColorInput');
+    if (chatTagColorInput) {
+        chatTagColorInput.addEventListener('input', (event) => updateChatTagCreateColor(event.target.value));
+    }
+    ['chatTagColorR', 'chatTagColorG', 'chatTagColorB'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('input', syncChatTagCreateColorFromRgb);
+    });
+
     const chatTagsRefreshBtn = document.getElementById('chatTagsRefreshBtn');
     if (chatTagsRefreshBtn) chatTagsRefreshBtn.addEventListener('click', loadChatSystemTags);
 
@@ -1656,6 +1765,11 @@ function setupEventListeners() {
             const btn = event.target.closest('[data-delete-system-tag]');
             if (!btn || !chatSystemTagsList.contains(btn)) return;
             deleteChatSystemTag(btn.dataset.deleteSystemTag || '');
+        });
+        chatSystemTagsList.addEventListener('change', (event) => {
+            const input = event.target.closest('[data-update-system-tag-color]');
+            if (!input || !chatSystemTagsList.contains(input)) return;
+            updateChatSystemTagColor(input.dataset.updateSystemTagColor || '', input.value);
         });
     }
 
