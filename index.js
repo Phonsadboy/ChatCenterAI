@@ -29463,8 +29463,8 @@ app.post("/admin/chat/user-status", requirePermission("chat:ai-control"), async 
       buildChatHistoryUserMatch(userId),
       { sort: { timestamp: -1 } },
     );
-    const platform = normalizeChatPlatform(lastChat?.platform || "line");
-    const botId = lastChat?.botId || null;
+    const platform = normalizeChatPlatform(access.platform || lastChat?.platform || "line");
+    const botId = access.botId || lastChat?.botId || null;
 
     const controlText = aiEnabled
       ? "เปิด AI สำหรับผู้ใช้นี้แล้ว"
