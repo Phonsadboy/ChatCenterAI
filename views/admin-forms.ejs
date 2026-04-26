@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ฟอร์ม | จัดการ AI</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Mali:wght@200;300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
+  <link href="/css/admin-forms.css" rel="stylesheet">
+</head>
+
+<body class="app-shell">
+  <%- include('partials/admin-navbar', { activePage: 'forms' }) %>
+
+  <main class="app-content">
+    <section class="forms-workspace" aria-label="Data Forms">
+      <header class="forms-toolbar">
+        <div class="forms-toolbar__title">
+          <span class="forms-toolbar__eyebrow">Data Forms</span>
+          <h1>ฟอร์ม</h1>
+        </div>
+        <div class="forms-toolbar__actions">
+          <select class="forms-export-select" id="formsExportFormat" aria-label="เลือกรูปแบบไฟล์ส่งออก">
+            <option value="xlsx" selected>Excel</option>
+            <option value="csv">CSV</option>
+          </select>
+          <button type="button" class="forms-icon-btn" id="formsRefreshBtn" title="รีเฟรช" aria-label="รีเฟรช">
+            <i class="fas fa-rotate-right"></i>
+          </button>
+          <button type="button" class="forms-action-btn forms-action-btn--secondary" id="formsExportBtn">
+            <i class="fas fa-file-export"></i>
+            <span>ส่งออก</span>
+          </button>
+          <a class="forms-action-btn forms-action-btn--primary" href="/admin/settings2#data-forms">
+            <i class="fas fa-plus"></i>
+            <span>สร้างฟอร์ม</span>
+          </a>
+        </div>
+      </header>
+
+      <div class="forms-summary-grid" id="formsSummaryGrid">
+        <div class="forms-skeleton"></div>
+        <div class="forms-skeleton"></div>
+        <div class="forms-skeleton"></div>
+        <div class="forms-skeleton"></div>
+      </div>
+
+      <div class="forms-layout">
+        <aside class="forms-sidebar" aria-label="รายการฟอร์ม">
+          <div class="forms-panel">
+            <div class="forms-panel__head">
+              <span>ฟอร์มทั้งหมด</span>
+              <strong id="formsCountBadge">0</strong>
+            </div>
+            <div class="forms-list" id="formsList"></div>
+          </div>
+
+          <div class="forms-panel">
+            <div class="forms-panel__head">
+              <span>เพจ/บอท</span>
+              <strong id="formsInboxCountBadge">0</strong>
+            </div>
+            <div class="forms-page-list" id="formsInboxList"></div>
+          </div>
+
+          <div class="forms-panel">
+            <div class="forms-panel__head">
+              <span>สถานะ</span>
+            </div>
+            <div class="forms-status-list" id="formsStatusList"></div>
+          </div>
+
+          <div class="forms-panel">
+            <div class="forms-panel__head">
+              <span>ช่วงวันที่</span>
+            </div>
+            <div class="forms-date-grid">
+              <input type="date" id="formsStartDate" class="forms-input" aria-label="วันที่เริ่ม">
+              <input type="date" id="formsEndDate" class="forms-input" aria-label="วันที่สิ้นสุด">
+            </div>
+            <div class="forms-quick-dates">
+              <button type="button" data-range="today">วันนี้</button>
+              <button type="button" data-range="7days">7 วัน</button>
+              <button type="button" data-range="30days">30 วัน</button>
+            </div>
+          </div>
+        </aside>
+
+        <section class="forms-main" aria-label="Submissions">
+          <div class="forms-board-head">
+            <div class="forms-current" id="formsCurrentMeta"></div>
+            <div class="forms-search">
+              <i class="fas fa-search"></i>
+              <input type="search" id="formsSearchInput" placeholder="ค้นหา user, summary, platform">
+            </div>
+          </div>
+
+          <div class="forms-table-card">
+            <div class="forms-table-wrap">
+              <table class="forms-table" aria-label="Data Form submissions">
+                <thead id="formsTableHead"></thead>
+                <tbody id="formsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="forms-pagination" id="formsPagination">
+              <span id="formsPaginationInfo">-</span>
+              <div class="forms-pagination__controls" id="formsPaginationControls"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="forms-detail-overlay" id="formsDetailOverlay" aria-hidden="true">
+    <aside class="forms-detail-panel" id="formsDetailPanel" aria-label="รายละเอียดฟอร์ม">
+      <div class="forms-detail-head">
+        <div>
+          <span id="formsDetailKicker">Submission</span>
+          <h2 id="formsDetailTitle">รายละเอียดฟอร์ม</h2>
+        </div>
+        <button type="button" class="forms-icon-btn" id="formsDetailClose" title="ปิด" aria-label="ปิด">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="forms-detail-body" id="formsDetailBody"></div>
+    </aside>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/admin-forms.js"></script>
+</body>
+
+</html>

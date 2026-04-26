@@ -4134,6 +4134,80 @@ function filterInboxesForAdmin(req, inboxes = []) {
   return inboxes.filter((inbox) => allowedSet.has(inbox.inboxKey));
 }
 
+function parseRequestedAdminInboxKeys(queryParams = {}) {
+  const collect = (value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") return value.split(",");
+    return [];
+  };
+  const rawKeys = [
+    ...collect(queryParams.inboxKeys),
+    ...collect(queryParams.pageKeys),
+    ...collect(queryParams.pageKey),
+  ];
+  const keys = rawKeys
+    .map((value) => normalizeInboxKey(value))
+    .filter(Boolean);
+  if (!keys.length && typeof queryParams.platform === "string" && queryParams.platform.trim()) {
+    keys.push(normalizeAdminInboxKey(queryParams.platform, queryParams.botId || "default"));
+  }
+  return [...new Set(keys)];
+}
+
+function resolveAdminInboxScopeKeys(req, queryParams = {}) {
+  const requestedKeys = parseRequestedAdminInboxKeys(queryParams);
+  const allowedKeys = getAdminAllowedInboxKeys(req);
+  if (allowedKeys === null) {
+    return requestedKeys.length ? requestedKeys : null;
+  }
+  if (!allowedKeys.length) return [];
+  if (!requestedKeys.length) return [...new Set(allowedKeys)];
+  const allowedSet = new Set(allowedKeys);
+  return requestedKeys.filter((key) => allowedSet.has(key));
+}
+
+function buildInboxAccessMongoClauses(inboxKeys = []) {
+  return inboxKeys
+    .map(parseAdminInboxKey)
+    .filter(Boolean)
+    .map((inbox) => {
+      if (inbox.botId) {
+        return { platform: inbox.platform, botId: inbox.botId };
+      }
+      return {
+        platform: inbox.platform,
+        $or: [
+          { botId: { $exists: false } },
+          { botId: null },
+          { botId: "" },
+          { botId: "default" },
+        ],
+      };
+    });
+}
+
+function dataFormMatchesInboxScope(form, inboxScopeKeys) {
+  if (inboxScopeKeys === null) return true;
+  if (!Array.isArray(inboxScopeKeys) || !inboxScopeKeys.length) return false;
+  const enabledPages = normalizeVoxtronPageAssignments(form?.enabledPages || []);
+  if (!enabledPages.length) return true;
+  const scopeSet = new Set(inboxScopeKeys);
+  return enabledPages.some((page) =>
+    scopeSet.has(normalizeAdminInboxKey(page.platform, page.botId)),
+  );
+}
+
+function dataFormAssignmentsAllowedForAdmin(req, enabledPages = []) {
+  const allowedKeys = getAdminAllowedInboxKeys(req);
+  if (allowedKeys === null) return true;
+  const pages = normalizeVoxtronPageAssignments(enabledPages);
+  if (!pages.length) return false;
+  const allowedSet = new Set(allowedKeys);
+  return pages.every((page) =>
+    allowedSet.has(normalizeAdminInboxKey(page.platform, page.botId)),
+  );
+}
+
 function filterChatUsersForAdmin(req, users = []) {
   const allowed = getAdminAllowedInboxKeys(req);
   if (allowed === null) return users;
@@ -28299,6 +28373,15 @@ app.get("/admin/orders", requirePermission("menu:orders"), async (req, res) => {
   }
 });
 
+app.get("/admin/forms", requirePermission("data-forms:manage"), async (req, res) => {
+  try {
+    res.render("admin-forms");
+  } catch (error) {
+    console.error("[DataForms] ไม่สามารถโหลดหน้าฟอร์มได้:", error);
+    res.render("admin-forms");
+  }
+});
+
 // ============================ InstructionAI Legacy Alias ============================
 
 // Legacy InstructionAI page alias. The canonical editor is handled by routes/instructionAI2.js.
@@ -29346,6 +29429,29 @@ app.get("/admin/chat/inboxes", requirePermission("menu:chat"), async (req, res) 
   }
 });
 
+app.get("/admin/forms/inboxes", requirePermission("data-forms:manage"), async (req, res) => {
+  try {
+    const rawLimit = Number.parseInt(req.query.limit || "500", 10);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.max(1, Math.min(rawLimit, 500))
+      : 500;
+    const inboxes = await getCachedChatAdminAuxValue(
+      `forms:inboxes:${limit}`,
+      async () => getChatInboxOptions({ limit }),
+      [],
+    );
+    const visibleInboxes = filterInboxesForAdmin(req, inboxes);
+    res.json({
+      success: true,
+      inboxes: visibleInboxes,
+      accessMode: getAdminAllowedInboxKeys(req) === null ? "all" : "selected",
+    });
+  } catch (err) {
+    console.error("[DataForms] inbox list failed:", err);
+    res.json({ success: false, error: err.message, inboxes: [] });
+  }
+});
+
 app.get("/admin/chat/users", requirePermission("chat:view"), async (req, res) => {
   try {
     const rawFocus =
@@ -30242,11 +30348,63 @@ app.get("/admin/api/data-forms", requirePermission("data-forms:manage"), async (
     const platform = req.query.platform ? normalizeChatPlatform(req.query.platform) : null;
     const botId = typeof req.query.botId === "string" ? req.query.botId.trim() : "";
     const includeInactive = req.query.includeInactive === "true";
+    const includeSubmissionCounts = req.query.includeSubmissionCounts === "true";
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
     const query = includeInactive ? {} : { isActive: { $ne: false } };
     const docs = await db.collection("data_forms").find(query).sort({ updatedAt: -1 }).toArray();
-    const forms = docs
+    let forms = docs
+      .filter((doc) => dataFormMatchesInboxScope(doc, inboxScopeKeys))
       .filter((doc) => !platform || pageAssignmentMatches(doc.enabledPages, platform, botId))
       .map(mapDataForm);
+    if (includeSubmissionCounts && forms.length) {
+      const formIds = forms.map((form) => form.id).filter(Boolean);
+      const countMatch = { formId: { $in: formIds } };
+      if (Array.isArray(inboxScopeKeys)) {
+        const inboxClauses = buildInboxAccessMongoClauses(inboxScopeKeys);
+        if (!inboxClauses.length) {
+          countMatch._id = null;
+        } else {
+          countMatch.$or = inboxClauses;
+        }
+      }
+      const counts = await db
+        .collection("data_form_submissions")
+        .aggregate([
+          { $match: countMatch },
+          {
+            $group: {
+              _id: { formId: "$formId", status: "$status" },
+              count: { $sum: 1 },
+              latestAt: { $max: "$createdAt" },
+            },
+          },
+        ])
+        .toArray();
+      const metricMap = new Map();
+      counts.forEach((entry) => {
+        const formId = entry?._id?.formId || "";
+        if (!formId) return;
+        const status = entry?._id?.status || "unknown";
+        const current = metricMap.get(formId) || {
+          total: 0,
+          statuses: {},
+          latestAt: null,
+        };
+        current.total += Number(entry.count || 0);
+        current.statuses[status] = Number(entry.count || 0);
+        if (
+          entry.latestAt &&
+          (!current.latestAt || new Date(entry.latestAt).getTime() > new Date(current.latestAt).getTime())
+        ) {
+          current.latestAt = entry.latestAt;
+        }
+        metricMap.set(formId, current);
+      });
+      forms = forms.map((form) => ({
+        ...form,
+        metrics: metricMap.get(form.id) || { total: 0, statuses: {}, latestAt: null },
+      }));
+    }
     res.json({ success: true, forms });
   } catch (err) {
     console.error("[DataForms] list failed:", err);
@@ -30266,6 +30424,9 @@ app.get("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), asy
     if (!doc) {
       return res.status(404).json({ success: false, error: "ไม่พบฟอร์ม" });
     }
+    if (!dataFormMatchesInboxScope(doc, resolveAdminInboxScopeKeys(req, req.query || {}))) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงฟอร์มนี้" });
+    }
     res.json({ success: true, form: mapDataForm(doc) });
   } catch (err) {
     console.error("[DataForms] detail failed:", err);
@@ -30276,6 +30437,9 @@ app.get("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), asy
 app.post("/admin/api/data-forms", requirePermission("data-forms:manage"), async (req, res) => {
   try {
     const payload = sanitizeDataFormPayload(req.body || {});
+    if (!dataFormAssignmentsAllowedForAdmin(req, payload.enabledPages)) {
+      return res.status(403).json({ success: false, error: "เลือกได้เฉพาะเพจ/บอทที่มีสิทธิ์" });
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const now = new Date();
@@ -30313,6 +30477,16 @@ app.put("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), asy
     const payload = sanitizeDataFormPayload(req.body || {});
     const client = await connectDB();
     const db = client.db("chatbot");
+    const existing = await db.collection("data_forms").findOne({ _id: new ObjectId(formId) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบฟอร์ม" });
+    }
+    if (!dataFormMatchesInboxScope(existing, resolveAdminInboxScopeKeys(req, req.query || {}))) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงฟอร์มนี้" });
+    }
+    if (!dataFormAssignmentsAllowedForAdmin(req, payload.enabledPages)) {
+      return res.status(403).json({ success: false, error: "เลือกได้เฉพาะเพจ/บอทที่มีสิทธิ์" });
+    }
     const update = {
       ...payload,
       updatedAt: new Date(),
@@ -30358,6 +30532,9 @@ app.delete("/admin/api/data-forms/:id", requirePermission("data-forms:manage"), 
     if (!existing) {
       return res.status(404).json({ success: false, error: "ไม่พบฟอร์ม" });
     }
+    if (!dataFormMatchesInboxScope(existing, resolveAdminInboxScopeKeys(req, req.query || {}))) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงฟอร์มนี้" });
+    }
     await coll.updateOne(
       { _id: existing._id },
       { $set: { isActive: false, deletedAt: new Date(), updatedAt: new Date() } },
@@ -30382,58 +30559,40 @@ app.get("/admin/api/data-form-submissions", requirePermission("data-forms:manage
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const query = {};
-    if (typeof req.query.userId === "string" && req.query.userId.trim()) {
-      query.userId = req.query.userId.trim();
-    }
-    if (typeof req.query.formId === "string" && req.query.formId.trim()) {
-      query.formId = req.query.formId.trim();
-    }
-    if (typeof req.query.status === "string" && req.query.status.trim()) {
-      query.status = req.query.status.trim();
-    }
-    if (typeof req.query.platform === "string" && req.query.platform.trim()) {
-      query.platform = normalizeChatPlatform(req.query.platform);
-    }
-    if (typeof req.query.botId === "string" && req.query.botId.trim()) {
-      query.botId = req.query.botId.trim();
-    }
-    const startDate = req.query.startDate ? new Date(String(req.query.startDate)) : null;
-    const endDate = req.query.endDate ? new Date(String(req.query.endDate)) : null;
-    if ((startDate && !Number.isNaN(startDate.getTime())) || (endDate && !Number.isNaN(endDate.getTime()))) {
-      query.createdAt = {};
-      if (startDate && !Number.isNaN(startDate.getTime())) {
-        query.createdAt.$gte = startDate;
-      }
-      if (endDate && !Number.isNaN(endDate.getTime())) {
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = endDate;
-      }
-    }
-    if (typeof req.query.agent === "string" && req.query.agent.trim()) {
-      const agent = req.query.agent.trim();
-      query.$or = [
-        { "history.by": agent },
-        { source: agent },
-        { updatedBy: agent },
-        { createdBy: agent },
-      ];
-    }
+    const query = buildDataFormSubmissionQuery(req.query || {}, req);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
-    const submissions = await db
-      .collection("data_form_submissions")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .toArray();
-    const statusCounts = await db
-      .collection("data_form_submissions")
-      .aggregate([
-        { $match: query },
-        { $group: { _id: "$status", count: { $sum: 1 } } },
-      ])
-      .toArray();
-    const totalCount = await db.collection("data_form_submissions").countDocuments(query);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const skip = (page - 1) * limit;
+    const sortKey = typeof req.query.sortBy === "string" ? req.query.sortBy : "";
+    const sortDirection = req.query.sortDir === "asc" ? 1 : -1;
+    const sortFields = {
+      createdAt: "createdAt",
+      updatedAt: "updatedAt",
+      formName: "formName",
+      status: "status",
+    };
+    const sortField = sortFields[sortKey] || "createdAt";
+    const sortConfig = { [sortField]: sortDirection };
+    if (sortField !== "createdAt") {
+      sortConfig.createdAt = -1;
+    }
+    const [submissions, statusCounts, totalCount] = await Promise.all([
+      db
+        .collection("data_form_submissions")
+        .find(query)
+        .sort(sortConfig)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db
+        .collection("data_form_submissions")
+        .aggregate([
+          { $match: query },
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ])
+        .toArray(),
+      db.collection("data_form_submissions").countDocuments(query),
+    ]);
     res.json({
       success: true,
       submissions: submissions.map(mapDataFormSubmission),
@@ -30444,6 +30603,12 @@ app.get("/admin/api/data-form-submissions", requirePermission("data-forms:manage
           return acc;
         }, {}),
       },
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.max(Math.ceil(totalCount / limit), 1),
+      },
     });
   } catch (err) {
     console.error("[DataForms] submission list failed:", err);
@@ -30451,8 +30616,9 @@ app.get("/admin/api/data-form-submissions", requirePermission("data-forms:manage
   }
 });
 
-function buildDataFormSubmissionQuery(queryParams = {}) {
+function buildDataFormSubmissionQuery(queryParams = {}, req = null) {
   const query = {};
+  const andClauses = [];
   if (typeof queryParams.userId === "string" && queryParams.userId.trim()) {
     query.userId = queryParams.userId.trim();
   }
@@ -30480,12 +30646,38 @@ function buildDataFormSubmissionQuery(queryParams = {}) {
   }
   if (typeof queryParams.agent === "string" && queryParams.agent.trim()) {
     const agent = queryParams.agent.trim();
-    query.$or = [
+    andClauses.push({ $or: [
       { "history.by": agent },
       { source: agent },
       { updatedBy: agent },
       { createdBy: agent },
-    ];
+    ] });
+  }
+  if (typeof queryParams.search === "string" && queryParams.search.trim()) {
+    const escaped = queryParams.search
+      .trim()
+      .slice(0, 120)
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "i");
+    andClauses.push({ $or: [
+      { formName: regex },
+      { summary: regex },
+      { userId: regex },
+      { platform: regex },
+      { botId: regex },
+      { source: regex },
+      { "history.by": regex },
+    ] });
+  }
+  if (req) {
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, queryParams);
+    if (Array.isArray(inboxScopeKeys)) {
+      const inboxClauses = buildInboxAccessMongoClauses(inboxScopeKeys);
+      andClauses.push(inboxClauses.length ? { $or: inboxClauses } : { _id: null });
+    }
+  }
+  if (andClauses.length) {
+    query.$and = andClauses;
   }
   return query;
 }
@@ -30505,7 +30697,7 @@ app.get("/admin/api/data-form-submissions/export", requirePermission("data-forms
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const query = buildDataFormSubmissionQuery(req.query || {});
+    const query = buildDataFormSubmissionQuery(req.query || {}, req);
     const docs = await db
       .collection("data_form_submissions")
       .find(query)
@@ -30564,6 +30756,9 @@ app.get("/admin/api/data-form-submissions/:id", requirePermission("data-forms:ma
     if (!doc) {
       return res.status(404).json({ success: false, error: "ไม่พบ submission" });
     }
+    if (!isAdminInboxAllowed(req, doc.platform || "line", doc.botId || "default")) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง submission นี้" });
+    }
     res.json({ success: true, submission: mapDataFormSubmission(doc) });
   } catch (err) {
     console.error("[DataForms] submission detail failed:", err);
@@ -30583,6 +30778,9 @@ app.put("/admin/api/data-form-submissions/:id", requirePermission("data-forms:ma
     const existing = await coll.findOne({ _id: new ObjectId(submissionId) });
     if (!existing) {
       return res.status(404).json({ success: false, error: "ไม่พบ submission" });
+    }
+    if (!isAdminInboxAllowed(req, existing.platform || "line", existing.botId || "default")) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง submission นี้" });
     }
     const form = existing.formId && ObjectId.isValid(existing.formId)
       ? await db.collection("data_forms").findOne({ _id: new ObjectId(existing.formId) })
