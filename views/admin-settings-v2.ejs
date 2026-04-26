@@ -809,6 +809,21 @@
                                                 </select>
                                             </div>
                                             <div class="col-md-3">
+                                                <label for="passcodeRolePreset" class="form-label-v2">Preset role</label>
+                                                <div class="input-group">
+                                                    <select id="passcodeRolePreset" class="form-select">
+                                                        <option value="support">Support</option>
+                                                        <option value="order_staff">Order Staff</option>
+                                                        <option value="content_instruction_editor">Content/Instruction Editor</option>
+                                                        <option value="bot_maintainer">Bot Maintainer</option>
+                                                        <option value="finance_api_viewer">Finance/API Viewer</option>
+                                                    </select>
+                                                    <button class="btn-v2 btn-v2-secondary" type="button" id="applyPasscodePresetBtn">
+                                                        <i class="fas fa-layer-group"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
                                                 <button type="submit" class="btn-v2 btn-v2-primary w-100"
                                                     id="createPasscodeSubmitBtn">
                                                     <i class="fas fa-save"></i> บันทึกผู้ใช้
@@ -870,6 +885,16 @@
                                                                 </select>
                                                             </div>
                                                             <div id="passcodeChatLayoutTabs" class="small"></div>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div class="passcode-control-panel h-100">
+                                                            <div class="passcode-control-title">
+                                                                <span>Effective Access Preview</span>
+                                                                <small>สรุปสิทธิ์จริงก่อนบันทึก</small>
+                                                            </div>
+                                                            <div id="passcodeEffectivePreview" class="passcode-effective-preview small"></div>
+                                                            <div id="passcodeDiffPreview" class="passcode-diff-preview small"></div>
                                                         </div>
                                                     </div>
                                                 </div>

@@ -4418,8 +4418,12 @@ function parseRequestedAdminInboxKeys(queryParams = {}) {
   const keys = rawKeys
     .map((value) => normalizeInboxKey(value))
     .filter(Boolean);
-  if (!keys.length && typeof queryParams.platform === "string" && queryParams.platform.trim()) {
-    keys.push(normalizeAdminInboxKey(queryParams.platform, queryParams.botId || "default"));
+  const hasBotIdParam =
+    Object.prototype.hasOwnProperty.call(queryParams, "botId") &&
+    typeof queryParams.botId === "string" &&
+    queryParams.botId.trim();
+  if (!keys.length && typeof queryParams.platform === "string" && queryParams.platform.trim() && hasBotIdParam) {
+    keys.push(normalizeAdminInboxKey(queryParams.platform, queryParams.botId));
   }
   return [...new Set(keys)];
 }
@@ -4456,6 +4460,81 @@ function buildInboxAccessMongoClauses(inboxKeys = []) {
     });
 }
 
+function buildInboxAccessAuditClauses(inboxKeys = []) {
+  return inboxKeys
+    .map(parseAdminInboxKey)
+    .filter(Boolean)
+    .flatMap((inbox) => {
+      const clauses = [{ inboxKey: inbox.inboxKey }];
+      if (inbox.botId) {
+        clauses.push({ platform: inbox.platform, botId: inbox.botId });
+      } else {
+        clauses.push({
+          platform: inbox.platform,
+          $or: [
+            { botId: { $exists: false } },
+            { botId: null },
+            { botId: "" },
+            { botId: "default" },
+          ],
+        });
+      }
+      return clauses;
+    });
+}
+
+function addAndClause(query, clause) {
+  if (!query || !clause || !Object.keys(clause).length) return query;
+  if (Array.isArray(query.$and)) {
+    query.$and.push(clause);
+  } else {
+    const existingAnd = [];
+    if (query.$and) existingAnd.push(query.$and);
+    query.$and = existingAnd.concat(clause);
+  }
+  return query;
+}
+
+function applyAdminInboxScopeToMongoQuery(query, inboxScopeKeys, clauseBuilder = buildInboxAccessMongoClauses) {
+  if (inboxScopeKeys === null) return true;
+  if (!Array.isArray(inboxScopeKeys) || !inboxScopeKeys.length) return false;
+  const clauses = clauseBuilder(inboxScopeKeys);
+  if (!clauses.length) return false;
+  addAndClause(query, { $or: clauses });
+  return true;
+}
+
+function getEnabledPagesForAdminScope(req) {
+  const allowedKeys = getAdminAllowedInboxKeys(req);
+  if (allowedKeys === null) return [];
+  return allowedKeys
+    .map(parseAdminInboxKey)
+    .filter((inbox) => inbox?.platform && inbox?.botId)
+    .map((inbox) => ({ platform: inbox.platform, botId: inbox.botId }));
+}
+
+function pageAssignmentsIntersectInboxScope(enabledPages = [], inboxScopeKeys) {
+  if (inboxScopeKeys === null) return true;
+  if (!Array.isArray(inboxScopeKeys) || !inboxScopeKeys.length) return false;
+  const pages = normalizeVoxtronPageAssignments(enabledPages);
+  if (!pages.length) return false;
+  const scopeSet = new Set(inboxScopeKeys);
+  return pages.some((page) =>
+    scopeSet.has(normalizeAdminInboxKey(page.platform, page.botId)),
+  );
+}
+
+function pageAssignmentsFullyAllowedForAdmin(req, enabledPages = []) {
+  const allowedKeys = getAdminAllowedInboxKeys(req);
+  if (allowedKeys === null) return true;
+  const pages = normalizeVoxtronPageAssignments(enabledPages);
+  if (!pages.length) return false;
+  const allowedSet = new Set(allowedKeys);
+  return pages.every((page) =>
+    allowedSet.has(normalizeAdminInboxKey(page.platform, page.botId)),
+  );
+}
+
 function dataFormMatchesInboxScope(form, inboxScopeKeys) {
   if (inboxScopeKeys === null) return true;
   if (!Array.isArray(inboxScopeKeys) || !inboxScopeKeys.length) return false;
@@ -4468,14 +4547,102 @@ function dataFormMatchesInboxScope(form, inboxScopeKeys) {
 }
 
 function dataFormAssignmentsAllowedForAdmin(req, enabledPages = []) {
-  const allowedKeys = getAdminAllowedInboxKeys(req);
-  if (allowedKeys === null) return true;
-  const pages = normalizeVoxtronPageAssignments(enabledPages);
-  if (!pages.length) return false;
-  const allowedSet = new Set(allowedKeys);
-  return pages.every((page) =>
-    allowedSet.has(normalizeAdminInboxKey(page.platform, page.botId)),
+  return pageAssignmentsFullyAllowedForAdmin(req, enabledPages);
+}
+
+function fileAssetVisibleForAdmin(req, asset = {}, queryParams = {}) {
+  if (
+    getAdminAllowedInboxKeys(req) === null &&
+    !normalizeVoxtronPageAssignments(asset.enabledPages || []).length
+  ) {
+    return true;
+  }
+  const inboxScopeKeys = resolveAdminInboxScopeKeys(req, queryParams);
+  return pageAssignmentsIntersectInboxScope(asset.enabledPages || [], inboxScopeKeys);
+}
+
+function fileAssetManageableForAdmin(req, assetOrPages = {}) {
+  const enabledPages = Array.isArray(assetOrPages)
+    ? assetOrPages
+    : assetOrPages?.enabledPages || [];
+  return pageAssignmentsFullyAllowedForAdmin(req, enabledPages);
+}
+
+function ensureFileAssetVisibleForAdmin(req, res, asset = {}, queryParams = {}) {
+  if (fileAssetVisibleForAdmin(req, asset, queryParams)) return true;
+  res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงไฟล์นี้" });
+  return false;
+}
+
+function ensureFileAssetManageableForAdmin(req, res, assetOrPages = {}) {
+  if (fileAssetManageableForAdmin(req, assetOrPages)) return true;
+  res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการไฟล์ของเพจนี้" });
+  return false;
+}
+
+function imageCollectionVisibleForAdmin(req, collection = {}, queryParams = {}) {
+  if (
+    getAdminAllowedInboxKeys(req) === null &&
+    !normalizeVoxtronPageAssignments(collection.enabledPages || []).length
+  ) {
+    return true;
+  }
+  const inboxScopeKeys = resolveAdminInboxScopeKeys(req, queryParams);
+  return pageAssignmentsIntersectInboxScope(collection.enabledPages || [], inboxScopeKeys);
+}
+
+function imageCollectionManageableForAdmin(req, collectionOrPages = {}) {
+  const enabledPages = Array.isArray(collectionOrPages)
+    ? collectionOrPages
+    : collectionOrPages?.enabledPages || [];
+  return pageAssignmentsFullyAllowedForAdmin(req, enabledPages);
+}
+
+function imageCollectionAllowedForBot(req, collection = {}, platform, botId) {
+  if (!isAdminInboxAllowed(req, platform, botId || "default")) return false;
+  const pages = normalizeVoxtronPageAssignments(collection.enabledPages || []);
+  if (!pages.length) return getAdminAllowedInboxKeys(req) === null;
+  return pageAssignmentMatches(pages, platform, botId);
+}
+
+function ensureImageCollectionManageableForAdmin(req, res, collectionOrPages = {}) {
+  if (imageCollectionManageableForAdmin(req, collectionOrPages)) return true;
+  res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการคลังรูปของเพจนี้" });
+  return false;
+}
+
+async function ensureImageCollectionsAllowedForBot(req, res, db, platform, botId, collectionIds = []) {
+  if (!isAdminInboxAllowed(req, platform, botId || "default")) {
+    res.status(403).json({ error: "ไม่มีสิทธิ์จัดการบอทนี้" });
+    return null;
+  }
+  const normalizedCollections = normalizeImageCollectionSelections(collectionIds);
+  if (!normalizedCollections.length) return normalizedCollections;
+
+  const collections = await db.collection("image_collections")
+    .find({ _id: { $in: normalizedCollections } })
+    .toArray();
+  const foundIds = new Set(collections.map((collection) => String(collection._id)));
+  const missing = normalizedCollections.filter((collectionId) => !foundIds.has(collectionId));
+  if (missing.length) {
+    res.status(400).json({ error: "มี Image Collection ที่ไม่พบ" });
+    return null;
+  }
+
+  const blocked = collections.filter((collection) =>
+    !imageCollectionAllowedForBot(req, collection, platform, botId),
   );
+  if (blocked.length) {
+    res.status(403).json({
+      error: "Image Collection บางรายการไม่ได้เปิดใช้กับบอท/เพจนี้",
+      blockedCollections: blocked.map((collection) => ({
+        id: String(collection._id),
+        name: collection.name || String(collection._id),
+      })),
+    });
+    return null;
+  }
+  return normalizedCollections;
 }
 
 function filterChatUsersForAdmin(req, users = []) {
@@ -4644,12 +4811,40 @@ function resolveRealtimeInboxKey(payload = {}, context = {}) {
   return normalizeAdminInboxKey(source.platform || "line", source.botId || "default");
 }
 
-function emitAdminRealtime(eventName, payload = {}, context = {}) {
-  const inboxKey = resolveRealtimeInboxKey(payload, context);
+function chatMessageMayContainImageToken(message = {}) {
+  if (!message || typeof message !== "object") return false;
+  if (Array.isArray(message.imageTokenSegments) && message.imageTokenSegments.length > 0) {
+    return false;
+  }
+  return [
+    message.content,
+    message.displayContent,
+    message.richDisplayContent,
+    message.rawContent,
+  ].some((value) => typeof value === "string" && /#\[\s*IMAGE\s*:/i.test(value));
+}
+
+function emitAdminRealtimePayload(eventName, payload = {}, inboxKey = "") {
   io.to("admin:all").emit(eventName, payload);
   if (inboxKey) {
     io.to(`admin:inbox:${inboxKey}`).emit(eventName, payload);
   }
+}
+
+function emitAdminRealtime(eventName, payload = {}, context = {}) {
+  const inboxKey = resolveRealtimeInboxKey(payload, context);
+  if (eventName === "newMessage" && chatMessageMayContainImageToken(payload?.message)) {
+    enrichChatMessageForFrontend(payload.message)
+      .then((message) => {
+        emitAdminRealtimePayload(eventName, { ...payload, message }, inboxKey);
+      })
+      .catch((error) => {
+        console.warn("[Chat] image token realtime enrichment failed:", error?.message || error);
+        emitAdminRealtimePayload(eventName, payload, inboxKey);
+      });
+    return;
+  }
+  emitAdminRealtimePayload(eventName, payload, inboxKey);
 }
 
 function getAuditActor(req) {
@@ -5704,9 +5899,11 @@ async function saveChatHistory(
 
     try {
       if (typeof io !== "undefined" && io) {
+        const frontendAssistantMessage =
+          await enrichChatMessageForFrontend(assistantMessageDoc);
         emitAdminRealtime("newMessage", {
           userId,
-          message: assistantMessageDoc,
+          message: frontendAssistantMessage,
           sender: "assistant",
           timestamp: assistantTimestamp,
         });
@@ -18656,6 +18853,11 @@ function buildFileSegmentFromToken(rawLabel, fileAssets = []) {
   };
 }
 
+function normalizeMediaTokenTextSegment(text) {
+  if (typeof text !== "string") return "";
+  return text.replace(/^\s+|\s+$/g, "");
+}
+
 // Parse assistant reply into segments of text and images based on #[IMAGE:label]
 function parseMessageSegmentsByImageTokens(message, assetsMap) {
   if (!message || typeof message !== "string")
@@ -18666,14 +18868,14 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
   let match;
   while ((match = regex.exec(message)) !== null) {
     const idx = match.index;
-    const prev = message.slice(lastIndex, idx);
-    if (prev && prev.trim() !== "") segments.push({ type: "text", text: prev });
+    const prev = normalizeMediaTokenTextSegment(message.slice(lastIndex, idx));
+    if (prev) segments.push({ type: "text", text: prev });
     const rawLabel = (match[1] || "").trim();
     segments.push(buildImageSegmentFromToken(rawLabel, assetsMap));
     lastIndex = regex.lastIndex;
   }
-  const tail = message.slice(lastIndex);
-  if (tail && tail.trim() !== "") segments.push({ type: "text", text: tail });
+  const tail = normalizeMediaTokenTextSegment(message.slice(lastIndex));
+  if (tail) segments.push({ type: "text", text: tail });
   if (segments.length === 0) segments.push({ type: "text", text: message });
   return segments;
 }
@@ -18687,8 +18889,8 @@ function parseMessageSegmentsByMediaTokens(message, assetsMap = null, fileAssets
   let lastIndex = 0;
   let match;
   while ((match = regex.exec(message)) !== null) {
-    const prev = message.slice(lastIndex, match.index);
-    if (prev && prev.trim() !== "") segments.push({ type: "text", text: prev });
+    const prev = normalizeMediaTokenTextSegment(message.slice(lastIndex, match.index));
+    if (prev) segments.push({ type: "text", text: prev });
     const tokenType = String(match[1] || "").trim().toUpperCase();
     const rawLabel = (match[2] || "").trim();
     if (tokenType === "IMAGE") {
@@ -18698,8 +18900,8 @@ function parseMessageSegmentsByMediaTokens(message, assetsMap = null, fileAssets
     }
     lastIndex = regex.lastIndex;
   }
-  const tail = message.slice(lastIndex);
-  if (tail && tail.trim() !== "") segments.push({ type: "text", text: tail });
+  const tail = normalizeMediaTokenTextSegment(message.slice(lastIndex));
+  if (tail) segments.push({ type: "text", text: tail });
   if (segments.length === 0) segments.push({ type: "text", text: message });
   return segments;
 }
@@ -19411,6 +19613,14 @@ app.get("/admin/api/audit-logs", requirePermission("audit:view"), async (req, re
       if (raw) query[field] = raw;
     };
     ["eventType", "action", "targetType", "targetId", "actorId", "userId", "platform", "botId"].forEach(addStringFilter);
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+    const hasRequestedInboxScope = parseRequestedAdminInboxKeys(req.query || {}).length > 0;
+    if (!applyAdminInboxScopeToMongoQuery(query, inboxScopeKeys, buildInboxAccessAuditClauses)) {
+      if (hasRequestedInboxScope) {
+        return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Inbox นี้" });
+      }
+      return res.json({ success: true, logs: [] });
+    }
     if (typeof req.query.search === "string" && req.query.search.trim()) {
       const search = req.query.search.trim().slice(0, 120);
       query.$or = [
@@ -21330,13 +21540,14 @@ async function sendAdminChatTextToPlatform(options = {}) {
     }
     await maybeMirrorChatMessage(doc, `sendAdminChatText:${source}`);
     await resetUserUnreadCount(userId);
+    const frontendDoc = await enrichChatMessageForFrontend(doc);
     emitAdminRealtime("newMessage", {
       userId,
-      message: doc,
+      message: frontendDoc,
       sender: "assistant",
       timestamp: doc.timestamp,
     });
-    return doc;
+    return frontendDoc;
   };
 
   if (normalizedPlatform === "facebook") {
@@ -22272,12 +22483,17 @@ app.put("/api/line-bots/:id", async (req, res) => {
       updateData.notificationEnabled = notificationEnabled;
     }
 
-    if (Array.isArray(selectedImageCollections)) {
-      updateData.selectedImageCollections = normalizeImageCollectionSelections(
-        selectedImageCollections,
+    if (Array.isArray(selectedImageCollections) || selectedImageCollections === null) {
+      const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+        req,
+        res,
+        db,
+        "line",
+        id,
+        selectedImageCollections || [],
       );
-    } else if (selectedImageCollections === null) {
-      updateData.selectedImageCollections = [];
+      if (!normalizedCollections) return;
+      updateData.selectedImageCollections = normalizedCollections;
     }
 
     const result = await coll.updateOne(
@@ -22499,16 +22715,25 @@ app.put("/api/line-bots/:id/image-collections", async (req, res) => {
         .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
     }
 
-    const normalizedCollections = normalizeImageCollectionSelections(
-      selectedImageCollections,
-    );
-
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+    const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+      req,
+      res,
+      db,
+      "line",
+      id,
+      selectedImageCollections,
+    );
+    if (!normalizedCollections) return;
 
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: bot._id },
       {
         $set: {
           selectedImageCollections: normalizedCollections,
@@ -22894,12 +23119,17 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    if (Array.isArray(selectedImageCollections)) {
-      updateData.selectedImageCollections = normalizeImageCollectionSelections(
-        selectedImageCollections,
+    if (Array.isArray(selectedImageCollections) || selectedImageCollections === null) {
+      const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+        req,
+        res,
+        db,
+        "facebook",
+        id,
+        selectedImageCollections || [],
       );
-    } else if (selectedImageCollections === null) {
-      updateData.selectedImageCollections = [];
+      if (!normalizedCollections) return;
+      updateData.selectedImageCollections = normalizedCollections;
     }
 
     const result = await coll.updateOne(
@@ -23140,16 +23370,25 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
         .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
     }
 
-    const normalizedCollections = normalizeImageCollectionSelections(
-      selectedImageCollections,
-    );
-
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+    const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+      req,
+      res,
+      db,
+      "facebook",
+      id,
+      selectedImageCollections,
+    );
+    if (!normalizedCollections) return;
 
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: bot._id },
       {
         $set: {
           selectedImageCollections: normalizedCollections,
@@ -23762,12 +24001,17 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    if (Array.isArray(selectedImageCollections)) {
-      updateData.selectedImageCollections = normalizeImageCollectionSelections(
-        selectedImageCollections,
+    if (Array.isArray(selectedImageCollections) || selectedImageCollections === null) {
+      const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+        req,
+        res,
+        db,
+        "instagram",
+        id,
+        selectedImageCollections || [],
       );
-    } else if (selectedImageCollections === null) {
-      updateData.selectedImageCollections = [];
+      if (!normalizedCollections) return;
+      updateData.selectedImageCollections = normalizedCollections;
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
@@ -23934,14 +24178,24 @@ app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
         .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
     }
 
-    const normalizedCollections = normalizeImageCollectionSelections(
-      selectedImageCollections,
-    );
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instagram_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+      req,
+      res,
+      db,
+      "instagram",
+      id,
+      selectedImageCollections,
+    );
+    if (!normalizedCollections) return;
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: bot._id },
       {
         $set: {
           selectedImageCollections: normalizedCollections,
@@ -24248,12 +24502,17 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    if (Array.isArray(selectedImageCollections)) {
-      updateData.selectedImageCollections = normalizeImageCollectionSelections(
-        selectedImageCollections,
+    if (Array.isArray(selectedImageCollections) || selectedImageCollections === null) {
+      const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+        req,
+        res,
+        db,
+        "whatsapp",
+        id,
+        selectedImageCollections || [],
       );
-    } else if (selectedImageCollections === null) {
-      updateData.selectedImageCollections = [];
+      if (!normalizedCollections) return;
+      updateData.selectedImageCollections = normalizedCollections;
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
@@ -24422,14 +24681,24 @@ app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
         .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
     }
 
-    const normalizedCollections = normalizeImageCollectionSelections(
-      selectedImageCollections,
-    );
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("whatsapp_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    const normalizedCollections = await ensureImageCollectionsAllowedForBot(
+      req,
+      res,
+      db,
+      "whatsapp",
+      id,
+      selectedImageCollections,
+    );
+    if (!normalizedCollections) return;
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: bot._id },
       {
         $set: {
           selectedImageCollections: normalizedCollections,
@@ -27427,7 +27696,8 @@ function mapInstructionAssetResponse(asset) {
 // GET: ดึงรายการ Image Collections ทั้งหมด
 app.get("/api/image-collections", requirePermission("image-library:view"), async (req, res) => {
   try {
-    const collections = await getImageCollections();
+    const collections = (await getImageCollections())
+      .filter((collection) => imageCollectionVisibleForAdmin(req, collection, req.query || {}));
     res.json({ success: true, collections });
   } catch (err) {
     console.error("[Collections] list error:", err);
@@ -27457,7 +27727,8 @@ app.get("/admin/categories/:categoryId/data", requirePermission("menu:categories
 
 app.get("/admin/image-collections", requirePermission("image-library:view"), async (req, res) => {
   try {
-    const collections = await getImageCollections();
+    const collections = (await getImageCollections())
+      .filter((collection) => imageCollectionVisibleForAdmin(req, collection, req.query || {}));
     res.json({ success: true, collections });
   } catch (err) {
     console.error("[Collections] API list error:", err);
@@ -27484,6 +27755,12 @@ app.get("/admin/image-collections/:id", requirePermission("image-library:view"),
         error: "ไม่พบ Image Collection",
       });
     }
+    if (!imageCollectionVisibleForAdmin(req, collection, req.query || {})) {
+      return res.status(403).json({
+        success: false,
+        error: "ไม่มีสิทธิ์เข้าถึง Image Collection นี้",
+      });
+    }
 
     res.json({ success: true, collection });
   } catch (err) {
@@ -27499,6 +27776,11 @@ app.get("/admin/image-collections/:id", requirePermission("image-library:view"),
 app.post("/admin/image-collections", requirePermission("image-library:manage"), async (req, res) => {
   try {
     const { name, description, imageLabels } = req.body;
+    const enabledPagesInput = Object.prototype.hasOwnProperty.call(req.body || {}, "enabledPages")
+      ? req.body.enabledPages
+      : getEnabledPagesForAdminScope(req);
+    const enabledPages = normalizeVoxtronPageAssignments(enabledPagesInput);
+    if (!ensureImageCollectionManageableForAdmin(req, res, enabledPages)) return;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -27538,6 +27820,7 @@ app.post("/admin/image-collections", requirePermission("image-library:manage"), 
       name: name.trim(),
       description: (description || "").trim(),
       images: images,
+      enabledPages,
       isDefault: false,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -27591,6 +27874,11 @@ app.put("/admin/image-collections/:id", requirePermission("image-library:manage"
         error: "ไม่พบ Image Collection",
       });
     }
+    if (!ensureImageCollectionManageableForAdmin(req, res, existing)) return;
+    const enabledPages = Object.prototype.hasOwnProperty.call(req.body || {}, "enabledPages")
+      ? normalizeVoxtronPageAssignments(req.body.enabledPages)
+      : normalizeVoxtronPageAssignments(existing.enabledPages || []);
+    if (!ensureImageCollectionManageableForAdmin(req, res, enabledPages)) return;
 
     // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
     const selectedAssets = await assetsColl
@@ -27616,6 +27904,7 @@ app.put("/admin/image-collections/:id", requirePermission("image-library:manage"
           name: name.trim(),
           description: (description || "").trim(),
           images: images,
+          enabledPages,
           updatedAt: new Date(),
         },
       },
@@ -27668,6 +27957,7 @@ app.delete("/admin/image-collections/:id", requirePermission("image-library:mana
         error: "ไม่สามารถลบ Default Collection ได้",
       });
     }
+    if (!ensureImageCollectionManageableForAdmin(req, res, collection)) return;
 
     // ลบ collection reference จาก bots
     await db
@@ -29159,11 +29449,57 @@ app.get("/admin/customer-stats", requirePermission("menu:customer-stats"), async
   }
 });
 
+function buildEmptyCustomerStatsResponse() {
+  return {
+    success: true,
+    data: {
+      overview: { newUsers: 0, totalActiveUsers: 0, totalMessages: 0 },
+      sales: {
+        uniqueBuyers: 0,
+        totalOrders: 0,
+        pendingOrders: 0,
+        confirmedOrders: 0,
+        shippedOrders: 0,
+        completedOrders: 0,
+        cancelledOrders: 0,
+        totalSales: 0,
+        totalSalesConfirmed: 0,
+        totalShipping: 0,
+      },
+      conversion: {
+        conversionRate: 0,
+        orderConfirmationRate: 0,
+        orderCompletionRate: 0,
+        avgOrderValue: 0,
+        avgCustomerValue: 0,
+      },
+      followUp: { active: 0, completed: 0, canceled: 0, failed: 0 },
+      hourlyMessages: {
+        all: Array.from({ length: 24 }, () => 0),
+        buyers: Array.from({ length: 24 }, () => 0),
+        nonBuyers: Array.from({ length: 24 }, () => 0),
+      },
+      closingRateTrend: { mode: "daily", points: [], totalUsers: 0, buyerUsers: 0, overallRate: 0 },
+      topProducts: [],
+      topCustomers: [],
+      paymentMethods: { cod: 0, transfer: 0, other: 0 },
+    },
+  };
+}
+
 app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), async (req, res) => {
   try {
     const { pageKey, startDate, endDate } = req.query;
     const client = await connectDB();
     const db = client.db("chatbot");
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, pageKey ? { pageKey } : {});
+    const hasRequestedInboxScope = Boolean(pageKey);
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      if (hasRequestedInboxScope) {
+        return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงเพจนี้" });
+      }
+      return res.json(buildEmptyCustomerStatsResponse());
+    }
 
     // Parse date filters (normalize to Bangkok time)
     const { startMoment, endMoment } = parseCustomerStatsDateRange(
@@ -29202,6 +29538,7 @@ app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), 
         { botId: "" },
       ];
     }
+    applyAdminInboxScopeToMongoQuery(orderQuery, inboxScopeKeys);
 
     // Build base query for chat history
     const chatQuery = {
@@ -29218,6 +29555,7 @@ app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), 
         { botId: "" },
       ];
     }
+    applyAdminInboxScopeToMongoQuery(chatQuery, inboxScopeKeys);
 
     // Get orders
     const orders = await db.collection("orders").find(orderQuery).toArray();
@@ -29265,6 +29603,7 @@ app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), 
           { botId: "" },
         ];
       }
+      applyAdminInboxScopeToMongoQuery(existingMatch, inboxScopeKeys);
 
       const existingUsers = await db.collection("chat_history")
         .aggregate([
@@ -29450,6 +29789,7 @@ app.get("/admin/customer-stats/data", requirePermission("customer-stats:view"), 
     };
     if (filterPlatform) followUpQuery.platform = filterPlatform;
     if (filterBotId) followUpQuery.botId = normalizeFollowUpBotId(filterBotId);
+    applyAdminInboxScopeToMongoQuery(followUpQuery, inboxScopeKeys);
 
     const followUpTasks = await db.collection("follow_up_tasks").find(followUpQuery).toArray();
     const followUpActive = followUpTasks.filter(
@@ -30001,7 +30341,7 @@ app.get("/admin/forms/inboxes", requirePermission("data-forms:view"), async (req
   }
 });
 
-app.get("/admin/chat/users", requirePermission("chat:view"), async (req, res) => {
+app.get("/admin/chat/users", requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const rawFocus =
       (req.query && (req.query.focus || req.query.userId || req.query.user)) ||
@@ -30082,7 +30422,7 @@ app.get("/admin/chat/users", requirePermission("chat:view"), async (req, res) =>
 });
 
 // Get per-user AI status
-app.get("/admin/chat/user-status/:userId", requirePermission("chat:view"), async (req, res) => {
+app.get("/admin/chat/user-status/:userId", requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     const status = await getUserStatus(userId);
@@ -30098,7 +30438,7 @@ app.get("/admin/chat/user-status/:userId", requirePermission("chat:view"), async
 });
 
 // Set per-user AI status
-app.post("/admin/chat/user-status", requirePermission("chat:ai-control"), async (req, res) => {
+app.post("/admin/chat/user-status", requirePermission("chat:ai-control"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId, aiEnabled } = req.body || {};
     if (!userId || typeof aiEnabled === "undefined") {
@@ -30161,7 +30501,7 @@ app.post("/admin/chat/user-status", requirePermission("chat:ai-control"), async 
   }
 });
 
-app.post("/admin/chat/users/:userId/refresh-profile", requirePermission("chat:profile-refresh"), async (req, res) => {
+app.post("/admin/chat/users/:userId/refresh-profile", requirePermission("chat:profile-refresh"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
@@ -30252,7 +30592,7 @@ app.post("/admin/chat/users/:userId/refresh-profile", requirePermission("chat:pr
   }
 });
 
-app.post("/admin/chat/mark-read/:userId", requirePermission("chat:view"), async (req, res) => {
+app.post("/admin/chat/mark-read/:userId", requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
@@ -30272,7 +30612,7 @@ app.post("/admin/chat/mark-read/:userId", requirePermission("chat:view"), async 
 });
 
 // Get chat history for a specific user
-app.get("/admin/chat/history/:userId", requirePermission("chat:view"), async (req, res) => {
+app.get("/admin/chat/history/:userId", requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     const inboxFilter = normalizeChatInboxFilter(req.query || {});
@@ -30299,7 +30639,7 @@ app.get("/admin/chat/history/:userId", requirePermission("chat:view"), async (re
 });
 
 // Send message as admin (AI assistant)
-app.post("/admin/chat/send", requirePermission("chat:send"), async (req, res) => {
+app.post("/admin/chat/send", requirePermission("chat:send"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId, message } = req.body;
 
@@ -30495,13 +30835,14 @@ app.post("/admin/chat/send", requirePermission("chat:send"), async (req, res) =>
       }
       await maybeMirrorChatMessage(doc, "adminChat:assistant");
       await resetUserUnreadCount(userId);
+      const frontendDoc = await enrichChatMessageForFrontend(doc);
       emitAdminRealtime("newMessage", {
         userId,
-        message: doc,
+        message: frontendDoc,
         sender: "assistant",
         timestamp: doc.timestamp,
       });
-      return doc;
+      return frontendDoc;
     };
 
     // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้ (และหลีกเลี่ยงการบันทึกซ้ำในกรณี Facebook เพื่อกันแสดงซ้ำ)
@@ -30672,7 +31013,7 @@ app.post("/admin/chat/send", requirePermission("chat:send"), async (req, res) =>
 });
 
 // Clear chat history for a user
-app.delete("/admin/chat/clear/:userId", requirePermission("chat:clear"), async (req, res) => {
+app.delete("/admin/chat/clear/:userId", requirePermission("chat:clear"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     const access = await resolveChatConversationForAdmin(req, userId, req.query || {});
@@ -30704,7 +31045,7 @@ app.delete("/admin/chat/clear/:userId", requirePermission("chat:clear"), async (
   }
 });
 
-app.get(["/admin/chat/context/:userId", "/admin/chat2/context/:userId"], requirePermission("chat:view"), async (req, res) => {
+app.get(["/admin/chat/context/:userId", "/admin/chat2/context/:userId"], requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const userId =
       typeof req.params.userId === "string" ? req.params.userId.trim() : "";
@@ -31401,6 +31742,7 @@ app.get("/admin/api/file-assets", requirePermission("file-assets:view"), async (
     const query = includeInactive ? {} : { isActive: { $ne: false } };
     const docs = await db.collection("file_assets").find(query).sort({ updatedAt: -1 }).limit(500).toArray();
     const assets = docs
+      .filter((doc) => fileAssetVisibleForAdmin(req, doc, req.query || {}))
       .filter((doc) => !platform || pageAssignmentMatches(doc.enabledPages, platform, botId))
       .map((doc) => mapFileAsset(doc, req));
     res.json({ success: true, assets });
@@ -31418,10 +31760,14 @@ app.post(
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      const enabledPages = Object.prototype.hasOwnProperty.call(req.body || {}, "enabledPages")
+        ? parseMaybeJson(req.body?.enabledPages, [])
+        : getEnabledPagesForAdminScope(req);
+      if (!ensureFileAssetManageableForAdmin(req, res, enabledPages)) return;
       const doc = await uploadVoxtronFileAsset(db, req.file, {
         label: req.body?.label || "",
         description: req.body?.description || "",
-        enabledPages: parseMaybeJson(req.body?.enabledPages, []),
+        enabledPages,
         isActive: req.body?.isActive !== "false",
         source: "file_library",
       });
@@ -31454,6 +31800,7 @@ app.get("/admin/api/file-assets/:id", requirePermission("file-assets:view"), asy
     if (!doc) {
       return res.status(404).json({ success: false, error: "ไม่พบไฟล์" });
     }
+    if (!ensureFileAssetVisibleForAdmin(req, res, doc, req.query || {})) return;
     res.json({ success: true, asset: mapFileAsset(doc, req) });
   } catch (err) {
     console.error("[FileAssets] detail failed:", err);
@@ -31467,14 +31814,25 @@ app.put("/admin/api/file-assets/:id", requirePermission("file-assets:manage"), a
     if (!ObjectId.isValid(assetId)) {
       return res.status(400).json({ success: false, error: "File ID ไม่ถูกต้อง" });
     }
-    const payload = normalizeFileAssetPayload(req.body || {});
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const existing = await db.collection("file_assets").findOne({ _id: new ObjectId(assetId) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบไฟล์" });
+    }
+    const payload = normalizeFileAssetPayload({
+      ...(req.body || {}),
+      enabledPages: Object.prototype.hasOwnProperty.call(req.body || {}, "enabledPages")
+        ? req.body.enabledPages
+        : existing.enabledPages || [],
+    });
     if (!payload.label) {
       return res.status(400).json({ success: false, error: "กรุณากรอกชื่อไฟล์" });
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    if (!ensureFileAssetManageableForAdmin(req, res, existing)) return;
+    if (!ensureFileAssetManageableForAdmin(req, res, payload.enabledPages)) return;
     const result = await db.collection("file_assets").findOneAndUpdate(
-      { _id: new ObjectId(assetId) },
+      { _id: existing._id },
       {
         $set: {
           ...payload,
@@ -31484,9 +31842,6 @@ app.put("/admin/api/file-assets/:id", requirePermission("file-assets:manage"), a
       { returnDocument: "after" },
     );
     const doc = result.value || result;
-    if (!doc) {
-      return res.status(404).json({ success: false, error: "ไม่พบไฟล์" });
-    }
     await maybeMirrorAppDocumentFromCollection("file_assets", doc);
     await recordAuditLog(req, {
       eventType: "file_asset_updated",
@@ -31516,6 +31871,7 @@ app.delete("/admin/api/file-assets/:id", requirePermission("file-assets:manage")
     if (!existing) {
       return res.status(404).json({ success: false, error: "ไม่พบไฟล์" });
     }
+    if (!ensureFileAssetManageableForAdmin(req, res, existing)) return;
     await coll.updateOne(
       { _id: existing._id },
       { $set: { isActive: false, deletedAt: new Date(), updatedAt: new Date() } },
@@ -31569,6 +31925,9 @@ app.post(
           _id: new ObjectId(requestedAssetId),
           isActive: { $ne: false },
         });
+        if (asset && !fileAssetVisibleForAdmin(req, asset, { platform, botId })) {
+          return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์ใช้ไฟล์นี้" });
+        }
         if (asset && !pageAssignmentMatches(asset.enabledPages, platform, botId)) {
           return res.status(403).json({ success: false, error: "ไฟล์นี้ไม่ได้เปิดใช้กับบอท/เพจนี้" });
         }
@@ -32458,7 +32817,7 @@ app.post("/admin/chat/forward", requirePermission("chat:forward"), requireChatWo
 
 // ========== Message Feedback APIs ==========
 
-app.post("/admin/chat/feedback", requirePermission("chat:view"), async (req, res) => {
+app.post("/admin/chat/feedback", requirePermission("chat:view"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { messageId, userId, feedback, notes } = req.body || {};
     const trimmedUserId = typeof userId === "string" ? userId.trim() : "";
@@ -34360,20 +34719,54 @@ app.get("/admin/api/notification-logs", requirePermission("notifications:view"),
 
 // ============================ Category Management APIs ============================
 
+function buildCategoryListQueryForAdmin(req) {
+  const { botId, platform } = req.query || {};
+  const query = { isActive: true };
+
+  if (botId) query.botId = String(botId);
+  if (platform) query.platform = normalizeChatPlatform(platform);
+
+  const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+  const hasRequestedScope = parseRequestedAdminInboxKeys(req.query || {}).length > 0;
+  if (!applyAdminInboxScopeToMongoQuery(query, inboxScopeKeys)) {
+    return {
+      allowed: !hasRequestedScope,
+      query,
+      empty: true,
+    };
+  }
+  return { allowed: true, query, empty: false };
+}
+
+async function loadCategoryForAdmin(req, res, db, categoryId) {
+  const category = await db.collection("categories").findOne({ categoryId });
+  if (!category) {
+    res.status(404).json({ success: false, error: "Category not found" });
+    return null;
+  }
+  if (!isAdminInboxAllowed(req, category.platform || "line", category.botId || "default")) {
+    res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Category นี้" });
+    return null;
+  }
+  return category;
+}
+
 // GET: List all categories (filtered by botId and platform)
 app.get("/admin/api/categories", requirePermission("categories:view"), async (req, res) => {
   try {
-    const { botId, platform } = req.query;
-    const query = { isActive: true };
-
-    if (botId) query.botId = botId;
-    if (platform) query.platform = platform;
+    const categoryScope = buildCategoryListQueryForAdmin(req);
+    if (!categoryScope.allowed) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Inbox นี้" });
+    }
+    if (categoryScope.empty) {
+      return res.json({ success: true, categories: [] });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
     const categories = await db
       .collection("categories")
-      .find(query)
+      .find(categoryScope.query)
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -34395,6 +34788,9 @@ app.post("/admin/api/categories", requirePermission("categories:manage"), async 
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    if (!isAdminInboxAllowed(req, platform, botId)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการ Category ของบอทนี้" });
+    }
 
     // Check for duplicate name in the same bot
     const existing = await db.collection("categories").findOne({
@@ -34456,7 +34852,9 @@ app.put("/admin/api/categories/:categoryId", requirePermission("categories:manag
     const { name, description, columns } = req.body;
 
     const client = await connectDB();
-    const db = client.collection("chatbot");
+    const db = client.db("chatbot");
+    const existingCategory = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!existingCategory) return;
 
     // Process columns: preserve IDs for existing columns, generate for new ones
     const processedColumns = (columns || []).map((col, index) => ({
@@ -34474,7 +34872,7 @@ app.put("/admin/api/categories/:categoryId", requirePermission("categories:manag
     if (columns) updateDoc.columns = processedColumns;
 
     const result = await db.collection("categories").findOneAndUpdate(
-      { categoryId },
+      { categoryId: existingCategory.categoryId },
       { $set: updateDoc },
       { returnDocument: 'after' }
     );
@@ -34496,12 +34894,14 @@ app.delete("/admin/api/categories/:categoryId", requirePermission("categories:ma
     const { categoryId } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     // Delete category
-    await db.collection("categories").deleteOne({ categoryId });
+    await db.collection("categories").deleteOne({ categoryId: category.categoryId });
 
     // Delete associated table data
-    await db.collection("category_tables").deleteOne({ categoryId });
+    await db.collection("category_tables").deleteOne({ categoryId: category.categoryId });
 
     res.json({ success: true, message: "Category deleted successfully" });
   } catch (err) {
@@ -34516,6 +34916,8 @@ app.get("/admin/api/categories/:categoryId/data", requirePermission("categories:
     const { categoryId } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     const table = await db.collection("category_tables").findOne({ categoryId });
 
@@ -34538,6 +34940,8 @@ app.post("/admin/api/categories/:categoryId/data", requirePermission("categories
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     const newRow = {
       rowId: new ObjectId().toString(),
@@ -34547,7 +34951,7 @@ app.post("/admin/api/categories/:categoryId/data", requirePermission("categories
     };
 
     const result = await db.collection("category_tables").updateOne(
-      { categoryId },
+      { categoryId: category.categoryId },
       {
         $push: { data: newRow },
         $set: { updatedAt: new Date() }
@@ -34573,9 +34977,11 @@ app.put("/admin/api/categories/:categoryId/data/:rowId", requirePermission("cate
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     const result = await db.collection("category_tables").updateOne(
-      { categoryId, "data.rowId": rowId },
+      { categoryId: category.categoryId, "data.rowId": rowId },
       {
         $set: {
           "data.$.values": values,
@@ -34602,9 +35008,11 @@ app.delete("/admin/api/categories/:categoryId/data/:rowId", requirePermission("c
     const { categoryId, rowId } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     const result = await db.collection("category_tables").updateOne(
-      { categoryId },
+      { categoryId: category.categoryId },
       {
         $pull: { data: { rowId: rowId } },
         $set: { updatedAt: new Date() }
@@ -34636,10 +35044,8 @@ app.post("/admin/api/categories/:categoryId/import-excel", requirePermission("ca
     const db = client.db("chatbot");
 
     // Get category to map columns
-    const category = await db.collection("categories").findOne({ categoryId });
-    if (!category) {
-      return res.status(404).json({ success: false, error: "Category not found" });
-    }
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     // Create a map of Column Name -> Column ID
     const columnMap = {};
@@ -34670,7 +35076,7 @@ app.post("/admin/api/categories/:categoryId/import-excel", requirePermission("ca
 
     if (newRows.length > 0) {
       await db.collection("category_tables").updateOne(
-        { categoryId },
+        { categoryId: category.categoryId },
         {
           $push: { data: { $each: newRows } },
           $set: { updatedAt: new Date() }
@@ -34692,10 +35098,8 @@ app.get("/admin/api/categories/:categoryId/export-excel", requirePermission("cat
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const category = await db.collection("categories").findOne({ categoryId });
-    if (!category) {
-      return res.status(404).json({ success: false, error: "Category not found" });
-    }
+    const category = await loadCategoryForAdmin(req, res, db, categoryId);
+    if (!category) return;
 
     const table = await db.collection("category_tables").findOne({ categoryId });
     const data = table ? table.data : [];
@@ -34824,7 +35228,7 @@ app.get("/admin/chat/available-tags", requirePermission("chat:tags"), requireCha
 });
 
 // Toggle purchase status
-app.post("/admin/chat/purchase-status/:userId", requirePermission("chat:purchase-status"), async (req, res) => {
+app.post("/admin/chat/purchase-status/:userId", requirePermission("chat:purchase-status"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const { userId } = req.params;
     const { hasPurchased } = req.body;
@@ -34870,7 +35274,7 @@ app.post("/admin/chat/purchase-status/:userId", requirePermission("chat:purchase
 });
 
 // Get total unread count for all users
-app.get("/admin/chat/unread-count", requirePermission("menu:chat"), async (req, res) => {
+app.get("/admin/chat/unread-count", requirePermission("menu:chat"), requireChatWorkspaceTab("overview"), async (req, res) => {
   try {
     const totalUnread = await getCachedChatAdminAuxValue(
       "chat:total-unread",
@@ -36055,6 +36459,38 @@ const OPENAI_USAGE_TOTAL_TOKENS_SQL =
 const OPENAI_USAGE_COST_SQL =
   "CASE WHEN payload->>'estimatedCost' ~ '^-?[0-9]+(\\\\.[0-9]+)?$' THEN (payload->>'estimatedCost')::numeric ELSE 0 END";
 
+function canViewOpenAiUsageKeyDetails(req) {
+  return hasAdminPermission(getAdminUserContext(req), "api-usage:key-detail");
+}
+
+function buildEmptyOpenAiUsageSummary() {
+  return {
+    success: true,
+    summary: {
+      totalCalls: 0,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalTokens: 0,
+      totalCostUSD: 0,
+      totalCostTHB: 0,
+      pricedCalls: 0,
+      unpricedCalls: 0,
+    },
+    byModel: [],
+    byBot: [],
+    byKey: [],
+    daily: [],
+  };
+}
+
+function redactOpenAiUsageLogForAdmin(req, log = {}) {
+  if (canViewOpenAiUsageKeyDetails(req)) return log;
+  return {
+    ...log,
+    apiKeyId: null,
+  };
+}
+
 function buildOpenAiUsagePostgresFilter({
   startMoment,
   endMoment,
@@ -36062,6 +36498,7 @@ function buildOpenAiUsagePostgresFilter({
   botId,
   platform,
   provider,
+  inboxScopeKeys = null,
 }) {
   const params = [
     OPENAI_USAGE_COLLECTION,
@@ -36083,6 +36520,32 @@ function buildOpenAiUsagePostgresFilter({
   if (botId) addPayloadEquals("botId", botId);
   if (platform) addPayloadEquals("platform", platform);
   if (provider) addPayloadEquals("provider", normalizeProvider(provider));
+  if (Array.isArray(inboxScopeKeys)) {
+    const scopeClauses = inboxScopeKeys
+      .map(parseAdminInboxKey)
+      .filter(Boolean)
+      .map((inbox) => {
+        params.push(inbox.platform);
+        const platformParam = `$${params.length}`;
+        if (inbox.botId) {
+          params.push(inbox.botId);
+          return `(payload->>'platform' = ${platformParam} AND payload->>'botId' = $${params.length})`;
+        }
+        return `(
+          payload->>'platform' = ${platformParam}
+          AND (
+            payload->>'botId' IS NULL
+            OR payload->>'botId' = ''
+            OR payload->>'botId' = 'default'
+          )
+        )`;
+      });
+    if (scopeClauses.length) {
+      clauses.push(`(${scopeClauses.join(" OR ")})`);
+    } else {
+      clauses.push("FALSE");
+    }
+  }
 
   return {
     params,
@@ -36091,7 +36554,7 @@ function buildOpenAiUsagePostgresFilter({
 }
 
 async function queryOpenAiUsageSummaryFromPostgres(filters) {
-  if (isPostgresNativeReadEnabled()) {
+  if (isPostgresNativeReadEnabled() && filters.inboxScopeKeys === null) {
     const nativeSummary =
       await postgresNativeReadRepository.queryOpenAiUsageSummary(filters);
     if (nativeSummary) {
@@ -36216,7 +36679,16 @@ async function queryOpenAiUsageSummaryFromPostgres(filters) {
 
 app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async (req, res) => {
   try {
-    const cacheHash = buildAdminCacheHash(req.query || {});
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      return res.json(buildEmptyOpenAiUsageSummary());
+    }
+    const includeKeyDetails = canViewOpenAiUsageKeyDetails(req);
+    const cacheHash = buildAdminCacheHash({
+      ...(req.query || {}),
+      __inboxScope: inboxScopeKeys === null ? "all" : inboxScopeKeys.join(","),
+      __keyDetails: includeKeyDetails ? "1" : "0",
+    });
     const cachedResponse = await getCachedAdminJson(
       req,
       ["openai-usage-summary", cacheHash],
@@ -36237,6 +36709,9 @@ app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async 
     if (botId) match.botId = botId;
     if (platform) match.platform = platform;
     if (provider) match.provider = normalizeProvider(provider);
+    if (!applyAdminInboxScopeToMongoQuery(match, inboxScopeKeys)) {
+      return buildEmptyOpenAiUsageSummary();
+    }
 
     let totals;
     let byModel;
@@ -36252,6 +36727,7 @@ app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async 
         botId,
         platform,
         provider,
+        inboxScopeKeys,
       });
       totals = postgresSummary.totals;
       byModel = postgresSummary.byModel;
@@ -36411,7 +36887,10 @@ app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async 
     });
 
     // Enrich key data with names
-    const keyIds = byKey.map(k => k._id).filter(id => id && ObjectId.isValid(id));
+    if (!includeKeyDetails) {
+      byKey = [];
+    }
+    const keyIds = includeKeyDetails ? byKey.map(k => k._id).filter(id => id && ObjectId.isValid(id)) : [];
     const keys = keyIds.length > 0
       ? await db.collection("openai_api_keys").find({ _id: { $in: keyIds } }).toArray()
       : [];
@@ -36462,7 +36941,7 @@ app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async 
         costUSD: b.cost,
         pricedCalls: b.pricedCalls || 0,
       })),
-      byKey: byKey.map(k => ({
+      byKey: includeKeyDetails ? byKey.map(k => ({
         keyId: k._id?.toString(),
         name: keyNameMap[k._id?.toString()] || "Unknown Key",
         provider: keyProviderMap[k._id?.toString()] || LLM_PROVIDER_OPENAI,
@@ -36470,7 +36949,7 @@ app.get("/api/openai-usage/summary", requirePermission("api-usage:view"), async 
         tokens: k.tokens,
         costUSD: k.cost,
         pricedCalls: k.pricedCalls || 0,
-      })),
+      })) : [],
       daily: daily.map(d => ({
         ...d,
         pricedCalls: d.pricedCalls || 0,
@@ -36513,8 +36992,22 @@ app.get("/api/openai-usage", requirePermission("api-usage:view"), async (req, re
     if (botId) match.botId = botId;
     if (platform) match.platform = platform;
     if (provider) match.provider = normalizeProvider(provider);
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      return res.json({
+        success: true,
+        logs: [],
+        pagination: {
+          page: Math.max(parseInt(page, 10) || 1, 1),
+          limit: Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200),
+          total: 0,
+          pages: 1,
+        },
+      });
+    }
+    applyAdminInboxScopeToMongoQuery(match, inboxScopeKeys);
 
-    if (isPostgresNativeReadEnabled()) {
+    if (isPostgresNativeReadEnabled() && inboxScopeKeys === null) {
       const nativeResult = await postgresNativeReadRepository.queryOpenAiUsageLogs({
         startMoment,
         endMoment,
@@ -36527,7 +37020,7 @@ app.get("/api/openai-usage", requirePermission("api-usage:view"), async (req, re
       });
       return res.json({
         success: true,
-        logs: nativeResult.logs.map(l => ({
+        logs: nativeResult.logs.map(l => redactOpenAiUsageLogForAdmin(req, {
           id: l._id.toString(),
           apiKeyId: l.apiKeyId?.toString(),
           botId: l.botId,
@@ -36563,7 +37056,7 @@ app.get("/api/openai-usage", requirePermission("api-usage:view"), async (req, re
 
     res.json({
       success: true,
-      logs: logs.map(l => ({
+      logs: logs.map(l => redactOpenAiUsageLogForAdmin(req, {
         id: l._id.toString(),
         apiKeyId: l.apiKeyId?.toString(),
         botId: l.botId,
@@ -36594,7 +37087,7 @@ app.get("/api/openai-usage", requirePermission("api-usage:view"), async (req, re
 app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), async (req, res) => {
   try {
     const { botId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, platform } = req.query;
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -36607,6 +37100,12 @@ app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), 
       botId,
       timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
     };
+    if (platform) match.platform = normalizeChatPlatform(platform);
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, { ...(req.query || {}), botId, platform });
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึงบอทนี้" });
+    }
+    applyAdminInboxScopeToMongoQuery(match, inboxScopeKeys);
 
     // Get usage breakdown by model
     const byModel = await db.collection("openai_usage_logs").aggregate([
@@ -36630,7 +37129,7 @@ app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), 
     ]).toArray();
 
     // Get usage breakdown by API key
-    const byKey = await db.collection("openai_usage_logs").aggregate([
+    const byKey = canViewOpenAiUsageKeyDetails(req) ? await db.collection("openai_usage_logs").aggregate([
       { $match: match },
       {
         $group: {
@@ -36646,7 +37145,7 @@ app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), 
         }
       },
       { $sort: { count: -1 } }
-    ]).toArray();
+    ]).toArray() : [];
 
     // Get daily trend
     const byDay = await db.collection("openai_usage_logs").aggregate([
@@ -36720,12 +37219,12 @@ app.get("/api/openai-usage/by-bot/:botId", requirePermission("api-usage:view"), 
         model: m._id?.model || "unknown",
         provider: normalizeProvider(m._id?.provider),
       })),
-      byKey: byKey.map(k => ({
+      byKey: canViewOpenAiUsageKeyDetails(req) ? byKey.map(k => ({
         ...k,
         keyId: k._id?.toString(),
         keyName: keyMap[k._id?.toString()]?.name || "Env Variable",
         provider: keyMap[k._id?.toString()]?.provider || LLM_PROVIDER_OPENAI,
-      })),
+      })) : [],
       byDay: byDay.map(d => ({ date: d._id, ...d })),
       recentLogs: recentLogs.map(l => ({
         id: l._id.toString(),
@@ -36760,6 +37259,17 @@ app.get("/api/openai-usage/by-model/:model", requirePermission("api-usage:view")
       model,
       timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
     };
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      return res.json({
+        success: true,
+        model,
+        totals: { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
+        byBot: [],
+        byDay: [],
+      });
+    }
+    applyAdminInboxScopeToMongoQuery(match, inboxScopeKeys);
 
     // Get usage breakdown by bot
     const byBot = await db.collection("openai_usage_logs").aggregate([
@@ -36864,7 +37374,7 @@ app.get("/api/openai-usage/by-model/:model", requirePermission("api-usage:view")
 });
 
 // GET: Drill-down usage by specific API Key
-app.get("/api/openai-usage/by-key/:keyId", requirePermission("api-usage:view"), async (req, res) => {
+app.get("/api/openai-usage/by-key/:keyId", requirePermission("api-usage:key-detail"), async (req, res) => {
   try {
     const { keyId } = req.params;
     const { startDate, endDate } = req.query;
@@ -36884,6 +37394,19 @@ app.get("/api/openai-usage/by-key/:keyId", requirePermission("api-usage:view"), 
     } else if (ObjectId.isValid(keyId)) {
       match.apiKeyId = new ObjectId(keyId);
     }
+    const inboxScopeKeys = resolveAdminInboxScopeKeys(req, req.query || {});
+    if (inboxScopeKeys !== null && !inboxScopeKeys.length) {
+      return res.json({
+        success: true,
+        keyId,
+        keyInfo: { name: "Restricted", provider: LLM_PROVIDER_OPENAI },
+        totals: { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
+        byBot: [],
+        byModel: [],
+        byDay: [],
+      });
+    }
+    applyAdminInboxScopeToMongoQuery(match, inboxScopeKeys);
 
     // Get usage breakdown by bot
     const byBot = await db.collection("openai_usage_logs").aggregate([
@@ -39445,7 +39968,7 @@ function normalizeMessageForFrontend(message) {
     const messageId =
       message?._id && typeof message._id.toString === "function"
         ? message._id.toString()
-        : message?._id || null;
+        : message?._id || message?.messageId || null;
     const orderExtractionRoundId = message?.orderExtractionRoundId
       ? String(message.orderExtractionRoundId)
       : null;
@@ -39536,6 +40059,9 @@ function normalizeMessageForFrontend(message) {
       contentType,
       platform: message.platform || "line",
       botId: message.botId || null,
+      imageAssetIdsSent: Array.isArray(message.imageAssetIdsSent)
+        ? message.imageAssetIdsSent.map((id) => String(id || "").trim()).filter(Boolean)
+        : [],
       rawContent: originalContent,
       messageId,
       orderExtractionRoundId,
@@ -39554,6 +40080,208 @@ function normalizeMessageForFrontend(message) {
       orderExtractionRoundId: null,
     };
   }
+}
+
+function extractImageTokenSourceText(normalized = {}, sourceMessage = {}) {
+  const candidates = [
+    normalized.content,
+    normalized.displayContent,
+    normalized.richDisplayContent,
+    normalized.rawContent,
+    sourceMessage.content,
+    sourceMessage.displayContent,
+    sourceMessage.richDisplayContent,
+    sourceMessage.rawContent,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && /#\[\s*IMAGE\s*:/i.test(value)) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function normalizeImageAssetIdList(ids = []) {
+  if (!Array.isArray(ids)) return [];
+  return Array.from(
+    new Set(
+      ids
+        .map((id) => {
+          if (typeof id === "string") return id.trim();
+          if (id && typeof id.toString === "function") return id.toString().trim();
+          return "";
+        })
+        .filter(Boolean),
+    ),
+  );
+}
+
+function mergeImageListsForFrontend(existing = [], extra = []) {
+  const merged = [];
+  const seen = new Set();
+  [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(extra) ? extra : [])]
+    .forEach((src) => {
+      const value = typeof src === "string" ? src.trim() : "";
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      merged.push(value);
+    });
+  return merged;
+}
+
+async function getAssetsMapFromImageAssetIds(assetIds = []) {
+  const ids = normalizeImageAssetIdList(assetIds);
+  if (!ids.length) return {};
+  const idSet = new Set(ids);
+  const assets = await getInstructionAssets();
+  const matched = (Array.isArray(assets) ? assets : []).filter((asset) => {
+    const candidates = [
+      asset?.assetId,
+      asset?._id,
+      asset?.id,
+      asset?.fileId,
+    ].map((value) =>
+      value && typeof value.toString === "function"
+        ? value.toString()
+        : typeof value === "string"
+          ? value
+          : "",
+    );
+    return candidates.some((value) => value && idSet.has(value));
+  });
+  return buildAssetsLookup(matched);
+}
+
+async function resolveChatMessageSelectedImageCollections(message = {}, normalized = {}) {
+  const explicit = [
+    message.selectedImageCollections,
+    normalized.selectedImageCollections,
+    message.metadata?.selectedImageCollections,
+    normalized.metadata?.selectedImageCollections,
+  ].find((value) => Array.isArray(value));
+  if (Array.isArray(explicit)) return explicit;
+
+  const platform = normalizeChatPlatform(normalized.platform || message.platform || "line");
+  const botId = normalized.botId || message.botId || null;
+  if (!botId) return null;
+
+  const snapshot = await getBotRuntimeSnapshot(botId, platform);
+  return Array.isArray(snapshot?.selectedImageCollections)
+    ? snapshot.selectedImageCollections
+    : null;
+}
+
+function mergeAssetLookupMaps(...maps) {
+  const merged = {};
+  maps.forEach((map) => {
+    Object.values(map || {}).forEach((asset) => addAssetToLookup(merged, asset));
+  });
+  return merged;
+}
+
+function serializeImageTokenSegmentForFrontend(segment = {}) {
+  if (segment.type === "image") {
+    const url = typeof segment.url === "string" ? segment.url.trim() : "";
+    const thumbUrl =
+      typeof segment.thumbUrl === "string" && segment.thumbUrl.trim()
+        ? segment.thumbUrl.trim()
+        : url;
+    return {
+      type: "image",
+      label: typeof segment.label === "string" ? segment.label : "",
+      assetId: typeof segment.assetId === "string" ? segment.assetId : "",
+      url,
+      thumbUrl,
+      previewUrl: thumbUrl || url,
+      alt: typeof segment.alt === "string" ? segment.alt : "",
+      fileName: typeof segment.fileName === "string" ? segment.fileName : "",
+    };
+  }
+
+  return {
+    type: "text",
+    text: typeof segment.text === "string" ? segment.text : "",
+  };
+}
+
+function buildImageTokenPlainText(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment) => {
+      if (segment.type === "image") {
+        return `[รูปภาพ: ${segment.label || "รูปภาพ"}]`;
+      }
+      return segment.text || "";
+    })
+    .join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function buildImageTokenSegmentsForFrontend(sourceText, sourceMessage = {}, normalized = {}) {
+  if (typeof sourceText !== "string" || !/#\[\s*IMAGE\s*:/i.test(sourceText)) {
+    return [];
+  }
+
+  const imageAssetIds = normalizeImageAssetIdList([
+    ...(Array.isArray(sourceMessage.imageAssetIdsSent) ? sourceMessage.imageAssetIdsSent : []),
+    ...(Array.isArray(normalized.imageAssetIdsSent) ? normalized.imageAssetIdsSent : []),
+  ]);
+  const selectedImageCollections = await resolveChatMessageSelectedImageCollections(
+    sourceMessage,
+    normalized,
+  );
+  const [idAssetMap, selectedAssetMap] = await Promise.all([
+    getAssetsMapFromImageAssetIds(imageAssetIds),
+    getAssetsMapForBot(selectedImageCollections),
+  ]);
+  const assetsMap = mergeAssetLookupMaps(selectedAssetMap, idAssetMap);
+  const segments = parseMessageSegmentsByImageTokens(sourceText, assetsMap)
+    .map(serializeImageTokenSegmentForFrontend)
+    .filter((segment) => segment.type === "image" || segment.text);
+
+  return segments;
+}
+
+async function enrichChatMessageForFrontend(sourceMessage = {}, normalizedMessage = null) {
+  const normalized = normalizedMessage
+    ? { ...normalizedMessage }
+    : normalizeMessageForFrontend(sourceMessage);
+  if (Array.isArray(normalized.imageTokenSegments) && normalized.imageTokenSegments.length > 0) {
+    return normalized;
+  }
+
+  const sourceText = extractImageTokenSourceText(normalized, sourceMessage);
+  if (!sourceText) return normalized;
+
+  try {
+    const segments = await buildImageTokenSegmentsForFrontend(
+      sourceText,
+      sourceMessage,
+      normalized,
+    );
+    if (!segments.length) return normalized;
+
+    normalized.imageTokenSegments = segments;
+    const tokenImages = segments
+      .filter((segment) => segment.type === "image")
+      .map((segment) => segment.previewUrl || segment.thumbUrl || segment.url)
+      .filter(Boolean);
+    if (tokenImages.length > 0) {
+      normalized.images = mergeImageListsForFrontend(normalized.images, tokenImages);
+    }
+
+    const plainText = buildImageTokenPlainText(segments);
+    if (plainText) {
+      normalized.content = plainText;
+      normalized.displayContent = plainText;
+      normalized.richDisplayContent = plainText;
+    }
+  } catch (error) {
+    console.warn("[Chat] image token enrichment failed:", error?.message || error);
+  }
+
+  return normalized;
 }
 
 /**
@@ -40364,7 +41092,7 @@ async function getNormalizedChatHistory(userId, options = {}) {
           }
         }
 
-        return normalized;
+        return await enrichChatMessageForFrontend(message, normalized);
       }),
     );
 

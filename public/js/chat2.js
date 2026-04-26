@@ -2141,10 +2141,13 @@ class Chat2Manager {
 
   renderMessage(message, isMatch = false) {
     const role = this.messageVisualRole(message);
-    const text = this.renderMessageText(this.extractDisplayText(message) || (message.images?.length ? "[รูปภาพ]" : ""));
+    const content = this.renderMessageContent(message);
     const messageId = this.resolveId(message);
     const feedback = message.feedback || "";
-    const images = (message.images || []).map((src) => `
+    const tokenImageSources = this.messageTokenImageSources(message);
+    const images = (message.images || [])
+      .filter((src) => !tokenImageSources.has(src))
+      .map((src) => `
       <img src="${this.escapeAttr(src)}" alt="รูปภาพ" data-image-src="${this.escapeAttr(src)}" loading="lazy">
     `).join("");
     return `
@@ -2154,7 +2157,7 @@ class Chat2Manager {
             <span>${this.messageLabel(message)}</span>
             <span>${this.time(message.timestamp)}${message.sending ? " · กำลังส่ง" : ""}</span>
           </div>
-          <div class="cc2-message-text">${text}</div>
+          <div class="cc2-message-text">${content}</div>
           ${images ? `<div class="cc2-message-images">${images}</div>` : ""}
           ${messageId && message.role !== "user" ? `
             <div class="cc2-message-actions">
@@ -2351,16 +2354,23 @@ class Chat2Manager {
     const id = this.resolveId(normalized);
     const raw = normalized.rawContent !== undefined ? normalized.rawContent : normalized.content;
     const parsed = this.parseJson(raw);
+    const imageTokenSegments = this.normalizeImageTokenSegments(normalized.imageTokenSegments);
     const images = this.extractImages(parsed, id);
     if (Array.isArray(normalized.images)) {
       normalized.images.forEach((src) => {
         if (typeof src === "string" && src.trim() && !images.includes(src)) images.push(src);
       });
     }
+    const tokenImageSources = this.imageTokenSourcesFromSegments(imageTokenSegments);
     normalized.images = images;
-    normalized._plainText = this.extractPlainText(parsed)
+    normalized.imageTokenSegments = imageTokenSegments;
+    normalized._plainText = this.extractPlainTextFromImageTokenSegments(imageTokenSegments)
+      || this.extractPlainText(parsed)
       || this.stripHtml(normalized.displayContent || "")
       || (typeof normalized.content === "string" ? normalized.content : "");
+    if (tokenImageSources.size > 0) {
+      normalized.images = images.filter((src) => !tokenImageSources.has(src));
+    }
     return normalized;
   }
 
@@ -2494,6 +2504,82 @@ class Chat2Manager {
     return this.escapeHtml(text || "")
       .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
       .replace(/\n/g, "<br>");
+  }
+
+  renderMessageContent(message) {
+    const segments = this.normalizeImageTokenSegments(message?.imageTokenSegments);
+    if (segments.length > 0) {
+      const parts = segments.map((segment) => {
+        if (segment.type === "image") {
+          const previewSrc = segment.previewUrl || segment.thumbUrl || segment.url;
+          const fullSrc = segment.url || previewSrc;
+          if (!previewSrc && !fullSrc) {
+            return `<div class="cc2-token-text">${this.renderMessageText(`[รูป ${segment.label || "image"} ไม่พบ]`)}</div>`;
+          }
+          const label = segment.label || segment.alt || "รูปภาพ";
+          return `
+            <button type="button" class="cc2-token-image" data-image-src="${this.escapeAttr(fullSrc || previewSrc)}" title="${this.escapeAttr(label)}" aria-label="ดูรูป ${this.escapeAttr(label)}">
+              <img src="${this.escapeAttr(previewSrc || fullSrc)}" alt="${this.escapeAttr(label)}" loading="lazy">
+              <span>${this.escapeHtml(label)}</span>
+            </button>
+          `;
+        }
+        const text = typeof segment.text === "string" ? segment.text.trim() : "";
+        return text ? `<div class="cc2-token-text">${this.renderMessageText(text)}</div>` : "";
+      }).filter(Boolean);
+      return `<div class="cc2-token-stack">${parts.join("")}</div>`;
+    }
+    return this.renderMessageText(this.extractDisplayText(message) || (message?.images?.length ? "[รูปภาพ]" : ""));
+  }
+
+  normalizeImageTokenSegments(segments) {
+    if (!Array.isArray(segments)) return [];
+    return segments.map((segment) => {
+      if (!segment || typeof segment !== "object") return null;
+      if (segment.type === "image") {
+        const url = typeof segment.url === "string" ? segment.url.trim() : "";
+        const thumbUrl = typeof segment.thumbUrl === "string" ? segment.thumbUrl.trim() : "";
+        const previewUrl = typeof segment.previewUrl === "string" ? segment.previewUrl.trim() : "";
+        return {
+          type: "image",
+          label: typeof segment.label === "string" ? segment.label.trim() : "",
+          alt: typeof segment.alt === "string" ? segment.alt.trim() : "",
+          url,
+          thumbUrl,
+          previewUrl: previewUrl || thumbUrl || url,
+        };
+      }
+      if (segment.type === "text") {
+        return {
+          type: "text",
+          text: typeof segment.text === "string" ? segment.text : "",
+        };
+      }
+      return null;
+    }).filter((segment) => segment && (segment.type === "image" || segment.text));
+  }
+
+  imageTokenSourcesFromSegments(segments) {
+    const sources = new Set();
+    segments.forEach((segment) => {
+      if (segment.type !== "image") return;
+      [segment.url, segment.thumbUrl, segment.previewUrl].forEach((src) => {
+        if (typeof src === "string" && src.trim()) sources.add(src.trim());
+      });
+    });
+    return sources;
+  }
+
+  messageTokenImageSources(message) {
+    return this.imageTokenSourcesFromSegments(this.normalizeImageTokenSegments(message?.imageTokenSegments));
+  }
+
+  extractPlainTextFromImageTokenSegments(segments) {
+    if (!Array.isArray(segments) || segments.length === 0) return "";
+    return segments.map((segment) => {
+      if (segment.type === "image") return `[รูปภาพ: ${segment.label || "รูปภาพ"}]`;
+      return segment.text || "";
+    }).join("").trim();
   }
 
   messageVisualRole(message) {

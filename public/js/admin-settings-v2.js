@@ -2958,7 +2958,7 @@ const PASSCODE_ALL_PERMISSIONS = [
     'chat:purchase-status', 'chat:profile-refresh', 'chat:export', 'instructions:view',
     'instructions:create', 'instructions:update', 'instructions:delete', 'instructions:manage',
     'instructions:import', 'instructions:export', 'instruction-ai:use',
-    'agent-forge:manage', 'api-usage:view', 'orders:view', 'orders:update', 'orders:delete',
+    'agent-forge:manage', 'api-usage:view', 'api-usage:key-detail', 'orders:view', 'orders:update', 'orders:delete',
     'orders:export', 'orders:print', 'broadcast:view', 'broadcast:preview', 'broadcast:send',
     'broadcast:cancel', 'followup:view', 'followup:manage', 'followup:assets',
     'facebook-posts:view', 'facebook-posts:sync', 'facebook-posts:update', 'customer-stats:view',
@@ -2971,7 +2971,7 @@ const PASSCODE_ALL_PERMISSIONS = [
 ];
 const PASSCODE_PERMISSION_GROUPS = [
     {
-        title: 'เมนู',
+        title: 'Page/Bot',
         items: [
             ['menu:chat', 'แชท'], ['menu:orders', 'ออเดอร์'], ['menu:followup', 'ติดตามลูกค้า'],
             ['menu:broadcast', 'บรอดแคสต์'], ['menu:facebook-posts', 'FB โพสต์'], ['menu:customer-stats', 'สถิติลูกค้า'],
@@ -2989,7 +2989,7 @@ const PASSCODE_PERMISSION_GROUPS = [
         ]
     },
     {
-        title: 'Chat Actions',
+        title: 'Chat Workspace',
         items: [
             ['chat:view', 'ดูแชท / แท็บรวม'], ['chat:send', 'ตอบแชท'], ['chat:forms', 'ฟอร์ม'], ['chat:files', 'ไฟล์'],
             ['chat:notes', 'โน้ต'], ['chat:tags', 'แท็ก'], ['chat:orders', 'ออเดอร์'], ['chat:templates', 'Templates'],
@@ -2999,16 +2999,17 @@ const PASSCODE_PERMISSION_GROUPS = [
         ]
     },
     {
-        title: 'Instruction & AI',
+        title: 'Instructions',
         items: [
             ['dashboard:view', 'ดู Dashboard'], ['instructions:view', 'ดู Instructions'], ['instructions:create', 'สร้าง Instructions'],
             ['instructions:update', 'แก้ Instructions'], ['instructions:delete', 'ลบ Instructions'],
             ['instructions:manage', 'จัดการ Instructions ทั้งหมด'], ['instructions:import', 'Import Instructions'], ['instructions:export', 'Export Instructions'],
-            ['instruction-ai:use', 'ใช้ InstructionAI2'], ['agent-forge:manage', 'Agent Forge'], ['api-usage:view', 'ดู API Usage']
+            ['instruction-ai:use', 'ใช้ InstructionAI2'], ['agent-forge:manage', 'Agent Forge'], ['api-usage:view', 'ดู API Usage'],
+            ['api-usage:key-detail', 'ดู API Key / cost detail']
         ]
     },
     {
-        title: 'Orders / Broadcast / Follow-up',
+        title: 'Orders',
         items: [
             ['orders:view', 'ดูออเดอร์'], ['orders:update', 'แก้ออเดอร์'], ['orders:delete', 'ลบออเดอร์'],
             ['orders:export', 'Export ออเดอร์'], ['orders:print', 'พิมพ์ใบปะหน้า'],
@@ -3020,7 +3021,7 @@ const PASSCODE_PERMISSION_GROUPS = [
         ]
     },
     {
-        title: 'คลังข้อมูล / ไฟล์',
+        title: 'Forms / Assets',
         items: [
             ['image-library:view', 'ดูคลังรูป'], ['image-library:manage', 'จัดการคลังรูป'],
             ['data-forms:view', 'ดู Data Forms'], ['data-forms:manage', 'จัดการ Data Forms'],
@@ -3031,7 +3032,7 @@ const PASSCODE_PERMISSION_GROUPS = [
         ]
     },
     {
-        title: 'Bots / Notifications / Keys',
+        title: 'Bots / API Keys',
         items: [
             ['bots:view', 'ดู Bots'], ['bots:create', 'สร้าง Bots'], ['bots:update', 'แก้ Bots'],
             ['bots:delete', 'ลบ Bots'], ['bots:secrets', 'Secrets ของ Bots'], ['bots:manage', 'Bot APIs ทั้งหมด'],
@@ -3044,9 +3045,70 @@ const PASSCODE_ROLE_DEFAULTS = {
     agent: ['menu:chat', 'chat:view', 'chat:send', 'chat:forms'],
     team_leader: PASSCODE_ALL_PERMISSIONS.filter(permission => ![
         'settings:general', 'settings:security-filter', 'settings:api-key', 'audit:view',
-        'filter:test', 'bots:secrets', 'api-keys:view', 'api-keys:manage'
+        'filter:test', 'bots:secrets', 'api-keys:view', 'api-keys:manage', 'api-usage:key-detail'
     ].includes(permission)),
     admin: PASSCODE_ALL_PERMISSIONS
+};
+const PASSCODE_ACCESS_PRESETS = {
+    support: {
+        label: 'Support',
+        role: 'agent',
+        permissions: [
+            'menu:chat', 'chat:view', 'chat:send', 'chat:forms', 'chat:notes',
+            'chat:tags', 'chat:ai-control', 'data-forms:view'
+        ],
+        chatLayout: { mode: 'custom', allowedTabs: ['overview', 'forms', 'notes', 'tags'] },
+        instructionAccess: { mode: 'selected', instructionIds: [] },
+        inboxAccess: { mode: 'selected', inboxKeys: [] }
+    },
+    order_staff: {
+        label: 'Order Staff',
+        role: 'agent',
+        permissions: [
+            'menu:chat', 'menu:orders', 'chat:view', 'chat:send', 'chat:orders',
+            'orders:view', 'orders:update', 'orders:print', 'data-forms:view'
+        ],
+        chatLayout: { mode: 'custom', allowedTabs: ['overview', 'orders', 'forms'] },
+        instructionAccess: { mode: 'selected', instructionIds: [] },
+        inboxAccess: { mode: 'selected', inboxKeys: [] }
+    },
+    content_instruction_editor: {
+        label: 'Content/Instruction Editor',
+        role: 'team_leader',
+        permissions: [
+            'menu:instruction-ai', 'menu:settings', 'instruction-ai:use',
+            'instructions:view', 'instructions:create', 'instructions:update',
+            'instructions:import', 'instructions:export', 'settings:image-library',
+            'image-library:view', 'image-library:manage', 'settings:file-library',
+            'file-assets:view', 'file-assets:manage', 'categories:view', 'categories:manage'
+        ],
+        chatLayout: { mode: 'custom', allowedTabs: [] },
+        instructionAccess: { mode: 'selected', instructionIds: [] },
+        inboxAccess: { mode: 'selected', inboxKeys: [] }
+    },
+    bot_maintainer: {
+        label: 'Bot Maintainer',
+        role: 'team_leader',
+        permissions: [
+            'menu:settings', 'settings:bot', 'settings:image-library', 'settings:file-library',
+            'bots:view', 'bots:create', 'bots:update', 'image-library:view',
+            'image-library:manage', 'file-assets:view', 'file-assets:manage'
+        ],
+        chatLayout: { mode: 'custom', allowedTabs: [] },
+        instructionAccess: { mode: 'all', instructionIds: [] },
+        inboxAccess: { mode: 'selected', inboxKeys: [] }
+    },
+    finance_api_viewer: {
+        label: 'Finance/API Viewer',
+        role: 'team_leader',
+        permissions: [
+            'menu:api-usage', 'menu:orders', 'api-usage:view', 'api-usage:key-detail',
+            'orders:view', 'orders:export', 'settings:api-key', 'api-keys:view'
+        ],
+        chatLayout: { mode: 'custom', allowedTabs: [] },
+        instructionAccess: { mode: 'selected', instructionIds: [] },
+        inboxAccess: { mode: 'selected', inboxKeys: [] }
+    }
 };
 const PASSCODE_CHAT_TABS = [
     ['overview', 'รวม'], ['tags', 'แท็ก'], ['forms', 'ฟอร์ม'], ['orders', 'Order'],
@@ -3084,6 +3146,8 @@ function initPasscodeManagement() {
     renderPasscodeInboxGrid([]);
     renderPasscodeChatLayoutTabs(PASSCODE_LAYOUT_DEFAULTS.agent.allowedTabs);
     renderPasscodeInstructionGrid([]);
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
     loadPasscodeInboxOptions();
     loadPasscodeInstructionOptions();
     refreshPasscodeList();
@@ -3100,6 +3164,8 @@ function setupPasscodeEventListeners() {
     const inboxMode = document.getElementById('passcodeInboxMode');
     const instructionMode = document.getElementById('passcodeInstructionMode');
     const layoutMode = document.getElementById('passcodeChatLayoutMode');
+    const presetSelect = document.getElementById('passcodeRolePreset');
+    const applyPresetBtn = document.getElementById('applyPasscodePresetBtn');
 
     if (toggleBtn && createContainer) {
         toggleBtn.addEventListener('click', () => {
@@ -3129,6 +3195,14 @@ function setupPasscodeEventListeners() {
 
     if (createForm) {
         createForm.addEventListener('submit', handleCreatePasscode);
+        createForm.addEventListener('change', () => {
+            renderPasscodeEffectivePreview();
+            renderPasscodeDiffPreview();
+        });
+        createForm.addEventListener('input', () => {
+            renderPasscodeEffectivePreview();
+            renderPasscodeDiffPreview();
+        });
     }
 
     if (tableBody) {
@@ -3138,15 +3212,22 @@ function setupPasscodeEventListeners() {
     if (roleSelect) {
         roleSelect.addEventListener('change', () => applyPasscodeRolePreset(roleSelect.value));
     }
+    if (applyPresetBtn && presetSelect) {
+        applyPresetBtn.addEventListener('click', () => applyPasscodeAccessPreset(presetSelect.value));
+    }
     if (inboxMode) {
         inboxMode.addEventListener('change', () => {
             const grid = document.getElementById('passcodeInboxGrid');
             if (grid) grid.classList.toggle('opacity-50', inboxMode.value === 'all');
+            renderPasscodeEffectivePreview();
+            renderPasscodeDiffPreview();
         });
     }
     if (instructionMode) {
         instructionMode.addEventListener('change', () => {
             renderPasscodeInstructionGrid(passcodeInstructionSelectedIds);
+            renderPasscodeEffectivePreview();
+            renderPasscodeDiffPreview();
         });
     }
     if (layoutMode) {
@@ -3159,6 +3240,8 @@ function setupPasscodeEventListeners() {
                         ? PASSCODE_LAYOUT_DEFAULTS.admin
                         : { allowedTabs: getCheckedValues('passcodeChatTab') };
             renderPasscodeChatLayoutTabs(preset.allowedTabs);
+            renderPasscodeEffectivePreview();
+            renderPasscodeDiffPreview();
         });
     }
 }
@@ -3185,6 +3268,8 @@ async function loadPasscodeInboxOptions() {
     }
     const selected = getCheckedValues('passcodeInboxKey');
     renderPasscodeInboxGrid(selected);
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
 }
 
 async function loadPasscodeInstructionOptions() {
@@ -3207,6 +3292,8 @@ async function loadPasscodeInstructionOptions() {
         passcodeInstructionOptions = [];
     }
     renderPasscodeInstructionGrid(passcodeInstructionSelectedIds);
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
 }
 
 function renderPasscodePermissionGrid(selected = []) {
@@ -3291,6 +3378,147 @@ function getCheckedValues(name) {
         .filter(Boolean);
 }
 
+function getInboxLabelByKey(key) {
+    const inbox = passcodeInboxOptions.find(item => item.inboxKey === key);
+    return inbox?.channelLabel || key;
+}
+
+function getInstructionLabelById(id) {
+    const instruction = passcodeInstructionOptions.find(item =>
+        item.id === id || item.instructionId === id
+    );
+    return instruction?.name || id;
+}
+
+function formatAccessList(items = [], emptyLabel = 'ไม่มี') {
+    const values = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!values.length) return `<span class="passcode-preview-empty">${escapeHtml(emptyLabel)}</span>`;
+    const visible = values.slice(0, 6).map(item => `<span>${escapeHtml(item)}</span>`).join('');
+    const more = values.length > 6 ? `<span class="passcode-preview-more">+${values.length - 6}</span>` : '';
+    return `${visible}${more}`;
+}
+
+function summarizePermissionsForPreview(permissions = []) {
+    const selectedSet = new Set(permissions);
+    return PASSCODE_PERMISSION_GROUPS
+        .map(group => ({
+            title: group.title,
+            count: group.items.filter(([permission]) => selectedSet.has(permission)).length,
+            total: group.items.length
+        }))
+        .filter(group => group.count > 0)
+        .map(group => `${group.title} ${group.count}/${group.total}`);
+}
+
+function renderPasscodeEffectivePreview() {
+    const wrap = document.getElementById('passcodeEffectivePreview');
+    if (!wrap) return;
+    const payload = collectPasscodePayload(false);
+    const menuLabels = PASSCODE_PERMISSION_GROUPS[0].items
+        .filter(([permission]) => payload.permissions.includes(permission))
+        .map(([, label]) => label);
+    const inboxLabels = payload.inboxAccess.mode === 'all'
+        ? ['ทุก Inbox']
+        : (payload.inboxAccess.inboxKeys || []).map(getInboxLabelByKey);
+    const instructionLabels = payload.instructionAccess.mode === 'all'
+        ? ['ทุก Instructions']
+        : (payload.instructionAccess.instructionIds || []).map(getInstructionLabelById);
+    const tabLabels = (payload.chatLayout.allowedTabs || []).map(tab => {
+        const found = PASSCODE_CHAT_TABS.find(([key]) => key === tab);
+        return found ? found[1] : tab;
+    });
+    const permissionSummary = summarizePermissionsForPreview(payload.permissions);
+
+    wrap.innerHTML = `
+        <div class="passcode-preview-grid">
+            <div>
+                <strong>เมนู</strong>
+                <div>${formatAccessList(menuLabels, 'ไม่เห็นเมนูหลัก')}</div>
+            </div>
+            <div>
+                <strong>Inbox / Bot</strong>
+                <div>${formatAccessList(inboxLabels, 'ไม่เห็น Inbox')}</div>
+            </div>
+            <div>
+                <strong>Chat tabs</strong>
+                <div>${formatAccessList(tabLabels, 'ไม่เห็นแท็บ Chat')}</div>
+            </div>
+            <div>
+                <strong>Instructions</strong>
+                <div>${formatAccessList(instructionLabels, 'เฉพาะที่สร้างเอง/ที่เลือก')}</div>
+            </div>
+            <div class="passcode-preview-wide">
+                <strong>Permission matrix</strong>
+                <div>${formatAccessList(permissionSummary, 'ยังไม่ได้เลือกสิทธิ์')}</div>
+            </div>
+        </div>
+    `;
+}
+
+function stableList(values = []) {
+    return [...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean))].sort();
+}
+
+function listDiff(before = [], after = [], label = '') {
+    const beforeSet = new Set(stableList(before));
+    const afterSet = new Set(stableList(after));
+    const added = [...afterSet].filter(value => !beforeSet.has(value));
+    const removed = [...beforeSet].filter(value => !afterSet.has(value));
+    const changes = [];
+    if (added.length) changes.push(`${label} เพิ่ม ${added.length}`);
+    if (removed.length) changes.push(`${label} เอาออก ${removed.length}`);
+    return changes;
+}
+
+function buildPasscodeDiff(existing, payload) {
+    if (!existing || !payload) return [];
+    const changes = [];
+    if ((existing.label || '') !== (payload.label || '')) changes.push('ชื่อรหัส');
+    if ((existing.role || '') !== (payload.role || '')) changes.push('Role');
+    changes.push(...listDiff(existing.permissions || [], payload.permissions || [], 'Permission'));
+    changes.push(...listDiff(existing.inboxAccess?.inboxKeys || [], payload.inboxAccess?.inboxKeys || [], 'Inbox'));
+    if ((existing.inboxAccess?.mode || 'selected') !== (payload.inboxAccess?.mode || 'selected')) changes.push('Inbox mode');
+    changes.push(...listDiff(existing.instructionAccess?.instructionIds || [], payload.instructionAccess?.instructionIds || [], 'Instruction'));
+    if ((existing.instructionAccess?.mode || 'selected') !== (payload.instructionAccess?.mode || 'selected')) changes.push('Instruction mode');
+    changes.push(...listDiff(existing.chatLayout?.allowedTabs || [], payload.chatLayout?.allowedTabs || [], 'Chat tab'));
+    if ((existing.chatLayout?.mode || 'custom') !== (payload.chatLayout?.mode || 'custom')) changes.push('Chat layout mode');
+    return changes;
+}
+
+function renderPasscodeDiffPreview() {
+    const wrap = document.getElementById('passcodeDiffPreview');
+    if (!wrap) return;
+    const editingId = document.getElementById('editingPasscodeId')?.value || '';
+    if (!editingId) {
+        wrap.innerHTML = '<span>สร้างใหม่: จะแสดง diff เมื่อแก้ไขผู้ใช้เดิม</span>';
+        return;
+    }
+    const existing = passcodeCache.find(item => item.id === editingId);
+    const diff = buildPasscodeDiff(existing, collectPasscodePayload(false));
+    wrap.innerHTML = diff.length
+        ? `<strong>Diff ก่อนบันทึก</strong><span>${diff.map(escapeHtml).join(' • ')}</span>`
+        : '<span>ไม่มีการเปลี่ยนแปลงจากค่าที่บันทึกไว้</span>';
+}
+
+function applyPasscodeAccessPreset(presetKey) {
+    const preset = PASSCODE_ACCESS_PRESETS[presetKey];
+    if (!preset) return;
+    const roleSelect = document.getElementById('newPasscodeRole');
+    if (roleSelect) roleSelect.value = preset.role;
+    renderPasscodePermissionGrid(preset.permissions);
+    const inboxMode = document.getElementById('passcodeInboxMode');
+    if (inboxMode) inboxMode.value = preset.inboxAccess.mode;
+    renderPasscodeInboxGrid(preset.inboxAccess.inboxKeys);
+    const instructionMode = document.getElementById('passcodeInstructionMode');
+    if (instructionMode) instructionMode.value = preset.instructionAccess.mode;
+    renderPasscodeInstructionGrid(preset.instructionAccess.instructionIds);
+    const layoutMode = document.getElementById('passcodeChatLayoutMode');
+    if (layoutMode) layoutMode.value = preset.chatLayout.mode;
+    renderPasscodeChatLayoutTabs(preset.chatLayout.allowedTabs);
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
+}
+
 function applyPasscodeRolePreset(role) {
     const normalizedRole = PASSCODE_ROLE_DEFAULTS[role] ? role : 'agent';
     renderPasscodePermissionGrid(PASSCODE_ROLE_DEFAULTS[normalizedRole]);
@@ -3305,6 +3533,8 @@ function applyPasscodeRolePreset(role) {
     const inboxMode = document.getElementById('passcodeInboxMode');
     if (inboxMode) inboxMode.value = normalizedRole === 'admin' ? 'all' : 'selected';
     renderPasscodeInboxGrid([]);
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
 }
 
 function resetPasscodeForm() {
@@ -3362,7 +3592,32 @@ function loadPasscodeIntoForm(passcode) {
     if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-save"></i> อัปเดตสิทธิ์';
     const editorTitle = document.getElementById('passcodeEditorTitle');
     if (editorTitle) editorTitle.textContent = `แก้ไขสิทธิ์: ${passcode.label || 'ผู้ใช้ทีมงาน'}`;
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
     createContainer?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clonePasscodeIntoForm(passcode) {
+    if (!passcode) return;
+    loadPasscodeIntoForm(passcode);
+    const editingInput = document.getElementById('editingPasscodeId');
+    if (editingInput) editingInput.value = '';
+    const labelInput = document.getElementById('newPasscodeLabel');
+    if (labelInput) labelInput.value = `${passcode.label || 'ผู้ใช้ทีมงาน'} copy`;
+    const passcodeInput = document.getElementById('newPasscodeValue');
+    if (passcodeInput) {
+        passcodeInput.value = generateRandomPasscode();
+        passcodeInput.required = true;
+        passcodeInput.placeholder = 'กำหนดเองหรือกดสุ่ม';
+    }
+    const requiredMark = document.getElementById('newPasscodeRequiredMark');
+    if (requiredMark) requiredMark.style.display = '';
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+    if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-copy"></i> บันทึกสำเนา';
+    const editorTitle = document.getElementById('passcodeEditorTitle');
+    if (editorTitle) editorTitle.textContent = `Clone จาก: ${passcode.label || 'ผู้ใช้ทีมงาน'}`;
+    renderPasscodeEffectivePreview();
+    renderPasscodeDiffPreview();
 }
 
 function collectPasscodePayload(includePasscode) {
@@ -3560,6 +3815,10 @@ function renderPasscodeTable() {
                             data-action="edit" data-id="${passcode.id}" title="แก้ไขสิทธิ์">
                         <i class="fas fa-pen"></i>
                     </button>
+                    <button class="passcode-icon-action"
+                            data-action="clone" data-id="${passcode.id}" title="Clone ผู้ใช้/Role">
+                        <i class="fas fa-copy"></i>
+                    </button>
                     <button class="passcode-icon-action ${passcode.isActive ? 'is-warning' : 'is-success'}"
                             data-action="toggle" data-id="${passcode.id}" title="${passcode.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}">
                         <i class="fas fa-${toggleIcon}"></i>
@@ -3589,6 +3848,8 @@ function handlePasscodeTableClick(event) {
         deletePasscode(id, target);
     } else if (action === 'edit') {
         loadPasscodeIntoForm(passcodeCache.find(item => item.id === id));
+    } else if (action === 'clone') {
+        clonePasscodeIntoForm(passcodeCache.find(item => item.id === id));
     }
 }
 
@@ -3685,6 +3946,19 @@ async function handleCreatePasscode(event) {
     if (!editingId && (!passcode || passcode.length < 4)) {
         setPasscodeMessage('warning', 'กรุณาระบุรหัสอย่างน้อย 4 ตัวอักษร');
         return;
+    }
+
+    if (editingId) {
+        const existing = passcodeCache.find(item => item.id === editingId);
+        const diff = buildPasscodeDiff(existing, payload);
+        renderPasscodeDiffPreview();
+        if (diff.length === 0) {
+            setPasscodeMessage('info', 'ไม่มีการเปลี่ยนแปลงจากค่าที่บันทึกไว้');
+            return;
+        }
+        if (!confirm(`ตรวจ diff ก่อนบันทึก:\n- ${diff.join('\n- ')}\n\nต้องการบันทึกการเปลี่ยนแปลงนี้หรือไม่?`)) {
+            return;
+        }
     }
 
     setLoading(submitBtn, true);

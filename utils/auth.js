@@ -7,7 +7,7 @@ const DEFAULT_SALT_ROUNDS = Number(
   process.env.ADMIN_PASSCODE_SALT_ROUNDS || 12,
 );
 const ADMIN_ROLES = ["agent", "team_leader", "admin", "superadmin"];
-const ADMIN_PERMISSIONS_VERSION = 4;
+const ADMIN_PERMISSIONS_VERSION = 5;
 const ADMIN_CHAT_CONTEXT_TABS = [
   "overview",
   "tags",
@@ -67,6 +67,7 @@ const ADMIN_PERMISSIONS = [
   "instruction-ai:use",
   "agent-forge:manage",
   "api-usage:view",
+  "api-usage:key-detail",
   "orders:view",
   "orders:update",
   "orders:delete",
@@ -140,6 +141,7 @@ const STANDARD_PERMISSION_IMPLICATIONS = Object.freeze({
   "followup:assets": ["followup:view"],
   "facebook-posts:sync": ["facebook-posts:view"],
   "facebook-posts:update": ["facebook-posts:view"],
+  "api-usage:key-detail": ["api-usage:view"],
   "image-library:manage": ["image-library:view"],
   "data-forms:manage": ["data-forms:view"],
   "data-forms:export": ["data-forms:view"],
@@ -225,6 +227,7 @@ const TEAM_LEADER_EXCLUDED_DEFAULT_PERMISSIONS = new Set([
   "bots:secrets",
   "api-keys:view",
   "api-keys:manage",
+  "api-usage:key-detail",
 ]);
 const AGENT_DEFAULT_PERMISSIONS = Object.freeze([
   "menu:chat",

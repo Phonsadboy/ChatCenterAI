@@ -1213,6 +1213,71 @@ input:checked + .toggle-slider:before {
     padding: 0.75rem;
 }
 
+.passcode-effective-preview {
+    display: block;
+}
+
+.passcode-preview-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.passcode-preview-grid > div {
+    border: 1px solid var(--passcode-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 10px;
+}
+
+.passcode-preview-grid strong {
+    display: block;
+    color: var(--passcode-ink);
+    margin-bottom: 6px;
+}
+
+.passcode-preview-grid > div > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.passcode-preview-grid > div > div span,
+.passcode-diff-preview span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    border: 1px solid var(--passcode-line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    background: var(--passcode-soft);
+    color: var(--passcode-ink);
+}
+
+.passcode-preview-empty {
+    color: var(--passcode-muted) !important;
+}
+
+.passcode-preview-more {
+    background: var(--passcode-blue-soft) !important;
+    color: var(--passcode-blue) !important;
+}
+
+.passcode-preview-wide {
+    grid-column: 1 / -1;
+}
+
+.passcode-diff-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.passcode-diff-preview strong {
+    width: 100%;
+    color: var(--passcode-ink);
+}
+
 .passcode-empty-state {
     display: grid;
     justify-items: center;

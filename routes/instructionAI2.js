@@ -231,10 +231,61 @@ function createInstructionAI2Router(deps = {}) {
     return db.collection("instructions_v2").findOne({ instructionId: String(instructionId || "") });
   };
 
+  const getInstructionAccessKeysFromDoc = (doc = {}) => [
+    doc.instructionObjectId,
+    doc.instructionId,
+    doc.target?.instructionObjectId,
+    doc.target?.instructionId,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
   const assertInstructionAccess = (req, res, instruction) => {
     if (canAccessInstruction(req, instruction)) return true;
     res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง Instruction นี้" });
     return false;
+  };
+
+  const assertInstructionKeyAccess = async (req, res, db, instructionId) => {
+    const key = String(instructionId || "").trim();
+    if (!key) {
+      res.status(400).json({ success: false, error: "กรุณาระบุ Instruction" });
+      return false;
+    }
+    const instruction = await loadInstructionForAccess(db, key);
+    if (!instruction) {
+      res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      return false;
+    }
+    return assertInstructionAccess(req, res, instruction);
+  };
+
+  const filterInstructionScopedDocs = async (req, db, docs = [], getKeys = getInstructionAccessKeysFromDoc) => {
+    const sourceDocs = Array.isArray(docs) ? docs : [];
+    const uniqueKeys = new Set();
+    sourceDocs.forEach((doc) => {
+      const keys = typeof getKeys === "function" ? getKeys(doc) : [];
+      keys.forEach((key) => {
+        if (key) uniqueKeys.add(key);
+      });
+    });
+    if (!uniqueKeys.size) return [];
+
+    const accessByKey = new Map();
+    await Promise.all([...uniqueKeys].map(async (key) => {
+      const instruction = await loadInstructionForAccess(db, key);
+      const allowed = instruction ? canAccessInstruction(req, instruction) : false;
+      accessByKey.set(key, allowed);
+      if (instruction) {
+        if (instruction._id) accessByKey.set(instruction._id.toString(), allowed);
+        if (instruction.instructionId) accessByKey.set(String(instruction.instructionId), allowed);
+      }
+    }));
+
+    return sourceDocs.filter((doc) => {
+      const keys = typeof getKeys === "function" ? getKeys(doc) : [];
+      return keys.some((key) => accessByKey.get(key));
+    });
   };
 
   const assertBatchInstructionAccess = async (req, res, db, batch) => {
@@ -1278,9 +1329,11 @@ function createInstructionAI2Router(deps = {}) {
       const client = await connectDB();
       db = client.db("chatbot");
       void ensureAI2Indexes(db);
+      const targetBatch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
+      if (!targetBatch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      if (!(await assertBatchInstructionAccess(req, res, db, targetBatch))) return;
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, req.body?.reason || "");
-      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
       res.json({ success: true, batch: service.presentBatchForClient(batch) });
     } catch (error) {
       const service = db ? new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" }) : null;
@@ -1300,9 +1353,11 @@ function createInstructionAI2Router(deps = {}) {
       const client = await connectDB();
       db = client.db("chatbot");
       void ensureAI2Indexes(db);
+      const targetBatch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
+      if (!targetBatch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      if (!(await assertBatchInstructionAccess(req, res, db, targetBatch))) return;
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, reason);
-      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
       res.json({
         success: true,
         batch: service.presentBatchForClient(batch),
@@ -1328,6 +1383,15 @@ function createInstructionAI2Router(deps = {}) {
       const client = await connectDB();
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
+      if (!(await assertInstructionKeyAccess(req, res, db, instructionId))) return;
+      const existingSession = await db.collection("instruction_ai2_sessions").findOne({ sessionId });
+      if (
+        existingSession?.instructionId &&
+        String(existingSession.instructionId) !== String(instructionId) &&
+        !(await assertInstructionKeyAccess(req, res, db, existingSession.instructionId))
+      ) {
+        return;
+      }
       await db.collection("instruction_ai2_sessions").updateOne(
         { sessionId },
         {
@@ -1358,14 +1422,22 @@ function createInstructionAI2Router(deps = {}) {
       const client = await connectDB();
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
-      const filter = req.query.instructionId ? { instructionId: String(req.query.instructionId) } : {};
+      const filter = {};
+      if (req.query.instructionId) {
+        const instructionId = String(req.query.instructionId);
+        if (!(await assertInstructionKeyAccess(req, res, db, instructionId))) return;
+        filter.instructionId = instructionId;
+      }
       const sessions = await db.collection("instruction_ai2_sessions")
         .find(filter)
         .project({ _id: 0 })
         .sort({ updatedAt: -1 })
-        .limit(50)
+        .limit(req.query.instructionId ? 50 : 200)
         .toArray();
-      res.json({ success: true, sessions });
+      const visibleSessions = req.query.instructionId
+        ? sessions
+        : await filterInstructionScopedDocs(req, db, sessions, (session) => [session.instructionId]);
+      res.json({ success: true, sessions: visibleSessions.slice(0, 50) });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -1378,6 +1450,7 @@ function createInstructionAI2Router(deps = {}) {
       void ensureAI2Indexes(db);
       const session = await db.collection("instruction_ai2_sessions").findOne({ sessionId: req.params.sessionId }, { projection: { _id: 0 } });
       if (!session) return res.status(404).json({ success: false, error: "ไม่พบ session" });
+      if (!(await assertInstructionKeyAccess(req, res, db, session.instructionId))) return;
       res.json({ success: true, session });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -1390,13 +1463,18 @@ function createInstructionAI2Router(deps = {}) {
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
       if (req.query.instructionId) {
+        const instructionId = String(req.query.instructionId);
+        if (!(await assertInstructionKeyAccess(req, res, db, instructionId))) return;
         const result = await db.collection("instruction_ai2_sessions").deleteMany({
-          instructionId: String(req.query.instructionId),
+          instructionId,
         });
         return res.json({ success: true, deletedCount: result.deletedCount || 0 });
       }
-      await db.collection("instruction_ai2_sessions").deleteOne({ sessionId: req.params.sessionId });
-      res.json({ success: true });
+      const session = await db.collection("instruction_ai2_sessions").findOne({ sessionId: req.params.sessionId });
+      if (!session) return res.status(404).json({ success: false, error: "ไม่พบ session" });
+      if (!(await assertInstructionKeyAccess(req, res, db, session.instructionId))) return;
+      const result = await db.collection("instruction_ai2_sessions").deleteOne({ sessionId: req.params.sessionId });
+      res.json({ success: true, deletedCount: result.deletedCount || 0 });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -1408,13 +1486,32 @@ function createInstructionAI2Router(deps = {}) {
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
       const filter = {};
-      if (req.query.batchId) filter.batchId = String(req.query.batchId);
+      if (req.query.batchId) {
+        const batch = await db.collection("instruction_ai2_batches").findOne({ batchId: String(req.query.batchId) });
+        if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+        if (!(await assertBatchInstructionAccess(req, res, db, batch))) return;
+        filter.batchId = String(req.query.batchId);
+      }
+      if (req.query.instructionId) {
+        const instructionId = String(req.query.instructionId);
+        if (!(await assertInstructionKeyAccess(req, res, db, instructionId))) return;
+        const instruction = await loadInstructionForAccess(db, instructionId);
+        filter.$or = [
+          { instructionId: instruction.instructionId || "" },
+          { instructionObjectId: instruction._id?.toString?.() || "" },
+          { "target.instructionId": instruction.instructionId || "" },
+          { "target.instructionObjectId": instruction._id?.toString?.() || "" },
+        ].filter((entry) => Object.values(entry).some(Boolean));
+      }
       const logs = await db.collection("instruction_ai2_audit")
         .find(filter)
         .sort({ createdAt: -1 })
         .limit(Math.min(Number(req.query.limit) || 100, 500))
         .toArray();
-      res.json({ success: true, logs });
+      const visibleLogs = req.query.batchId || req.query.instructionId
+        ? logs
+        : await filterInstructionScopedDocs(req, db, logs);
+      res.json({ success: true, logs: visibleLogs });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
