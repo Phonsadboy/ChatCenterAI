@@ -754,6 +754,14 @@ body.sidebar-collapsed .app-sidebar__footer {
   .app-topbar {
     padding: 0 0.75rem;
   }
+
+  .app-topbar__left {
+    gap: 0.5rem;
+  }
+
+  .app-topbar__brand-logo {
+    height: 32px;
+  }
 }
 
 /* ================================================================
