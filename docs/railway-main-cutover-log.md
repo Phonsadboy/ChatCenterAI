@@ -37,6 +37,12 @@ Skipped because current web service is not active on Railway:
 | Mr.Thong59 | `6049f9c2-b6bd-49a6-837f-b8e682a2362c` | `FAILED`, stopped |
 | Jo GAG | `7b9187c7-1b7e-486a-baf2-c5ae23b845c1` | `FAILED`, stopped, project marked deleted at `2026-04-26T17:45:23.547Z` |
 
+Additional workspace migration:
+
+| Project | Workspace | Project ID | Web service | Old MongoDB service | Railway domain | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| adaptable-nature | `ศศินภัทร์ ปภัสร์กุลชารัตน์'s Projects` | `be7f82cc-92d6-4cc5-b1c7-b07c76d292eb` | `20329a27-f514-43f3-8998-6d7fec0278cb` | `0a90163c-367b-49ee-92e4-f97bf93f1f97` | `web-production-09f35.up.railway.app` | Postgres cutover complete; MongoDB deployment stopped, but service/volume deletion blocked by Railway permission |
+
 ## Run Notes
 
 ## Final Post-Check
@@ -57,8 +63,10 @@ Skipped because current web service is not active on Railway:
 - Switch branch by updating the Railway deployment trigger branch, not by editing `source.branch`.
 - For newly added Postgres/Redis, set Singapore immediately after the service object appears. Do not wait for the default-region database to finish initializing before moving it; moving an initialized Postgres volume between regions repeatedly caused invalid checkpoint/WAL startup failures.
 - Use GraphQL `serviceInstanceLimitsUpdate` for Mongo migration CPU/memory. `railway environment edit deploy.limitOverride...` can report success while the effective limit stays low in status metadata.
+- Workspace plan/permission limits can differ. `adaptable-nature` allowed Mongo memory up to 8 GB, not 12 GB, so the migration used `MIGRATION_MONGO_MEMORY_BYTES=8000000000`.
 - When scaling web back up, explicitly set Singapore to `1` and all other regions to `0`; using the detected old deployment region can reintroduce `us-west2`.
 - Deletion order stays strict: migrate, freeze web, run delta and verification, switch branch, health-check Postgres backend, verify again, then remove Mongo env/service/volume.
+- In non-owned workspaces, `serviceDelete` and `volume delete` may return `Not Authorized` even when deployment trigger, variables, scale, and `railway down` are allowed. In that case, stop the MongoDB deployment and have a workspace owner/admin delete the leftover MongoDB service and volume.
 
 ### ไม่มีชื่อไลน์
 
