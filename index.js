@@ -6,7 +6,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const util = require("util");
 const { ObjectId } = require("bson");
-const { OpenAI } = require("openai");
+const { OpenAI, toFile } = require("openai");
 const line = require("@line/bot-sdk");
 const sharp = require("sharp"); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
 const axios = require("axios");
@@ -60,7 +60,15 @@ const FOLLOWUP_ASSETS_DIR =
   process.env.FOLLOWUP_ASSETS_DIR ||
   path.join(__dirname, "public", "assets", "followup");
 const DEFAULT_AUDIO_ATTACHMENT_RESPONSE =
-  "ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน";
+  "ขออภัยค่ะ ระบบไม่สามารถถอดเสียงจากข้อความเสียงนี้ได้ กรุณาพิมพ์ข้อความหรือส่งเสียงใหม่อีกครั้ง";
+const DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+const AUDIO_TRANSCRIPTION_MODELS = new Set([
+  "gpt-4o-transcribe",
+  "gpt-4o-mini-transcribe",
+  "gpt-4o-transcribe-diarize",
+  "whisper-1",
+]);
+const MAX_AUDIO_TRANSCRIPTION_BYTES = 25 * 1024 * 1024;
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -7281,6 +7289,7 @@ function analyzeQueueContent(messages) {
   const analysis = {
     textCount: 0,
     imageCount: 0,
+    audioCount: 0,
     hasRecentText: false,
     hasRecentImage: false,
     shouldProcessSeparately: false,
@@ -7295,6 +7304,10 @@ function analyzeQueueContent(messages) {
     } else if (msg.data?.type === "image") {
       analysis.imageCount++;
       if (i >= messages.length - 2) analysis.hasRecentImage = true;
+    } else if (msg.data?.type === "audio" && getAudioTranscriptText(msg.data)) {
+      analysis.audioCount++;
+      analysis.textCount++;
+      if (i >= messages.length - 2) analysis.hasRecentText = true;
     }
   }
 
@@ -7313,7 +7326,7 @@ function analyzeQueueContent(messages) {
   }
 
   console.log(
-    `[LOG] Content Analysis: ${analysis.textCount} texts, ${analysis.imageCount} images, strategy: ${analysis.processingStrategy}`,
+    `[LOG] Content Analysis: ${analysis.textCount} texts, ${analysis.imageCount} images, ${analysis.audioCount} audios, strategy: ${analysis.processingStrategy}`,
   );
   return analysis;
 }
@@ -7347,6 +7360,28 @@ function sanitizeTextValue(text, options = {}) {
   }
 
   return sanitized;
+}
+
+function getAudioTranscriptText(audioData = {}) {
+  if (!audioData || typeof audioData !== "object") {
+    return null;
+  }
+
+  return sanitizeTextValue(
+    audioData.transcript ||
+    audioData.text ||
+    audioData.description ||
+    audioData?.payload?.transcript ||
+    audioData?.payload?.text ||
+    "",
+    { maxLength: 8000 },
+  );
+}
+
+function buildAudioTranscriptUserText(audioData = {}) {
+  const transcript = getAudioTranscriptText(audioData);
+  if (!transcript) return null;
+  return `ลูกค้าส่งข้อความเสียง พูดว่า:\n${transcript}`;
 }
 
 function isLikelyValidBase64Image(value) {
@@ -7397,20 +7432,24 @@ function filterMessagesForStrategy(messages, strategy = "original") {
       const data =
         (cloned.data && typeof cloned.data === "object" && cloned.data) ||
         (typeof cloned === "object" ? cloned : null);
-      if (!data || data.type !== "text") {
+      if (!data || (data.type !== "text" && data.type !== "audio")) {
         meta.droppedOthers++;
         continue;
       }
 
-      const sanitizedText = sanitizeTextValue(
-        data.text !== undefined ? data.text : data.content,
-      );
+      const sanitizedText =
+        data.type === "audio"
+          ? getAudioTranscriptText(data)
+          : sanitizeTextValue(data.text !== undefined ? data.text : data.content);
       if (!sanitizedText) {
         meta.droppedTexts++;
         continue;
       }
 
-      if (data.text !== undefined) {
+      if (data.type === "audio") {
+        data.transcript = sanitizedText;
+        data.text = sanitizedText;
+      } else if (data.text !== undefined) {
         data.text = sanitizedText;
       } else {
         data.content = sanitizedText;
@@ -7452,6 +7491,14 @@ function filterMessagesForStrategy(messages, strategy = "original") {
       } else {
         data.content = sanitizedText;
       }
+    } else if (type === "audio") {
+      const sanitizedText = getAudioTranscriptText(data);
+      if (!sanitizedText) {
+        meta.droppedOthers++;
+        continue;
+      }
+      data.transcript = sanitizedText;
+      data.text = sanitizedText;
     } else if (type === "image") {
       const base64 =
         typeof data.base64 === "string" ? data.base64 : data.content;
@@ -7518,6 +7565,16 @@ function buildContentSequenceFromMessages(messages, enableMessageMerging = true)
 
       combinedTextParts.push(sanitizedText);
       contentSequence.push({ type: "text", content: sanitizedText });
+    } else if (data.type === "audio") {
+      const audioText = buildAudioTranscriptUserText(data);
+      if (!audioText) {
+        continue;
+      }
+      combinedTextParts.push(audioText);
+      contentSequence.push({
+        type: "text",
+        content: audioText,
+      });
     } else if (data.type === "image") {
       const base64 =
         typeof data.base64 === "string" ? data.base64 : data.content;
@@ -7572,16 +7629,24 @@ function filterContentSequenceForStrategy(sequence, strategy = "original") {
         meta.droppedOthers++;
         continue;
       }
-      if (cloned.type !== "text") {
+      if (cloned.type !== "text" && cloned.type !== "audio") {
         meta.droppedOthers++;
         continue;
       }
-      const sanitized = sanitizeTextValue(cloned.content);
+      const sanitized =
+        cloned.type === "audio"
+          ? getAudioTranscriptText(cloned)
+          : sanitizeTextValue(cloned.content);
       if (!sanitized) {
         meta.droppedTexts++;
         continue;
       }
-      cloned.content = sanitized;
+      if (cloned.type === "audio") {
+        cloned.transcript = sanitized;
+        cloned.text = sanitized;
+      } else {
+        cloned.content = sanitized;
+      }
       return { sequence: [cloned], textParts: [sanitized], meta };
     }
     return { sequence: [], textParts: [], meta };
@@ -7606,6 +7671,16 @@ function filterContentSequenceForStrategy(sequence, strategy = "original") {
       cloned.content = sanitized;
       textParts.push(sanitized);
       result.push(cloned);
+    } else if (cloned.type === "audio") {
+      const audioText = buildAudioTranscriptUserText(cloned);
+      if (!audioText) {
+        meta.droppedOthers++;
+        continue;
+      }
+      cloned.transcript = getAudioTranscriptText(cloned);
+      cloned.text = cloned.transcript;
+      textParts.push(audioText);
+      result.push({ type: "text", content: audioText });
     } else if (cloned.type === "image") {
       const base64 = typeof cloned.content === "string" ? cloned.content : "";
       const hasContent = base64.trim().length > 0;
@@ -9720,35 +9795,45 @@ async function handleLineEvent(event, queueOptions = {}) {
       }
     } else if (message.type === "audio") {
       console.log(
-        `[LOG] ได้รับไฟล์เสียงจากผู้ใช้: ${userId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
+        `[LOG] ได้รับไฟล์เสียงจากผู้ใช้: ${userId}, กำลังถอดเสียงด้วย AI...`,
       );
+      const audioPayload = {
+        type: "audio",
+        messageId: message.id || null,
+        duration: message.duration || null,
+        contentProvider: message.contentProvider || null,
+      };
       try {
-        const audioPayload = {
-          type: "audio",
-          messageId: message.id || null,
-          duration: message.duration || null,
-          contentProvider: message.contentProvider || null,
-        };
-
-        try {
-          await saveChatHistory(
-            userId,
-            audioPayload,
-            "",
-            "line",
-            botIdForHistory,
-            lineRuntimeInstructionRefs,
-            null,
-            { instructionMeta: lineRuntimeInstructionMeta },
-          );
-        } catch (historyError) {
-          console.error(
-            "[LOG] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:",
-            historyError,
-          );
-        }
+        const audioContent = await fetchLineAudioBuffer(
+          message,
+          queueOptions,
+          botIdForHistory,
+        );
+        const queuedAudio = await queueTranscribedAudioMessage({
+          userId,
+          replyToken: event.replyToken,
+          platform: "line",
+          botId: botIdForHistory,
+          queueOptions,
+          audioPayload,
+          audioContent,
+        });
+        console.log(
+          `[LOG] ถอดเสียง LINE สำเร็จสำหรับผู้ใช้ ${userId}: ${queuedAudio.transcript.substring(0, 100)}${queuedAudio.transcript.length > 100 ? "..." : ""}`,
+        );
       } catch (audioError) {
-        console.error("[LOG] เกิดข้อผิดพลาดในการจัดการไฟล์เสียง:", audioError);
+        console.error("[LOG] เกิดข้อผิดพลาดในการถอดเสียง LINE:", audioError);
+        await recordAudioTranscriptionFailure({
+          userId,
+          platform: "line",
+          botId: botIdForHistory,
+          audioPayload,
+          instructionRefs: lineRuntimeInstructionRefs,
+          instructionMeta: lineRuntimeInstructionMeta,
+          queueOptions,
+          replyToken: event.replyToken,
+          error: audioError,
+        });
       }
       return;
     } else if (message.type === "video") {
@@ -14019,6 +14104,8 @@ async function ensureSettings() {
       key: "audioAttachmentResponse",
       value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
     },
+    { key: "enableAudioTranscription", value: true },
+    { key: "audioTranscriptionModel", value: DEFAULT_AUDIO_TRANSCRIPTION_MODEL },
     {
       key: "followUpRounds",
       value: [
@@ -16978,10 +17065,13 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   } else if (attachment.type === "audio") {
                     audioAttachments.push({
                       type: "audio",
+                      url: attachment.payload?.url || null,
+                      duration: attachment.payload?.duration || null,
                       payload: {
                         url: attachment.payload?.url || null,
                         id: attachment.payload?.id || null,
                         duration: attachment.payload?.duration || null,
+                        mimeType: attachment.payload?.mime_type || null,
                       },
                     });
                   }
@@ -16989,32 +17079,85 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               }
 
               if (audioAttachments.length > 0) {
-                try {
-                  console.log(
-                    `[Facebook Bot: ${facebookBot.name}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
-                  );
+                const failedAudioAttachments = [];
+                for (const audioAttachment of audioAttachments) {
                   try {
-                    await saveChatHistory(
-                      senderId,
-                      { type: "audio", attachments: audioAttachments },
-                      "",
-                      "facebook",
-                      facebookBot._id ? facebookBot._id.toString() : null,
-                      facebookRuntimeInstructionRefs,
-                      queueOptions.botName || null,
-                      { instructionMeta: facebookRuntimeInstructionMeta },
+                    console.log(
+                      `[Facebook Bot: ${facebookBot.name}] ได้รับไฟล์เสียงจาก ${senderId}, กำลังถอดเสียง...`,
                     );
-                  } catch (historyErr) {
+                    const audioUrl = audioAttachment?.payload?.url || audioAttachment.url;
+                    const audioContent = await fetchAudioUrlBuffer(audioUrl, {
+                      prefix: "facebook-audio",
+                      id: audioAttachment?.payload?.id || senderId,
+                      contentType: audioAttachment?.payload?.mimeType,
+                      accessToken: facebookBot.accessToken,
+                    });
+                    const transcription = await transcribeCustomerAudio({
+                      ...audioContent,
+                      botId: facebookBot._id ? facebookBot._id.toString() : null,
+                      platform: "facebook",
+                      userId: senderId,
+                    });
+                    itemsToQueue.push({
+                      data: {
+                        ...audioAttachment,
+                        type: "audio",
+                        transcript: transcription.text,
+                        text: transcription.text,
+                        transcriptionModel: transcription.model,
+                        transcriptionKeyId: transcription.keyId,
+                      },
+                    });
+                    console.log(
+                      `[Facebook Bot: ${facebookBot.name}] ถอดเสียงสำเร็จ: ${transcription.text.substring(0, 100)}${transcription.text.length > 100 ? "..." : ""}`,
+                    );
+                  } catch (audioErr) {
+                    failedAudioAttachments.push({
+                      ...audioAttachment,
+                      transcriptionError: audioErr?.message || String(audioErr),
+                    });
                     console.error(
-                      `[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:`,
-                      historyErr.message || historyErr,
+                      `[Facebook Bot: ${facebookBot.name}] Error transcribing audio attachment:`,
+                      audioErr.message || audioErr,
                     );
                   }
-                } catch (audioErr) {
-                  console.error(
-                    `[Facebook Bot: ${facebookBot.name}] Error handling audio attachment:`,
-                    audioErr.message || audioErr,
-                  );
+                }
+
+                if (failedAudioAttachments.length > 0) {
+                  if (itemsToQueue.length === 0) {
+                    await recordAudioTranscriptionFailure({
+                      userId: senderId,
+                      platform: "facebook",
+                      botId: facebookBot._id ? facebookBot._id.toString() : null,
+                      botName: queueOptions.botName || null,
+                      audioPayload: {
+                        type: "audio",
+                        attachments: failedAudioAttachments,
+                      },
+                      instructionRefs: facebookRuntimeInstructionRefs,
+                      instructionMeta: facebookRuntimeInstructionMeta,
+                      queueOptions,
+                      error: new Error("facebook_audio_transcription_failed"),
+                    });
+                  } else {
+                    try {
+                      await saveChatHistory(
+                        senderId,
+                        { type: "audio", attachments: failedAudioAttachments },
+                        "",
+                        "facebook",
+                        facebookBot._id ? facebookBot._id.toString() : null,
+                        facebookRuntimeInstructionRefs,
+                        queueOptions.botName || null,
+                        { instructionMeta: facebookRuntimeInstructionMeta },
+                      );
+                    } catch (historyErr) {
+                      console.error(
+                        `[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์เสียงที่ถอดไม่สำเร็จได้:`,
+                        historyErr.message || historyErr,
+                      );
+                    }
+                  }
                 }
               }
 
@@ -17225,35 +17368,96 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
           } else if (attachment?.type === "audio") {
             audioAttachments.push({
               type: "audio",
+              url: attachment?.payload?.url || null,
               payload: {
                 url: attachment?.payload?.url || null,
                 id: attachment?.payload?.id || null,
+                mimeType: attachment?.payload?.mime_type || null,
               },
             });
           }
         }
 
         if (audioAttachments.length > 0) {
-          try {
-            console.log(
-              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
-            );
+          const failedAudioAttachments = [];
+          for (const audioAttachment of audioAttachments) {
+            try {
+              console.log(
+                `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ได้รับไฟล์เสียงจาก ${senderId}, กำลังถอดเสียง...`,
+              );
+              const audioUrl = audioAttachment?.payload?.url || audioAttachment.url;
+              const audioContent = await fetchAudioUrlBuffer(audioUrl, {
+                prefix: "instagram-audio",
+                id: audioAttachment?.payload?.id || senderId,
+                contentType: audioAttachment?.payload?.mimeType,
+                accessToken: queueOptions.instagramAccessToken,
+              });
+              const transcription = await transcribeCustomerAudio({
+                ...audioContent,
+                botId: queueOptions.botId || null,
+                platform: "instagram",
+                userId: senderId,
+              });
+              itemsToQueue.push({
+                data: {
+                  ...audioAttachment,
+                  type: "audio",
+                  transcript: transcription.text,
+                  text: transcription.text,
+                  transcriptionModel: transcription.model,
+                  transcriptionKeyId: transcription.keyId,
+                },
+              });
+              console.log(
+                `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ถอดเสียงสำเร็จ: ${transcription.text.substring(0, 100)}${transcription.text.length > 100 ? "..." : ""}`,
+              );
+            } catch (audioErr) {
+              failedAudioAttachments.push({
+                ...audioAttachment,
+                transcriptionError: audioErr?.message || String(audioErr),
+              });
+              console.error(
+                `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error transcribing audio attachment:`,
+                audioErr?.message || audioErr,
+              );
+            }
+          }
 
-            await saveChatHistory(
-              senderId,
-              { type: "audio", attachments: audioAttachments },
-              "",
-              "instagram",
-              queueOptions.botId || null,
-              runtimeInstructionRefs,
-              queueOptions.botName || null,
-              { instructionMeta: runtimeInstructionMeta },
-            );
-          } catch (audioErr) {
-            console.error(
-              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error handling audio attachment:`,
-              audioErr?.message || audioErr,
-            );
+          if (failedAudioAttachments.length > 0) {
+            if (itemsToQueue.length === 0) {
+              await recordAudioTranscriptionFailure({
+                userId: senderId,
+                platform: "instagram",
+                botId: queueOptions.botId || null,
+                botName: queueOptions.botName || null,
+                audioPayload: {
+                  type: "audio",
+                  attachments: failedAudioAttachments,
+                },
+                instructionRefs: runtimeInstructionRefs,
+                instructionMeta: runtimeInstructionMeta,
+                queueOptions,
+                error: new Error("instagram_audio_transcription_failed"),
+              });
+            } else {
+              try {
+                await saveChatHistory(
+                  senderId,
+                  { type: "audio", attachments: failedAudioAttachments },
+                  "",
+                  "instagram",
+                  queueOptions.botId || null,
+                  runtimeInstructionRefs,
+                  queueOptions.botName || null,
+                  { instructionMeta: runtimeInstructionMeta },
+                );
+              } catch (historyErr) {
+                console.error(
+                  `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ไม่สามารถบันทึกประวัติไฟล์เสียงที่ถอดไม่สำเร็จได้:`,
+                  historyErr?.message || historyErr,
+                );
+              }
+            }
           }
         }
 
@@ -17509,26 +17713,83 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
           }
 
           if (audioAttachments.length > 0) {
-            try {
-              console.log(
-                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
-              );
+            const failedAudioAttachments = [];
+            for (const audioAttachment of audioAttachments) {
+              try {
+                console.log(
+                  `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ได้รับไฟล์เสียงจาก ${senderId}, กำลังถอดเสียง...`,
+                );
+                const mediaId = audioAttachment?.payload?.id;
+                const audioContent = await fetchWhatsAppMediaBuffer(
+                  mediaId,
+                  queueOptions.whatsappAccessToken,
+                );
+                const transcription = await transcribeCustomerAudio({
+                  ...audioContent,
+                  botId: queueOptions.botId || null,
+                  platform: "whatsapp",
+                  userId: senderId,
+                });
+                itemsToQueue.push({
+                  data: {
+                    ...audioAttachment,
+                    type: "audio",
+                    transcript: transcription.text,
+                    text: transcription.text,
+                    transcriptionModel: transcription.model,
+                    transcriptionKeyId: transcription.keyId,
+                  },
+                });
+                console.log(
+                  `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ถอดเสียงสำเร็จ: ${transcription.text.substring(0, 100)}${transcription.text.length > 100 ? "..." : ""}`,
+                );
+              } catch (audioErr) {
+                failedAudioAttachments.push({
+                  ...audioAttachment,
+                  transcriptionError: audioErr?.message || String(audioErr),
+                });
+                console.error(
+                  `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error transcribing audio attachment:`,
+                  audioErr?.message || audioErr,
+                );
+              }
+            }
 
-              await saveChatHistory(
-                senderId,
-                { type: "audio", attachments: audioAttachments },
-                "",
-                "whatsapp",
-                queueOptions.botId || null,
-                runtimeInstructionRefs,
-                queueOptions.botName || null,
-                { instructionMeta: runtimeInstructionMeta },
-              );
-            } catch (audioErr) {
-              console.error(
-                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error handling audio attachment:`,
-                audioErr?.message || audioErr,
-              );
+            if (failedAudioAttachments.length > 0) {
+              if (itemsToQueue.length === 0) {
+                await recordAudioTranscriptionFailure({
+                  userId: senderId,
+                  platform: "whatsapp",
+                  botId: queueOptions.botId || null,
+                  botName: queueOptions.botName || null,
+                  audioPayload: {
+                    type: "audio",
+                    attachments: failedAudioAttachments,
+                  },
+                  instructionRefs: runtimeInstructionRefs,
+                  instructionMeta: runtimeInstructionMeta,
+                  queueOptions,
+                  error: new Error("whatsapp_audio_transcription_failed"),
+                });
+              } else {
+                try {
+                  await saveChatHistory(
+                    senderId,
+                    { type: "audio", attachments: failedAudioAttachments },
+                    "",
+                    "whatsapp",
+                    queueOptions.botId || null,
+                    runtimeInstructionRefs,
+                    queueOptions.botName || null,
+                    { instructionMeta: runtimeInstructionMeta },
+                  );
+                } catch (historyErr) {
+                  console.error(
+                    `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ไม่สามารถบันทึกประวัติไฟล์เสียงที่ถอดไม่สำเร็จได้:`,
+                    historyErr?.message || historyErr,
+                  );
+                }
+              }
             }
           }
 
@@ -18168,7 +18429,268 @@ async function sendWhatsAppMessage(
   }
 }
 
-async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
+function normalizeAudioTranscriptionModel(model) {
+  const normalized = typeof model === "string" ? model.trim() : "";
+  return AUDIO_TRANSCRIPTION_MODELS.has(normalized)
+    ? normalized
+    : DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
+}
+
+function normalizeAudioContentType(contentType, fallback = "application/octet-stream") {
+  if (typeof contentType !== "string") return fallback;
+  const normalized = contentType.split(";")[0].trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function getAudioExtensionFromContentType(contentType) {
+  const normalized = normalizeAudioContentType(contentType, "");
+  const extensionMap = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/mp4": "mp4",
+    "audio/m4a": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "audio/webm": "webm",
+    "video/mp4": "mp4",
+  };
+  return extensionMap[normalized] || "m4a";
+}
+
+function buildAudioUploadFilename(prefix, contentType, fallbackId = "") {
+  const safePrefix = String(prefix || "customer-audio")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "customer-audio";
+  const safeId = String(fallbackId || Date.now())
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .slice(0, 80);
+  const extension = getAudioExtensionFromContentType(contentType);
+  return `${safePrefix}-${safeId || Date.now()}.${extension}`;
+}
+
+function extractTranscriptionText(transcriptionResult) {
+  if (typeof transcriptionResult === "string") {
+    return sanitizeTextValue(transcriptionResult, { maxLength: 8000 });
+  }
+  if (transcriptionResult && typeof transcriptionResult.text === "string") {
+    return sanitizeTextValue(transcriptionResult.text, { maxLength: 8000 });
+  }
+  return null;
+}
+
+async function getOpenAITranscriptionApiKeyForBot(botId, platform) {
+  const preferredKey = await getOpenAIApiKeyForBot(botId, platform);
+  if (
+    preferredKey?.apiKey &&
+    normalizeProvider(preferredKey.provider) === LLM_PROVIDER_OPENAI
+  ) {
+    return preferredKey;
+  }
+
+  if (OPENAI_API_KEY) {
+    return {
+      apiKey: OPENAI_API_KEY,
+      key: OPENAI_API_KEY,
+      keyId: null,
+      id: null,
+      keyName: "Environment Variable",
+      name: "Environment Variable",
+      provider: LLM_PROVIDER_OPENAI,
+    };
+  }
+
+  try {
+    const readAppDocumentsFromPostgres = isPostgresAppDocumentReadEnabled();
+    let keyDocs = [];
+    if (readAppDocumentsFromPostgres) {
+      keyDocs = await maybeFindAppDocumentsByPayloadField(
+        "openai_api_keys",
+        "isActive",
+        true,
+        { limit: 50 },
+      );
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      keyDocs = await db
+        .collection("openai_api_keys")
+        .find({ isActive: true })
+        .limit(50)
+        .toArray();
+    }
+
+    const openAIKeys = keyDocs.filter((doc) =>
+      doc &&
+      doc.apiKey &&
+      normalizeProvider(doc.provider) === LLM_PROVIDER_OPENAI &&
+      validateApiKeyForProvider(doc.apiKey, LLM_PROVIDER_OPENAI)
+    );
+    const selectedKey =
+      openAIKeys.find((doc) => doc.isDefault === true) || openAIKeys[0] || null;
+    if (selectedKey) {
+      return {
+        apiKey: selectedKey.apiKey,
+        key: selectedKey.apiKey,
+        keyId: selectedKey._id?.toString?.() || selectedKey._id || null,
+        id: selectedKey._id?.toString?.() || selectedKey._id || null,
+        keyName: selectedKey.name || null,
+        name: selectedKey.name || null,
+        provider: LLM_PROVIDER_OPENAI,
+      };
+    }
+  } catch (error) {
+    console.error("[Audio Transcription] Error loading OpenAI key:", error);
+  }
+
+  return {
+    apiKey: null,
+    key: null,
+    keyId: null,
+    id: null,
+    keyName: null,
+    name: null,
+    provider: LLM_PROVIDER_OPENAI,
+  };
+}
+
+async function transcribeCustomerAudio({
+  buffer,
+  filename,
+  contentType,
+  botId = null,
+  platform = null,
+  userId = null,
+} = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error("audio_buffer_empty");
+  }
+  if (buffer.length > MAX_AUDIO_TRANSCRIPTION_BYTES) {
+    throw new Error(
+      `audio_file_too_large:${(buffer.length / 1024 / 1024).toFixed(1)}MB`,
+    );
+  }
+
+  const transcriptionEnabled = await getSettingValue("enableAudioTranscription", true);
+  if (transcriptionEnabled === false || transcriptionEnabled === "false") {
+    throw new Error("audio_transcription_disabled");
+  }
+
+  const configuredModel = await getSettingValue(
+    "audioTranscriptionModel",
+    DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+  );
+  const model = normalizeAudioTranscriptionModel(configuredModel);
+  const keyPayload = await getOpenAITranscriptionApiKeyForBot(botId, platform);
+  if (!keyPayload.apiKey) {
+    throw new Error("openai_transcription_key_missing");
+  }
+
+  const openai = buildLLMClientFromKey({
+    apiKey: keyPayload.apiKey,
+    provider: LLM_PROVIDER_OPENAI,
+  });
+  if (!openai) {
+    throw new Error("openai_transcription_client_unavailable");
+  }
+
+  const normalizedContentType = normalizeAudioContentType(contentType);
+  const uploadFilename =
+    filename || buildAudioUploadFilename(platform || "customer-audio", normalizedContentType, userId);
+  const file = await toFile(buffer, uploadFilename, {
+    type: normalizedContentType,
+  });
+  const payload = {
+    file,
+    model,
+    response_format: "json",
+  };
+
+  if (model === "gpt-4o-transcribe" || model === "gpt-4o-mini-transcribe") {
+    payload.prompt =
+      "ถอดเสียงข้อความเสียงจากลูกค้าในแชทขายของออนไลน์ อาจมีภาษาไทย ชื่อสินค้า เบอร์โทร ที่อยู่ จำนวนเงิน และเลขพัสดุ ให้คงตัวเลขและคำสำคัญให้ตรงที่สุด";
+  } else if (model === "gpt-4o-transcribe-diarize") {
+    payload.chunking_strategy = "auto";
+  }
+
+  console.log(
+    `[Audio Transcription] Transcribing ${platform || "unknown"} audio for ${userId || "unknown"} with ${model} (${buffer.length} bytes)`,
+  );
+  const result = await openai.audio.transcriptions.create(payload);
+  const text = extractTranscriptionText(result);
+  if (!text) {
+    throw new Error("audio_transcription_empty");
+  }
+
+  return {
+    text,
+    model,
+    keyId: keyPayload.keyId || keyPayload.id || null,
+  };
+}
+
+async function fetchLineAudioBuffer(message, queueOptions = {}, botId = null) {
+  const lineClientFromContext =
+    queueOptions.lineClient || (await getLineClientForContext(botId));
+  if (!lineClientFromContext) {
+    throw new Error("line_client_missing_for_audio");
+  }
+
+  const stream = await lineClientFromContext.getMessageContent(message.id);
+  const contentType = normalizeAudioContentType(
+    stream?.headers?.["content-type"],
+    "audio/m4a",
+  );
+  const buffer = await streamToBuffer(stream);
+  return {
+    buffer,
+    contentType,
+    filename: buildAudioUploadFilename("line-audio", contentType, message.id),
+  };
+}
+
+async function fetchAudioUrlBuffer(url, options = {}) {
+  if (!url || typeof url !== "string") {
+    throw new Error("audio_url_missing");
+  }
+
+  const requestAudio = (headers = {}) =>
+    axios.get(url, {
+      responseType: "arraybuffer",
+      headers,
+      maxContentLength: MAX_AUDIO_TRANSCRIPTION_BYTES,
+      maxBodyLength: MAX_AUDIO_TRANSCRIPTION_BYTES,
+    });
+
+  let response = null;
+  try {
+    response = await requestAudio();
+  } catch (error) {
+    if (!options.accessToken) {
+      throw error;
+    }
+    response = await requestAudio({
+      Authorization: `Bearer ${options.accessToken}`,
+    });
+  }
+  const contentType = normalizeAudioContentType(
+    response?.headers?.["content-type"] || options.contentType,
+    "audio/m4a",
+  );
+  return {
+    buffer: Buffer.from(response.data),
+    contentType,
+    filename: buildAudioUploadFilename(
+      options.prefix || "audio",
+      contentType,
+      options.id || crypto.randomBytes(6).toString("hex"),
+    ),
+  };
+}
+
+async function fetchWhatsAppMediaBuffer(mediaId, accessToken) {
   if (!mediaId || !accessToken) {
     throw new Error("missing media id or access token");
   }
@@ -18195,15 +18717,176 @@ async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
 
   const mediaResponse = await axios.get(mediaUrl, {
     responseType: "arraybuffer",
+    maxContentLength: MAX_AUDIO_TRANSCRIPTION_BYTES,
+    maxBodyLength: MAX_AUDIO_TRANSCRIPTION_BYTES,
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
   });
 
-  let buffer = Buffer.from(mediaResponse.data);
-  let finalMime = mimeType;
+  return {
+    buffer: Buffer.from(mediaResponse.data),
+    mimeType,
+    contentType: normalizeAudioContentType(mimeType),
+    filename: buildAudioUploadFilename("whatsapp-media", mimeType, mediaId),
+  };
+}
 
-  if (typeof mimeType === "string" && mimeType.startsWith("image/")) {
+async function queueTranscribedAudioMessage({
+  userId,
+  replyToken = null,
+  platform,
+  botId = null,
+  queueOptions = {},
+  audioPayload = {},
+  audioContent,
+}) {
+  const transcription = await transcribeCustomerAudio({
+    ...audioContent,
+    botId,
+    platform,
+    userId,
+  });
+  const data = {
+    ...audioPayload,
+    type: "audio",
+    transcript: transcription.text,
+    text: transcription.text,
+    transcriptionModel: transcription.model,
+    transcriptionKeyId: transcription.keyId,
+  };
+
+  await addToQueue(
+    userId,
+    {
+      ...(replyToken ? { replyToken } : {}),
+      data,
+    },
+    {
+      ...queueOptions,
+      platform,
+    },
+  );
+  return data;
+}
+
+async function sendAudioFallbackResponse({
+  userId,
+  platform,
+  replyToken = null,
+  queueOptions = {},
+}) {
+  const fallbackText = await getSettingValue(
+    "audioAttachmentResponse",
+    DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+  );
+  const normalizedPlatform = normalizeChatPlatform(platform);
+
+  try {
+    if (normalizedPlatform === "line") {
+      if (replyToken) {
+        await sendMessage(
+          replyToken,
+          fallbackText,
+          userId,
+          true,
+          queueOptions.channelAccessToken,
+          queueOptions.channelSecret,
+        );
+      }
+    } else if (normalizedPlatform === "facebook" && queueOptions.facebookAccessToken) {
+      await sendFacebookMessage(
+        userId,
+        fallbackText,
+        queueOptions.facebookAccessToken,
+        { metadata: "audio_transcription_failed", selectedImageCollections: null },
+      );
+    } else if (
+      normalizedPlatform === "instagram" &&
+      queueOptions.instagramAccessToken &&
+      (queueOptions.instagramBusinessAccountId ||
+        queueOptions.instagramUserId ||
+        queueOptions.igUserId)
+    ) {
+      await sendInstagramMessage(
+        userId,
+        fallbackText,
+        queueOptions.instagramAccessToken,
+        queueOptions.instagramBusinessAccountId ||
+        queueOptions.instagramUserId ||
+        queueOptions.igUserId,
+        { selectedImageCollections: null },
+      );
+    } else if (
+      normalizedPlatform === "whatsapp" &&
+      queueOptions.whatsappAccessToken &&
+      (queueOptions.whatsappPhoneNumberId || queueOptions.phoneNumberId)
+    ) {
+      await sendWhatsAppMessage(
+        userId,
+        fallbackText,
+        queueOptions.whatsappAccessToken,
+        queueOptions.whatsappPhoneNumberId || queueOptions.phoneNumberId,
+        { selectedImageCollections: null },
+      );
+    }
+  } catch (error) {
+    console.error("[Audio Transcription] Failed to send fallback response:", error);
+  }
+
+  return fallbackText;
+}
+
+async function recordAudioTranscriptionFailure({
+  userId,
+  platform,
+  botId = null,
+  botName = null,
+  audioPayload = {},
+  instructionRefs = [],
+  instructionMeta = null,
+  queueOptions = {},
+  replyToken = null,
+  error,
+}) {
+  const fallbackText = await sendAudioFallbackResponse({
+    userId,
+    platform,
+    replyToken,
+    queueOptions,
+  });
+  try {
+    await saveChatHistory(
+      userId,
+      {
+        ...audioPayload,
+        type: "audio",
+        transcriptionError: error?.message || String(error || "unknown"),
+      },
+      fallbackText,
+      platform,
+      botId,
+      instructionRefs,
+      botName,
+      {
+        instructionMeta,
+        audioTranscriptionError: error?.message || String(error || "unknown"),
+      },
+    );
+  } catch (historyError) {
+    console.error(
+      "[Audio Transcription] Failed to save audio fallback history:",
+      historyError,
+    );
+  }
+}
+
+async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
+  const media = await fetchWhatsAppMediaBuffer(mediaId, accessToken);
+  let buffer = media.buffer;
+  let finalMime = media.mimeType;
+
+  if (typeof media.mimeType === "string" && media.mimeType.startsWith("image/")) {
     try {
       buffer = await sharp(buffer)
         .resize({
@@ -29680,6 +30363,8 @@ app.get("/api/settings", async (req, res) => {
       showTokenUsage: false,
       showDebugInfo: false,
       audioAttachmentResponse: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+      enableAudioTranscription: true,
+      audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       textModel: DEFAULT_ASSISTANT_MODEL,
       visionModel: DEFAULT_ASSISTANT_MODEL,
       maxImagesPerMessage: 3,
