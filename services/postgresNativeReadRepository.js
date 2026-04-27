@@ -22,6 +22,56 @@ function normalizeDate(value) {
   return null;
 }
 
+const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+function buildBangkokDateBoundary(year, month, day, boundary = "start") {
+  const startUtcMs = Date.UTC(year, month - 1, day) - BANGKOK_UTC_OFFSET_MS;
+  const boundaryUtcMs =
+    boundary === "end"
+      ? startUtcMs + (24 * 60 * 60 * 1000) - 1
+      : startUtcMs;
+  return new Date(boundaryUtcMs).toISOString();
+}
+
+function parseDateOnly(value) {
+  const match = normalizeString(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+function normalizeBangkokDateBoundary(value, boundary = "start") {
+  const dateOnly = parseDateOnly(value);
+  if (dateOnly) {
+    return buildBangkokDateBoundary(
+      dateOnly.year,
+      dateOnly.month,
+      dateOnly.day,
+      boundary,
+    );
+  }
+  return normalizeDate(value);
+}
+
+function getBangkokDateParts(date = new Date()) {
+  const bangkokTime = new Date(date.getTime() + BANGKOK_UTC_OFFSET_MS);
+  return {
+    year: bangkokTime.getUTCFullYear(),
+    month: bangkokTime.getUTCMonth() + 1,
+    day: bangkokTime.getUTCDate(),
+  };
+}
+
 function parseOrderPageKey(pageKey) {
   const raw = normalizeString(pageKey);
   if (!raw) return { platform: "", botId: null };
@@ -105,22 +155,25 @@ function buildOrderWhere(filters = {}) {
     clauses.push(`status = ${addParam(params, filters.status)}`);
   }
 
-  const timezone = "Asia/Bangkok";
   let startDate = null;
   let endDate = null;
   if (filters.todayOnly === "true") {
-    const now = new Date();
-    const bangkokNow = new Date(
-      now.toLocaleString("en-US", { timeZone: timezone }),
+    const today = getBangkokDateParts();
+    startDate = buildBangkokDateBoundary(
+      today.year,
+      today.month,
+      today.day,
+      "start",
     );
-    bangkokNow.setHours(0, 0, 0, 0);
-    startDate = bangkokNow.toISOString();
-    const bangkokEnd = new Date(bangkokNow);
-    bangkokEnd.setHours(23, 59, 59, 999);
-    endDate = bangkokEnd.toISOString();
+    endDate = buildBangkokDateBoundary(
+      today.year,
+      today.month,
+      today.day,
+      "end",
+    );
   } else {
-    startDate = normalizeDate(filters.startDate);
-    endDate = normalizeDate(filters.endDate);
+    startDate = normalizeBangkokDateBoundary(filters.startDate, "start");
+    endDate = normalizeBangkokDateBoundary(filters.endDate, "end");
   }
   if (startDate) {
     clauses.push(`extracted_at >= ${addParam(params, startDate)}::timestamptz`);
