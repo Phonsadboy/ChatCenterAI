@@ -232,6 +232,11 @@ class ChatManager {
             this.handleFollowUpTagged(data);
         });
 
+        this.socket.on('followUpScheduleUpdated', (data) => {
+            console.log('⏱️ Follow-up schedule updated:', data);
+            this.handleFollowUpScheduleUpdated(data);
+        });
+
         this.socket.on('chatCleared', (data) => {
             console.log('🗑️ Chat cleared:', data);
             if (data.userId === this.currentUserId) {
@@ -1188,7 +1193,7 @@ class ChatManager {
                     case 'followup':
                         return user.followUp && user.followUp.isFollowUp;
                     case 'purchased':
-                        return user.hasPurchased;
+                        return this.userHasPurchased(user);
                     default:
                         return true;
                 }
@@ -1264,7 +1269,7 @@ class ChatManager {
     renderUserItem(user) {
         const isActive = user.userId === this.currentUserId;
         const hasUnread = user.unreadCount > 0;
-        const isPurchased = user.hasPurchased;
+        const isPurchased = this.userHasPurchased(user);
         const isFollowUp = user.followUp && user.followUp.isFollowUp;
         const aiEnabled = user.aiEnabled !== false;
         const hasOrders = user.hasOrders || false;
@@ -1285,6 +1290,7 @@ class ChatManager {
         const channelHtml = channelLabel
             ? `<div class="user-channel">${this.escapeHtml(channelLabel)}</div>`
             : '';
+        const statePills = this.buildUserListStatePills(user).join('');
 
         // Build status indicators
         const statusDots = [];
@@ -1346,7 +1352,10 @@ class ChatManager {
                 </div>
                 <div class="user-item-content">
                     <div class="user-item-header">
-                        <div class="user-name">${this.escapeHtml(user.displayName || user.userId)}</div>
+                        <div class="user-name-line">
+                            <div class="user-name">${this.escapeHtml(user.displayName || user.userId)}</div>
+                            ${statePills ? `<div class="user-state-pills">${statePills}</div>` : ''}
+                        </div>
                         <div class="user-time">${time}</div>
                     </div>
                     ${channelHtml}
@@ -1358,13 +1367,59 @@ class ChatManager {
         `;
     }
 
+    userHasPurchased(user) {
+        if (!user || typeof user !== 'object') return false;
+        return !!user.hasPurchased || !!user.hasOrders || Number(user.orderCount || 0) > 0;
+    }
+
+    buildUserListStatePills(user) {
+        const pills = [];
+        const orderCount = Number(user.orderCount || 0);
+        const isPurchased = this.userHasPurchased(user);
+        const isFollowUp = !!(user.followUp && user.followUp.isFollowUp);
+
+        if (isPurchased) {
+            const title = orderCount > 0
+                ? `ซื้อแล้ว · ${orderCount} ออเดอร์`
+                : 'ซื้อแล้ว';
+            pills.push(`
+                <span class="user-state-pill is-purchased" title="${this.escapeHtml(title)}">
+                    <i class="fas fa-check" aria-hidden="true"></i>
+                    <span>ซื้อแล้ว</span>
+                </span>
+            `);
+        }
+
+        if (isFollowUp) {
+            const nextAt = (() => {
+                if (!user.followUp.nextScheduledAt) return '';
+                const scheduledAt = new Date(user.followUp.nextScheduledAt);
+                if (Number.isNaN(scheduledAt.getTime())) return '';
+                return ` · รอบถัดไป ${scheduledAt.toLocaleString('th-TH', {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })}`;
+            })();
+            pills.push(`
+                <span class="user-state-pill is-followup" title="${this.escapeHtml(`ระบบติดตามทำงานอยู่${nextAt}`)}">
+                    <i class="fas fa-clock" aria-hidden="true"></i>
+                    <span>ติดตาม</span>
+                </span>
+            `);
+        }
+
+        return pills;
+    }
+
     buildUserStateChips(user, options = {}) {
         const chips = [];
         const unreadCount = Number(user.unreadCount || 0);
         const orderCount = Number(user.orderCount || 0);
         const aiEnabled = user.aiEnabled !== false;
         const isFollowUp = !!(user.followUp && user.followUp.isFollowUp);
-        const isPurchased = !!user.hasPurchased;
+        const isPurchased = this.userHasPurchased(user);
         if (options.includeAi !== false) {
             chips.push(`<span class="mobile-state-chip ${aiEnabled ? 'is-ai-on' : 'is-ai-off'}">${aiEnabled ? 'AI on' : 'AI off'}</span>`);
         }
@@ -2989,6 +3044,31 @@ class ChatManager {
             this.applyFilters();
             this.updateDebugPanel();
         }
+    }
+
+    handleFollowUpScheduleUpdated(data) {
+        const user = this.allUsers.find(u => u.userId === data.userId);
+        if (!user) {
+            this.scheduleLoadUsers();
+            return;
+        }
+
+        if (!user.followUp || typeof user.followUp !== 'object') {
+            user.followUp = {};
+        }
+
+        const status = String(data.status || '').toLowerCase();
+        if (status === 'scheduled' || status === 'progress') {
+            user.followUp.isFollowUp = true;
+            user.followUp.nextScheduledAt = data.nextScheduledAt || null;
+        } else if (['canceled', 'cancelled', 'completed', 'failed'].includes(status)) {
+            user.followUp.isFollowUp = false;
+            user.followUp.nextScheduledAt = null;
+        }
+
+        this.applyFilters();
+        this.updateDebugPanel();
+        this.scheduleLoadUsers();
     }
 
     async markAsRead(userId) {

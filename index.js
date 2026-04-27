@@ -1705,6 +1705,7 @@ async function getCachedAdminJson(req, cacheParts, producer, options = {}) {
 }
 
 async function invalidateOrdersAdminCache(reason = "") {
+  invalidateChatUsersAuxCache();
   if (!redisCacheService.isConfigured()) return;
   const dataPattern = `${redisCacheService.buildKey(["admin", "orders-data"])}:*`;
   const pagesKey = redisCacheService.buildKey(["admin", "orders-pages"]);
@@ -1942,6 +1943,12 @@ const CHAT_ADMIN_AUX_CACHE_STALE_MS = Math.max(
   Number.parseInt(process.env.CHAT_ADMIN_AUX_CACHE_STALE_MS || "300000", 10) || 300000,
 );
 const chatAdminAuxCache = new Map();
+
+function invalidateChatUsersAuxCache() {
+  if (!chatAdminAuxCache || chatAdminAuxCache.size === 0) return;
+  chatAdminAuxCache.delete("chat:users");
+  clearCacheMapEntriesByPrefix(chatAdminAuxCache, "chat:users:focus:");
+}
 
 function getChatAdminAuxCacheEntry(key) {
   return chatAdminAuxCache.get(key) || {
@@ -4343,6 +4350,7 @@ function buildFollowUpPreview(rawContent) {
 
 function emitFollowUpScheduleUpdate(payload) {
   try {
+    invalidateChatUsersAuxCache();
     if (io) {
       const sanitized = { ...(payload || {}) };
       Object.keys(sanitized).forEach((key) => {
@@ -5231,6 +5239,7 @@ async function updateFollowUpStatus(userId, fields) {
   await maybeMirrorAppDocumentByQuery(db, "follow_up_status", {
     senderId: userId,
   });
+  invalidateChatUsersAuxCache();
 }
 
 async function maybeUpdateFollowUpStatus(
@@ -29592,6 +29601,7 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
     await maybeMirrorAppDocumentByQuery(db, "user_purchase_status", {
       userId,
     });
+    invalidateChatUsersAuxCache();
 
     // Emit to socket clients
     io.to("admin").emit("userPurchaseStatusUpdated", { userId, hasPurchased });

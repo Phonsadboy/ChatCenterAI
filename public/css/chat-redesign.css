@@ -586,6 +586,15 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 0.25rem;
+    gap: 0.5rem;
+}
+
+.user-name-line {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1;
 }
 
 .user-name {
@@ -595,12 +604,59 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.user-state-pills {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1875rem;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.user-state-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1875rem;
+    height: 17px;
+    max-width: 72px;
+    padding: 0 0.3125rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.user-state-pill i {
+    font-size: 0.5625rem;
+    line-height: 1;
+}
+
+.user-state-pill span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.user-state-pill.is-purchased {
+    background: rgba(45, 143, 111, 0.12);
+    border-color: rgba(45, 143, 111, 0.22);
+    color: var(--chat-success);
+}
+
+.user-state-pill.is-followup {
+    background: rgba(223, 169, 75, 0.18);
+    border-color: rgba(223, 169, 75, 0.28);
+    color: #6a4700;
 }
 
 .user-time {
     font-size: 0.75rem;
     color: var(--chat-text-tertiary);
     white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .user-channel {
