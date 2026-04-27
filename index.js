@@ -25529,10 +25529,14 @@ app.get("/admin/chat", async (req, res) => {
 
 app.get("/admin/orders", async (req, res) => {
   try {
-    res.render("admin-orders");
+    res.render("admin-orders", {
+      assetVersion: Date.now().toString(36),
+    });
   } catch (error) {
     console.error("[Orders] ไม่สามารถโหลดหน้าออเดอร์ได้:", error);
-    res.render("admin-orders");
+    res.render("admin-orders", {
+      assetVersion: Date.now().toString(36),
+    });
   }
 });
 
