@@ -38,6 +38,10 @@
     performance.getEntriesByType('navigation')[0]?.type === 'reload';
   let firstPagesRequest = true;
   let firstOrdersRequest = true;
+  let forceFreshNextPagesRequest = false;
+  let forceFreshNextOrdersRequest = false;
+  let realtimeRefreshTimer = null;
+  let socketInitialized = false;
 
   // ============ Status Config ============
   const STATUS_CONFIG = {
@@ -56,6 +60,7 @@
   function init() {
     cacheElements();
     bindEvents();
+    bindRealtimeEvents();
     restoreFilters();
     loadPages();
     loadOrders();
@@ -198,6 +203,44 @@
     });
   }
 
+  function bindRealtimeEvents() {
+    if (socketInitialized || typeof window.io !== 'function') return;
+    socketInitialized = true;
+
+    try {
+      const socket = window.io();
+      socket.on('orderExtracted', () => {
+        scheduleRealtimeRefresh('มีออเดอร์ใหม่จาก AI', true);
+      });
+      socket.on('orderUpdated', () => {
+        scheduleRealtimeRefresh('', false);
+      });
+      socket.on('orderDeleted', () => {
+        scheduleRealtimeRefresh('', true);
+      });
+    } catch (error) {
+      console.warn('[Orders] Socket init failed:', error);
+    }
+  }
+
+  function scheduleRealtimeRefresh(message = '', includePages = false) {
+    forceFreshNextOrdersRequest = true;
+    if (includePages) {
+      forceFreshNextPagesRequest = true;
+    }
+
+    clearTimeout(realtimeRefreshTimer);
+    realtimeRefreshTimer = setTimeout(() => {
+      if (state.loading) {
+        scheduleRealtimeRefresh(message, includePages);
+        return;
+      }
+      if (message) showToast(message, 'info');
+      loadOrders();
+      if (includePages) loadPages();
+    }, 250);
+  }
+
   // ============ Data Loading ============
   async function loadOrders() {
     if (state.loading) return;
@@ -206,9 +249,10 @@
 
     try {
       const params = buildQueryParams();
-      if (firstOrdersRequest && isBrowserReload) {
+      if ((firstOrdersRequest && isBrowserReload) || forceFreshNextOrdersRequest) {
         params.set('fresh', '1');
       }
+      forceFreshNextOrdersRequest = false;
       firstOrdersRequest = false;
       const response = await fetch(`/admin/orders/data?${params.toString()}`);
       const data = await response.json();
@@ -235,9 +279,10 @@
   async function loadPages() {
     try {
       const params = new URLSearchParams();
-      if (firstPagesRequest && isBrowserReload) {
+      if ((firstPagesRequest && isBrowserReload) || forceFreshNextPagesRequest) {
         params.set('fresh', '1');
       }
+      forceFreshNextPagesRequest = false;
       firstPagesRequest = false;
       const suffix = params.toString() ? `?${params.toString()}` : '';
       const response = await fetch(`/admin/orders/pages${suffix}`);

@@ -1704,6 +1704,24 @@ async function getCachedAdminJson(req, cacheParts, producer, options = {}) {
   });
 }
 
+async function invalidateOrdersAdminCache(reason = "") {
+  if (!redisCacheService.isConfigured()) return;
+  const dataPattern = `${redisCacheService.buildKey(["admin", "orders-data"])}:*`;
+  const pagesKey = redisCacheService.buildKey(["admin", "orders-pages"]);
+
+  const [dataDeleted, pagesDeleted] = await Promise.all([
+    redisCacheService.delByPattern(dataPattern),
+    redisCacheService.del(pagesKey),
+  ]);
+
+  if (dataDeleted || pagesDeleted) {
+    const reasonText = reason ? ` (${reason})` : "";
+    console.log(
+      `[Orders] ล้าง cache หน้าออเดอร์${reasonText}: data=${dataDeleted}, pages=${pagesDeleted ? 1 : 0}`,
+    );
+  }
+}
+
 async function maybeMirrorChatMessage(messageDoc, context = "chat_history", options = {}) {
   if (!isPostgresChatWriteEnabled()) {
     return null;
@@ -6364,6 +6382,7 @@ async function saveOrderToDatabase(
       orderDoc._id = result.insertedId;
     }
     await maybeMirrorAppDocumentFromCollection("orders", orderDoc);
+    await invalidateOrdersAdminCache("create");
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
 
     return result.insertedId;
@@ -6699,6 +6718,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
   await coll.updateOne({ _id: order._id }, { $set: updateDoc });
   const updatedOrder = await coll.findOne({ _id: order._id });
   await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
+  await invalidateOrdersAdminCache("tool-update");
 
   try {
     if (io) {
@@ -27405,6 +27425,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
     const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
+    await invalidateOrdersAdminCache("chat-update");
 
     // Emit socket event
     try {
@@ -27455,6 +27476,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
       return res.json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
     }
     await maybeDeleteMirroredAppDocument("orders", order);
+    await invalidateOrdersAdminCache("chat-delete");
 
     // Emit socket event
     try {
@@ -33022,6 +33044,7 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
         { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
         { multiple: true },
       );
+      await invalidateOrdersAdminCache("bulk-status");
     }
 
     console.log(`[Orders] อัปเดตสถานะ ${result.modifiedCount} ออเดอร์เป็น ${status}`);
@@ -33077,6 +33100,9 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
     await Promise.all(
       orders.map((order) => maybeDeleteMirroredAppDocument("orders", order)),
     );
+    if (deleteResult.deletedCount > 0) {
+      await invalidateOrdersAdminCache("bulk-delete");
+    }
 
     const followUpTargets = new Map();
     orders.forEach((order) => {
@@ -33180,6 +33206,7 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     }
     const mirroredOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", mirroredOrder);
+    await invalidateOrdersAdminCache("status");
 
     res.json({
       success: true,
@@ -33221,6 +33248,7 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     await maybeMirrorAppDocumentByQuery(db, "orders", {
       _id: new ObjectId(orderId),
     });
+    await invalidateOrdersAdminCache("notes");
 
     console.log(`[Orders] อัปเดต notes ออเดอร์ ${orderId}`);
     res.json({ success: true, orderId, notes: sanitizedNotes });
@@ -33253,6 +33281,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
       return res.status(500).json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
     }
     await maybeDeleteMirroredAppDocument("orders", order);
+    await invalidateOrdersAdminCache("delete");
 
     try {
       if (io) {

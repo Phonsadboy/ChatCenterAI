@@ -100,6 +100,47 @@ function createRedisCacheService({
     }
   }
 
+  async function delByPattern(pattern) {
+    const activeClient = await getClient();
+    if (!activeClient) return 0;
+    const matchPattern = String(pattern || "").trim();
+    if (!matchPattern) return 0;
+
+    let deletedCount = 0;
+    try {
+      if (typeof activeClient.scanIterator === "function") {
+        for await (const keys of activeClient.scanIterator({
+          MATCH: matchPattern,
+          COUNT: 100,
+        })) {
+          const batch = Array.isArray(keys) ? keys : [keys];
+          const validKeys = batch.filter(Boolean);
+          if (validKeys.length > 0) {
+            deletedCount += await activeClient.del(validKeys);
+          }
+        }
+        return deletedCount;
+      }
+
+      let cursor = "0";
+      do {
+        const reply = await activeClient.scan(cursor, {
+          MATCH: matchPattern,
+          COUNT: 100,
+        });
+        cursor = String(reply?.cursor ?? reply?.[0] ?? "0");
+        const keys = reply?.keys ?? reply?.[1] ?? [];
+        if (Array.isArray(keys) && keys.length > 0) {
+          deletedCount += await activeClient.del(keys);
+        }
+      } while (cursor !== "0");
+      return deletedCount;
+    } catch (error) {
+      logger.warn?.("[Redis] delByPattern failed:", error?.message || error);
+      return 0;
+    }
+  }
+
   async function close() {
     if (!client) return;
     const currentClient = client;
@@ -117,6 +158,7 @@ function createRedisCacheService({
     buildKey,
     close,
     del,
+    delByPattern,
     getJson,
     isConfigured,
     setJson,
