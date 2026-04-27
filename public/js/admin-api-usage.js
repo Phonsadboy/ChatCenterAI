@@ -114,31 +114,46 @@ async function loadDashboardData() {
 
 function getDateParams() {
     const range = document.getElementById('dateRangeSelect').value;
-    const now = new Date();
-    const endDate = new Date(now);
-    endDate.setHours(23, 59, 59, 999);
-    let startDate = null;
-
-    if (range === 'today') {
-        startDate = new Date(now);
-    } else if (range === '7days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 6); // รวมวันนี้ + ย้อน 6 วัน = 7 วัน
-    } else if (range === '30days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 29);
-    } else if (range === 'all') {
-        startDate = new Date(0);
-    }
-
-    if (startDate) {
-        startDate.setHours(0, 0, 0, 0);
-    }
+    const dateRange = getQuickDateRange(range);
 
     const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate.toISOString());
-    params.append('endDate', endDate.toISOString());
+    if (dateRange.startDate) params.append('startDate', dateRange.startDate);
+    if (dateRange.endDate) params.append('endDate', dateRange.endDate);
     return params;
+}
+
+function getQuickDateRange(range) {
+    if (window.BangkokDateUtils?.quickRange && range !== 'all') {
+        return window.BangkokDateUtils.quickRange(range);
+    }
+    if (range === 'all') {
+        return {
+            startDate: '1970-01-01',
+            endDate: formatDateForApi(new Date())
+        };
+    }
+    const now = new Date();
+    const endDate = formatDateForApi(now);
+    const start = new Date(now);
+    if (range === '7days') start.setDate(now.getDate() - 6);
+    if (range === '30days') start.setDate(now.getDate() - 29);
+    return { startDate: formatDateForApi(start), endDate };
+}
+
+function formatDateForApi(date) {
+    if (window.BangkokDateUtils?.formatDateInput) {
+        return window.BangkokDateUtils.formatDateInput(date);
+    }
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(date).reduce((acc, part) => {
+        if (part.type !== 'literal') acc[part.type] = part.value;
+        return acc;
+    }, {});
+    return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 // ==================== Summary Cards ====================
@@ -899,7 +914,7 @@ function exportToCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `api-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `api-usage-${formatDateForApi(new Date())}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 }

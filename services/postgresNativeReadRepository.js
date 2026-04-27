@@ -1,5 +1,10 @@
 "use strict";
 
+const moment = require("moment-timezone");
+
+const BANGKOK_TZ = "Asia/Bangkok";
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 function normalizeString(value) {
   if (value === null || typeof value === "undefined") return "";
   if (typeof value === "string") return value.trim();
@@ -11,15 +16,29 @@ function normalizePlatform(value, fallback = "line") {
   return normalizeString(value).toLowerCase() || fallback;
 }
 
-function normalizeDate(value) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString();
+function parseBangkokDateMoment(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : moment(value).tz(BANGKOK_TZ);
   }
-  if (typeof value === "string" || typeof value === "number") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  if (typeof value === "number") {
+    const parsed = moment(value);
+    return parsed.isValid() ? parsed.tz(BANGKOK_TZ) : null;
   }
-  return null;
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (DATE_ONLY_PATTERN.test(raw)) {
+    const parsedDateOnly = moment.tz(raw, "YYYY-MM-DD", BANGKOK_TZ);
+    return parsedDateOnly.isValid() ? parsedDateOnly : null;
+  }
+  const parsed = moment(raw);
+  return parsed.isValid() ? parsed.tz(BANGKOK_TZ) : null;
+}
+
+function getBangkokDateBoundary(value, boundary = "start") {
+  const parsed = parseBangkokDateMoment(value);
+  if (!parsed || !parsed.isValid()) return null;
+  return boundary === "end" ? parsed.endOf("day") : parsed.startOf("day");
 }
 
 function parseOrderPageKey(pageKey) {
@@ -105,22 +124,16 @@ function buildOrderWhere(filters = {}) {
     clauses.push(`status = ${addParam(params, filters.status)}`);
   }
 
-  const timezone = "Asia/Bangkok";
   let startDate = null;
   let endDate = null;
   if (filters.todayOnly === "true") {
-    const now = new Date();
-    const bangkokNow = new Date(
-      now.toLocaleString("en-US", { timeZone: timezone }),
-    );
-    bangkokNow.setHours(0, 0, 0, 0);
-    startDate = bangkokNow.toISOString();
-    const bangkokEnd = new Date(bangkokNow);
-    bangkokEnd.setHours(23, 59, 59, 999);
-    endDate = bangkokEnd.toISOString();
+    startDate = moment.tz(BANGKOK_TZ).startOf("day").toISOString();
+    endDate = moment.tz(BANGKOK_TZ).endOf("day").toISOString();
   } else {
-    startDate = normalizeDate(filters.startDate);
-    endDate = normalizeDate(filters.endDate);
+    const startMoment = getBangkokDateBoundary(filters.startDate, "start");
+    const endMoment = getBangkokDateBoundary(filters.endDate, "end");
+    startDate = startMoment ? startMoment.toISOString() : null;
+    endDate = endMoment ? endMoment.toISOString() : null;
   }
   if (startDate) {
     clauses.push(`extracted_at >= ${addParam(params, startDate)}::timestamptz`);

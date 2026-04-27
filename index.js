@@ -6705,6 +6705,7 @@ async function clearUserChatHistory(userId) {
 }
 
 const BANGKOK_TZ = "Asia/Bangkok";
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const FOLLOW_UP_BASE_CACHE_TTL = 60 * 1000;
 let followUpBaseConfigCache = null;
 let followUpBaseCacheTimestamp = 0;
@@ -6728,6 +6729,39 @@ function getBangkokMoment(value = null) {
   if (typeof value === "number") return moment.tz(value, BANGKOK_TZ);
   if (typeof value === "string") return moment.tz(new Date(value), BANGKOK_TZ);
   return moment.tz(BANGKOK_TZ);
+}
+
+function parseBangkokDateMoment(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : moment(value).tz(BANGKOK_TZ);
+  }
+  if (typeof value === "number") {
+    const parsed = moment(value);
+    return parsed.isValid() ? parsed.tz(BANGKOK_TZ) : null;
+  }
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (DATE_ONLY_PATTERN.test(raw)) {
+    const parsedDateOnly = moment.tz(raw, "YYYY-MM-DD", BANGKOK_TZ);
+    return parsedDateOnly.isValid() ? parsedDateOnly : null;
+  }
+  const parsed = moment(raw);
+  return parsed.isValid() ? parsed.tz(BANGKOK_TZ) : null;
+}
+
+function getBangkokDateBoundary(value, boundary = "start") {
+  const parsed = parseBangkokDateMoment(value);
+  if (!parsed || !parsed.isValid()) return null;
+  return boundary === "end" ? parsed.endOf("day") : parsed.startOf("day");
+}
+
+function getBangkokTodayRange() {
+  const today = getBangkokMoment();
+  return {
+    startMoment: today.clone().startOf("day"),
+    endMoment: today.clone().endOf("day"),
+  };
 }
 
 function getDateKey(date = new Date()) {
@@ -9424,25 +9458,17 @@ function buildOrderQuery(params = {}) {
     query.status = status;
   }
 
-  const timezone = "Asia/Bangkok";
   let startMoment = null;
   let endMoment = null;
 
   if (params.todayOnly === "true") {
-    startMoment = moment().tz(timezone).startOf("day");
-    endMoment = moment().tz(timezone).endOf("day");
+    ({ startMoment, endMoment } = getBangkokTodayRange());
   } else {
     if (params.startDate) {
-      const parsedStart = moment.tz(params.startDate, timezone);
-      if (parsedStart.isValid()) {
-        startMoment = parsedStart.startOf("day");
-      }
+      startMoment = getBangkokDateBoundary(params.startDate, "start");
     }
     if (params.endDate) {
-      const parsedEnd = moment.tz(params.endDate, timezone);
-      if (parsedEnd.isValid()) {
-        endMoment = parsedEnd.endOf("day");
-      }
+      endMoment = getBangkokDateBoundary(params.endDate, "end");
     }
   }
 
@@ -16109,6 +16135,12 @@ function getResponsesReasoningSupport(modelId) {
       defaultEffort: "high",
     };
   }
+  if (normalized === "gpt-5.5") {
+    return {
+      allowed: ["none", "low", "medium", "high", "xhigh"],
+      defaultEffort: "medium",
+    };
+  }
   if (
     normalized === "gpt-5.4" ||
     normalized === "gpt-5.4-mini" ||
@@ -17140,8 +17172,10 @@ function normalizeImageDataUrl(rawContent) {
 
 function resolveVisionDetail(modelId, useHighDetail) {
   const chatDetail = useHighDetail ? "high" : "low";
+  const normalizedModel = normalizeModelIdentifier(modelId);
   const responsesDetail =
-    useHighDetail && normalizeModelIdentifier(modelId).startsWith("gpt-5.4")
+    useHighDetail &&
+    (normalizedModel.startsWith("gpt-5.5") || normalizedModel.startsWith("gpt-5.4"))
       ? "original"
       : chatDetail;
   return { chatDetail, responsesDetail };
@@ -20301,15 +20335,12 @@ app.get("/admin/api/audit-logs", requirePermission("audit:view"), async (req, re
         { userId: { $regex: search, $options: "i" } },
       ];
     }
-    const fromDate = req.query.from ? new Date(String(req.query.from)) : null;
-    const toDate = req.query.to ? new Date(String(req.query.to)) : null;
-    if ((fromDate && !Number.isNaN(fromDate.getTime())) || (toDate && !Number.isNaN(toDate.getTime()))) {
+    const fromDate = req.query.from ? getBangkokDateBoundary(req.query.from, "start") : null;
+    const toDate = req.query.to ? getBangkokDateBoundary(req.query.to, "end") : null;
+    if (fromDate || toDate) {
       query.createdAt = {};
-      if (fromDate && !Number.isNaN(fromDate.getTime())) query.createdAt.$gte = fromDate;
-      if (toDate && !Number.isNaN(toDate.getTime())) {
-        toDate.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = toDate;
-      }
+      if (fromDate) query.createdAt.$gte = fromDate.toDate();
+      if (toDate) query.createdAt.$lte = toDate.toDate();
     }
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     const docs = await db.collection("audit_logs").find(query).sort({ createdAt: -1 }).limit(limit).toArray();
@@ -30147,21 +30178,18 @@ app.post("/api/instruction-conversations/:instructionId/rebuild", requirePermiss
 function parseCustomerStatsDateRange(startDateStr, endDateStr) {
   const today = getBangkokMoment();
   let startMoment = startDateStr
-    ? moment.tz(startDateStr, "YYYY-MM-DD", BANGKOK_TZ)
-    : today.clone();
+    ? getBangkokDateBoundary(startDateStr, "start")
+    : today.clone().startOf("day");
   let endMoment = endDateStr
-    ? moment.tz(endDateStr, "YYYY-MM-DD", BANGKOK_TZ)
-    : today.clone();
+    ? getBangkokDateBoundary(endDateStr, "end")
+    : today.clone().endOf("day");
 
-  if (!startMoment.isValid()) {
-    startMoment = today.clone();
+  if (!startMoment || !startMoment.isValid()) {
+    startMoment = today.clone().startOf("day");
   }
-  if (!endMoment.isValid()) {
-    endMoment = startMoment.clone();
+  if (!endMoment || !endMoment.isValid()) {
+    endMoment = startMoment.clone().endOf("day");
   }
-
-  startMoment = startMoment.startOf("day");
-  endMoment = endMoment.endOf("day");
 
   if (endMoment.isBefore(startMoment)) {
     endMoment = startMoment.clone().endOf("day");
@@ -32259,15 +32287,12 @@ function buildDataFormSubmissionQuery(queryParams = {}, req = null) {
   if (typeof queryParams.botId === "string" && queryParams.botId.trim()) {
     query.botId = queryParams.botId.trim();
   }
-  const startDate = queryParams.startDate ? new Date(String(queryParams.startDate)) : null;
-  const endDate = queryParams.endDate ? new Date(String(queryParams.endDate)) : null;
-  if ((startDate && !Number.isNaN(startDate.getTime())) || (endDate && !Number.isNaN(endDate.getTime()))) {
+  const startMoment = queryParams.startDate ? getBangkokDateBoundary(queryParams.startDate, "start") : null;
+  const endMoment = queryParams.endDate ? getBangkokDateBoundary(queryParams.endDate, "end") : null;
+  if (startMoment || endMoment) {
     query.createdAt = {};
-    if (startDate && !Number.isNaN(startDate.getTime())) query.createdAt.$gte = startDate;
-    if (endDate && !Number.isNaN(endDate.getTime())) {
-      endDate.setHours(23, 59, 59, 999);
-      query.createdAt.$lte = endDate;
-    }
+    if (startMoment) query.createdAt.$gte = startMoment.toDate();
+    if (endMoment) query.createdAt.$lte = endMoment.toDate();
   }
   if (typeof queryParams.agent === "string" && queryParams.agent.trim()) {
     const agent = queryParams.agent.trim();
@@ -36320,6 +36345,7 @@ app.post("/api/settings/ai", requirePermission("settings:bot"), async (req, res)
 
     // Validate input
     const validModels = [
+      "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
       "gpt-5.4-nano",
@@ -36662,6 +36688,7 @@ app.post("/api/settings/filter", requirePermission("settings:security-filter"), 
 // Model pricing (USD per 1M tokens)
 const OPENAI_MODEL_PRICING = {
   // GPT-5 series
+  "gpt-5.5": { input: 5.0, cachedInput: 0.5, output: 30.0 },
   "gpt-5": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.1": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.4": { input: 2.5, cachedInput: 0.25, output: 15.0 },
@@ -37309,31 +37336,20 @@ app.post("/api/openai-keys/:id/test", requirePermission("api-keys:manage"), asyn
 // GET: Usage statistics summary
 function parseApiUsageDateRange(startDateStr, endDateStr) {
   const now = getBangkokMoment();
-  let startMoment = startDateStr
-    ? moment(startDateStr).tz(BANGKOK_TZ)
-    : null;
-  let endMoment = endDateStr ? moment(endDateStr).tz(BANGKOK_TZ) : null;
-
-  if (!startMoment || !startMoment.isValid()) {
-    startMoment = null;
-  }
-  if (!endMoment || !endMoment.isValid()) {
-    endMoment = null;
-  }
+  let startMoment = startDateStr ? getBangkokDateBoundary(startDateStr, "start") : null;
+  let endMoment = endDateStr ? getBangkokDateBoundary(endDateStr, "end") : null;
 
   if (!startMoment && endMoment) {
-    startMoment = endMoment.clone();
+    startMoment = endMoment.clone().startOf("day");
   } else if (!endMoment && startMoment) {
-    endMoment = startMoment.clone();
+    endMoment = startMoment.clone().endOf("day");
   }
 
   if (!startMoment && !endMoment) {
-    startMoment = now.clone().subtract(7, "days");
-    endMoment = now.clone();
+    startMoment = now.clone().subtract(7, "days").startOf("day");
+    endMoment = now.clone().endOf("day");
   }
 
-  startMoment = startMoment.startOf("day");
-  endMoment = endMoment.endOf("day");
   if (endMoment.isBefore(startMoment)) {
     endMoment = startMoment.clone().endOf("day");
   }

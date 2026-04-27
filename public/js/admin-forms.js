@@ -323,15 +323,11 @@
   }
 
   function applyQuickDate(range) {
-    const today = new Date();
-    const start = new Date(today);
-    if (range === "7days") start.setDate(today.getDate() - 6);
-    if (range === "30days") start.setDate(today.getDate() - 29);
-    if (range === "today") start.setDate(today.getDate());
+    const dateRange = getQuickDateRange(range);
 
     state.filters.quickDate = range;
-    state.filters.startDate = formatInputDate(start);
-    state.filters.endDate = formatInputDate(today);
+    state.filters.startDate = dateRange.startDate;
+    state.filters.endDate = dateRange.endDate;
     if (els.startDate) els.startDate.value = state.filters.startDate;
     if (els.endDate) els.endDate.value = state.filters.endDate;
     document.querySelectorAll(".forms-quick-dates button").forEach((button) => {
@@ -930,10 +926,27 @@
   }
 
   function formatInputDate(value) {
+    if (window.BangkokDateUtils?.formatDateInput) {
+      return window.BangkokDateUtils.formatDateInput(value);
+    }
     const year = value.getFullYear();
     const month = String(value.getMonth() + 1).padStart(2, "0");
     const day = String(value.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
+  }
+
+  function getQuickDateRange(range) {
+    if (window.BangkokDateUtils?.quickRange) {
+      return window.BangkokDateUtils.quickRange(range);
+    }
+    const today = new Date();
+    const start = new Date(today);
+    if (range === "7days") start.setDate(today.getDate() - 6);
+    if (range === "30days") start.setDate(today.getDate() - 29);
+    return {
+      startDate: formatInputDate(start),
+      endDate: formatInputDate(today),
+    };
   }
 
   function formatNumber(value) {

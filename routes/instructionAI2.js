@@ -7,7 +7,7 @@ const {
   computeContentHash,
 } = require("../services/instructionAI2Service");
 
-const DEFAULT_AI2_MODEL = "gpt-5.4";
+const DEFAULT_AI2_MODEL = "gpt-5.5";
 const DEFAULT_AI2_THINKING = "medium";
 const MAX_AI2_TOOL_ITERATIONS = 16;
 const imageUpload = multer({

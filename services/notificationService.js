@@ -6,6 +6,7 @@ const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const BANGKOK_TZ = "Asia/Bangkok";
 
 function normalizePlatform(value) {
   const platform = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -95,10 +96,8 @@ async function fetchOrderImageRefs(db, order) {
   // กรณีที่ 2: ไม่มี orderId แต่มีวันที่สร้าง - ดึงรูปจากวันเดียวกัน
   if (ObjectId.isValid(orderId)) {
     // ดึงทั้งรูปที่มี orderId และรูปในวันเดียวกัน
-    const dayStart = new Date(orderCreatedAt || new Date());
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
+    const dayStart = moment.tz(orderCreatedAt || new Date(), BANGKOK_TZ).startOf("day").toDate();
+    const dayEnd = moment.tz(orderCreatedAt || new Date(), BANGKOK_TZ).add(1, "day").startOf("day").toDate();
 
     query.$or = [
       { orderId: new ObjectId(orderId) },
@@ -109,10 +108,8 @@ async function fetchOrderImageRefs(db, order) {
     ];
   } else if (orderCreatedAt) {
     // ดึงรูปจากวันที่สร้างออเดอร์
-    const dayStart = new Date(orderCreatedAt);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
+    const dayStart = moment.tz(orderCreatedAt, BANGKOK_TZ).startOf("day").toDate();
+    const dayEnd = moment.tz(orderCreatedAt, BANGKOK_TZ).add(1, "day").startOf("day").toDate();
 
     query.timestamp = { $gte: dayStart, $lt: dayEnd };
   } else {

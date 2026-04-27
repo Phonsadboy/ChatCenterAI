@@ -24,6 +24,7 @@ const CUSTOMER_MODEL_OPTIONS = [
   "gpt-4o",
   "gpt-4o-mini",
   "gpt-5.2-mini",
+  "gpt-5.5",
 ];
 
 function generateInstructionId() {

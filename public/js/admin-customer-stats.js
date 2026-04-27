@@ -66,8 +66,7 @@
   }
 
   function setDefaultDates() {
-    const today = new Date();
-    const todayStr = formatDateForInput(today);
+    const todayStr = getQuickDateRange('today').endDate;
     state.filters.startDate = todayStr;
     state.filters.endDate = todayStr;
     els.startDate.value = todayStr;
@@ -90,19 +89,9 @@
 
   function handleQuickDate(range) {
     state.filters.quickDate = range;
-    const today = new Date();
-    let startDate = new Date();
-
-    if (range === 'today') {
-      startDate = today;
-    } else if (range === '7days') {
-      startDate.setDate(today.getDate() - 6);
-    } else if (range === '30days') {
-      startDate.setDate(today.getDate() - 29);
-    }
-
-    state.filters.startDate = formatDateForInput(startDate);
-    state.filters.endDate = formatDateForInput(today);
+    const dateRange = getQuickDateRange(range);
+    state.filters.startDate = dateRange.startDate;
+    state.filters.endDate = dateRange.endDate;
     els.startDate.value = state.filters.startDate;
     els.endDate.value = state.filters.endDate;
     updateQuickDateButtons();
@@ -666,10 +655,27 @@
   }
 
   function formatDateForInput(date) {
+    if (window.BangkokDateUtils?.formatDateInput) {
+      return window.BangkokDateUtils.formatDateInput(date);
+    }
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  }
+
+  function getQuickDateRange(range) {
+    if (window.BangkokDateUtils?.quickRange) {
+      return window.BangkokDateUtils.quickRange(range);
+    }
+    const today = new Date();
+    const start = new Date(today);
+    if (range === '7days') start.setDate(today.getDate() - 6);
+    if (range === '30days') start.setDate(today.getDate() - 29);
+    return {
+      startDate: formatDateForInput(start),
+      endDate: formatDateForInput(today),
+    };
   }
 
   function escapeHtml(str) {

@@ -7,6 +7,30 @@
 
 const { ObjectId } = require("bson");
 const crypto = require("crypto");
+const moment = require("moment-timezone");
+
+const BANGKOK_TZ = "Asia/Bangkok";
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseBangkokDateBoundary(value, boundary = "start") {
+    if (!value) return null;
+    let parsed = null;
+    if (value instanceof Date) {
+        parsed = Number.isNaN(value.getTime()) ? null : moment(value).tz(BANGKOK_TZ);
+    } else if (typeof value === "number") {
+        const numericMoment = moment(value);
+        parsed = numericMoment.isValid() ? numericMoment.tz(BANGKOK_TZ) : null;
+    } else if (typeof value === "string") {
+        const raw = value.trim();
+        if (raw) {
+            parsed = DATE_ONLY_PATTERN.test(raw)
+                ? moment.tz(raw, "YYYY-MM-DD", BANGKOK_TZ)
+                : moment(raw).tz(BANGKOK_TZ);
+        }
+    }
+    if (!parsed || !parsed.isValid()) return null;
+    return (boundary === "end" ? parsed.endOf("day") : parsed.startOf("day")).toDate();
+}
 
 class ConversationThreadService {
     constructor(db) {
@@ -384,8 +408,10 @@ class ConversationThreadService {
         // Date range
         if (filters.dateFrom || filters.dateTo) {
             query["stats.lastMessageAt"] = {};
-            if (filters.dateFrom) query["stats.lastMessageAt"].$gte = new Date(filters.dateFrom);
-            if (filters.dateTo) query["stats.lastMessageAt"].$lte = new Date(filters.dateTo);
+            const dateFrom = parseBangkokDateBoundary(filters.dateFrom, "start");
+            const dateTo = parseBangkokDateBoundary(filters.dateTo, "end");
+            if (dateFrom) query["stats.lastMessageAt"].$gte = dateFrom;
+            if (dateTo) query["stats.lastMessageAt"].$lte = dateTo;
         }
 
         // Sort
@@ -577,8 +603,10 @@ class ConversationThreadService {
         const query = this._buildInstructionQuery(instructionId, version);
         if (dateRange.from || dateRange.to) {
             query["stats.lastMessageAt"] = {};
-            if (dateRange.from) query["stats.lastMessageAt"].$gte = new Date(dateRange.from);
-            if (dateRange.to) query["stats.lastMessageAt"].$lte = new Date(dateRange.to);
+            const dateFrom = parseBangkokDateBoundary(dateRange.from, "start");
+            const dateTo = parseBangkokDateBoundary(dateRange.to, "end");
+            if (dateFrom) query["stats.lastMessageAt"].$gte = dateFrom;
+            if (dateTo) query["stats.lastMessageAt"].$lte = dateTo;
         }
 
         const pipeline = [

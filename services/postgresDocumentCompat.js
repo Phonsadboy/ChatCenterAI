@@ -8,6 +8,23 @@ const DEFAULT_SCAN_LIMIT = Math.max(
   Number.parseInt(process.env.POSTGRES_COMPAT_SCAN_LIMIT || "50000", 10) || 50000,
 );
 
+function formatDateInTimeZone(date, timezone = "UTC") {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date).reduce((acc, part) => {
+      if (part.type !== "literal") acc[part.type] = part.value;
+      return acc;
+    }, {});
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  } catch (_) {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
 const SQL_PUSH_DOWN_FIELDS = new Set([
   "_id",
   "agentId",
@@ -480,7 +497,7 @@ function evalExpression(expression, doc, variables = {}) {
   if (Object.prototype.hasOwnProperty.call(expression, "$dateToString")) {
     const date = new Date(evalExpression(expression.$dateToString.date, doc, variables));
     if (!Number.isFinite(date.getTime())) return "";
-    return date.toISOString().slice(0, 10);
+    return formatDateInTimeZone(date, expression.$dateToString.timezone || "UTC");
   }
 
   const output = {};

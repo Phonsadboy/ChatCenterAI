@@ -306,6 +306,7 @@ async function run() {
   const usageResult = await service.applyImageUsageRebuild(usageProposal);
   assert.strictEqual(usageResult.rebuilt, true);
 
+  assert.deepStrictEqual(service.modelValidator("gpt-5.5", "medium").ok, true);
   assert.deepStrictEqual(service.modelValidator("gpt-5.4-mini", "low").ok, true);
   assert.deepStrictEqual(service.modelValidator("not-real", "low").ok, false);
 

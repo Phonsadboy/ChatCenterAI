@@ -588,21 +588,9 @@
     document.querySelectorAll('.orders-quick-date-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
 
-    const today = new Date();
-    let startDate = '';
-    let endDate = formatDateInput(today);
-
-    if (range === 'today') {
-      startDate = endDate;
-    } else if (range === '7days') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 6);
-      startDate = formatDateInput(d);
-    } else if (range === '30days') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 29);
-      startDate = formatDateInput(d);
-    }
+    const dateRange = getQuickDateRange(range);
+    const startDate = dateRange.startDate;
+    const endDate = dateRange.endDate;
 
     state.filters.startDate = startDate;
     state.filters.endDate = endDate;
@@ -1168,10 +1156,25 @@
   }
 
   function formatDateInput(date) {
+    if (window.BangkokDateUtils?.formatDateInput) {
+      return window.BangkokDateUtils.formatDateInput(date);
+    }
     const y = date.getFullYear();
     const m = (date.getMonth() + 1).toString().padStart(2, '0');
     const d = date.getDate().toString().padStart(2, '0');
     return `${y}-${m}-${d}`;
+  }
+
+  function getQuickDateRange(range) {
+    if (window.BangkokDateUtils?.quickRange) {
+      return window.BangkokDateUtils.quickRange(range);
+    }
+    const today = new Date();
+    const endDate = formatDateInput(today);
+    const start = new Date(today);
+    if (range === '7days') start.setDate(today.getDate() - 6);
+    if (range === '30days') start.setDate(today.getDate() - 29);
+    return { startDate: formatDateInput(start), endDate };
   }
 
   function escapeHtml(str) {

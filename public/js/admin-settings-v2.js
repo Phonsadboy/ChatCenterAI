@@ -18,6 +18,7 @@ const BOT_LABELS = {
 };
 const DEFAULT_BOT_MODEL = 'gpt-5.4-mini';
 const BOT_MODEL_PRESETS = [
+    'gpt-5.5',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.4-nano',
@@ -2105,6 +2106,13 @@ function getBotReasoningSupport(modelId) {
         return {
             allowed: ['high'],
             defaultEffort: 'high'
+        };
+    }
+
+    if (normalized === 'gpt-5.5') {
+        return {
+            allowed: ['none', 'low', 'medium', 'high', 'xhigh'],
+            defaultEffort: 'medium'
         };
     }
 

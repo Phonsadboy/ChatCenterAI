@@ -295,6 +295,7 @@ function resolveBotName(platform, bot = {}) {
 }
 
 const AI2_MODEL_CATALOG = {
+  "gpt-5.5": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
@@ -1104,7 +1105,7 @@ class InstructionAI2Service {
       model,
       efforts: config.efforts,
       defaultEffort: config.defaultEffort,
-      recommended: model === "gpt-5.4",
+      recommended: model === "gpt-5.5",
     }));
     const runtimeConventions = buildRuntimeConventions({
       activeCollectionIds: Array.from(linkedCollectionIds),
@@ -1169,7 +1170,7 @@ class InstructionAI2Service {
           outOfScopeAllowedWithConfirm: true,
         },
         model: {
-          default: { model: "gpt-5.4", reasoningEffort: "medium" },
+          default: { model: "gpt-5.5", reasoningEffort: "medium" },
           catalog: modelCatalog,
           linkedPageModels: linkedPages.map((page) => ({
             pageKey: page.pageKey,
