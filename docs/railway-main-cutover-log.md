@@ -41,7 +41,7 @@ Additional workspace migration:
 
 | Project | Workspace | Project ID | Web service | Old MongoDB service | Railway domain | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| adaptable-nature | `ศศินภัทร์ ปภัสร์กุลชารัตน์'s Projects` | `be7f82cc-92d6-4cc5-b1c7-b07c76d292eb` | `20329a27-f514-43f3-8998-6d7fec0278cb` | `0a90163c-367b-49ee-92e4-f97bf93f1f97` | `web-production-09f35.up.railway.app` | Postgres cutover complete; MongoDB deployment stopped, but service/volume deletion blocked by Railway permission |
+| adaptable-nature | `ศศินภัทร์ ปภัสร์กุลชารัตน์'s Projects` | `be7f82cc-92d6-4cc5-b1c7-b07c76d292eb` | `20329a27-f514-43f3-8998-6d7fec0278cb` | `0a90163c-367b-49ee-92e4-f97bf93f1f97` | `web-production-09f35.up.railway.app` | Postgres cutover complete with full `chat_history` (`92003`, missing `0`); MongoDB deployment stopped, but service/volume deletion blocked by Railway permission |
 
 ## Run Notes
 

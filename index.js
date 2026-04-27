@@ -3666,6 +3666,32 @@ function getBangkokMoment(value = null) {
   return moment.tz(BANGKOK_TZ);
 }
 
+function parseBangkokDateInput(value) {
+  if (value === null || typeof value === "undefined" || value === "") {
+    return null;
+  }
+  if (value instanceof Date || typeof value === "number") {
+    const parsed = moment.tz(value, BANGKOK_TZ);
+    return parsed.isValid() ? parsed : null;
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const parsedDateOnly = moment.tz(text, "YYYY-MM-DD", true, BANGKOK_TZ);
+    return parsedDateOnly.isValid() ? parsedDateOnly : null;
+  }
+
+  const parsedWithZone = moment.parseZone(text);
+  if (parsedWithZone.isValid()) {
+    return parsedWithZone.tz(BANGKOK_TZ);
+  }
+
+  const parsedInBangkok = moment.tz(text, BANGKOK_TZ);
+  return parsedInBangkok.isValid() ? parsedInBangkok : null;
+}
+
 function getDateKey(date = new Date()) {
   return getBangkokMoment(date).format("YYYY-MM-DD");
 }
@@ -6248,14 +6274,14 @@ function buildOrderQuery(params = {}) {
     endMoment = moment().tz(timezone).endOf("day");
   } else {
     if (params.startDate) {
-      const parsedStart = moment.tz(params.startDate, timezone);
-      if (parsedStart.isValid()) {
+      const parsedStart = parseBangkokDateInput(params.startDate);
+      if (parsedStart?.isValid()) {
         startMoment = parsedStart.startOf("day");
       }
     }
     if (params.endDate) {
-      const parsedEnd = moment.tz(params.endDate, timezone);
-      if (parsedEnd.isValid()) {
+      const parsedEnd = parseBangkokDateInput(params.endDate);
+      if (parsedEnd?.isValid()) {
         endMoment = parsedEnd.endOf("day");
       }
     }
@@ -22412,7 +22438,9 @@ app.get("/admin/dashboard", async (req, res) => {
 
 // API Usage Statistics Page
 app.get("/admin/api-usage", async (req, res) => {
-  res.render("admin-api-usage");
+  res.render("admin-api-usage", {
+    assetVersion: Date.now().toString(36),
+  });
 });
 
 // Create Data Item (V2) - Full Page Editor for Text
@@ -26431,16 +26459,16 @@ app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, 
 function parseCustomerStatsDateRange(startDateStr, endDateStr) {
   const today = getBangkokMoment();
   let startMoment = startDateStr
-    ? moment.tz(startDateStr, "YYYY-MM-DD", BANGKOK_TZ)
+    ? parseBangkokDateInput(startDateStr)
     : today.clone();
   let endMoment = endDateStr
-    ? moment.tz(endDateStr, "YYYY-MM-DD", BANGKOK_TZ)
+    ? parseBangkokDateInput(endDateStr)
     : today.clone();
 
-  if (!startMoment.isValid()) {
+  if (!startMoment?.isValid()) {
     startMoment = today.clone();
   }
-  if (!endMoment.isValid()) {
+  if (!endMoment?.isValid()) {
     endMoment = startMoment.clone();
   }
 
@@ -26456,10 +26484,14 @@ function parseCustomerStatsDateRange(startDateStr, endDateStr) {
 
 app.get("/admin/customer-stats", async (req, res) => {
   try {
-    res.render("admin-customer-stats");
+    res.render("admin-customer-stats", {
+      assetVersion: Date.now().toString(36),
+    });
   } catch (error) {
     console.error("[CustomerStats] ไม่สามารถโหลดหน้าสถิติลูกค้าได้:", error);
-    res.render("admin-customer-stats");
+    res.render("admin-customer-stats", {
+      assetVersion: Date.now().toString(36),
+    });
   }
 });
 
@@ -29725,12 +29757,16 @@ app.get("/admin/api/notification-logs", requireAdmin, async (req, res) => {
     if (from || to) {
       query.createdAt = {};
       if (from) {
-        const fromDate = new Date(from);
-        if (!Number.isNaN(fromDate.getTime())) query.createdAt.$gte = fromDate;
+        const fromMoment = parseBangkokDateInput(from);
+        if (fromMoment?.isValid()) {
+          query.createdAt.$gte = fromMoment.startOf("day").toDate();
+        }
       }
       if (to) {
-        const toDate = new Date(to);
-        if (!Number.isNaN(toDate.getTime())) query.createdAt.$lte = toDate;
+        const toMoment = parseBangkokDateInput(to);
+        if (toMoment?.isValid()) {
+          query.createdAt.$lte = toMoment.endOf("day").toDate();
+        }
       }
       if (!Object.keys(query.createdAt).length) {
         delete query.createdAt;
@@ -31414,10 +31450,8 @@ app.post("/api/openai-keys/:id/test", async (req, res) => {
 // GET: Usage statistics summary
 function parseApiUsageDateRange(startDateStr, endDateStr) {
   const now = getBangkokMoment();
-  let startMoment = startDateStr
-    ? moment(startDateStr).tz(BANGKOK_TZ)
-    : null;
-  let endMoment = endDateStr ? moment(endDateStr).tz(BANGKOK_TZ) : null;
+  let startMoment = startDateStr ? parseBangkokDateInput(startDateStr) : null;
+  let endMoment = endDateStr ? parseBangkokDateInput(endDateStr) : null;
 
   if (!startMoment || !startMoment.isValid()) {
     startMoment = null;
@@ -31433,7 +31467,7 @@ function parseApiUsageDateRange(startDateStr, endDateStr) {
   }
 
   if (!startMoment && !endMoment) {
-    startMoment = now.clone().subtract(7, "days");
+    startMoment = now.clone().subtract(6, "days");
     endMoment = now.clone();
   }
 
@@ -31447,7 +31481,6 @@ function parseApiUsageDateRange(startDateStr, endDateStr) {
 }
 
 const OPENAI_USAGE_COLLECTION = "openai_usage_logs";
-const OPENAI_USAGE_TIMESTAMP_TEXT_SQL = "payload->>'timestamp'";
 const OPENAI_USAGE_TIMESTAMP_SQL = "(payload->>'timestamp')::timestamptz";
 const OPENAI_USAGE_PROMPT_TOKENS_SQL =
   "CASE WHEN payload->>'promptTokens' ~ '^-?[0-9]+(\\\\.[0-9]+)?$' THEN (payload->>'promptTokens')::numeric ELSE 0 END";
@@ -31473,8 +31506,8 @@ function buildOpenAiUsagePostgresFilter({
   ];
   const clauses = [
     "collection_name = $1",
-    `${OPENAI_USAGE_TIMESTAMP_TEXT_SQL} >= $2`,
-    `${OPENAI_USAGE_TIMESTAMP_TEXT_SQL} <= $3`,
+    `${OPENAI_USAGE_TIMESTAMP_SQL} >= $2::timestamptz`,
+    `${OPENAI_USAGE_TIMESTAMP_SQL} <= $3::timestamptz`,
   ];
 
   const addPayloadEquals = (field, value) => {

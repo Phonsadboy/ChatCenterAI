@@ -7,6 +7,7 @@ const DEFAULT_SCAN_LIMIT = Math.max(
   1000,
   Number.parseInt(process.env.POSTGRES_COMPAT_SCAN_LIMIT || "50000", 10) || 50000,
 );
+const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 const SQL_PUSH_DOWN_FIELDS = new Set([
   "_id",
@@ -40,6 +41,37 @@ const SQL_PUSH_DOWN_FIELDS = new Set([
   "usageId",
   "userId",
 ]);
+
+function getDateToStringOffsetMs(timezone) {
+  const tz = typeof timezone === "string" ? timezone.trim() : "";
+  if (tz === "Asia/Bangkok") return BANGKOK_UTC_OFFSET_MS;
+  if (tz === "UTC" || tz === "Etc/UTC" || tz === "Z") return 0;
+  const match = tz.match(/^([+-])(\d{2}):?(\d{2})$/);
+  if (!match) return 0;
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+  return sign * ((hours * 60) + minutes) * 60 * 1000;
+}
+
+function formatDateToString(date, expression = {}) {
+  const parsed = date instanceof Date ? date : new Date(date);
+  if (!Number.isFinite(parsed.getTime())) return "";
+
+  const format = expression.format || "%Y-%m-%d";
+  const timezone = expression.timezone || "UTC";
+  const shifted = new Date(parsed.getTime() + getDateToStringOffsetMs(timezone));
+  const year = String(shifted.getUTCFullYear()).padStart(4, "0");
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(shifted.getUTCDate()).padStart(2, "0");
+
+  if (format === "%Y-%m-%d") return `${year}-${month}-${day}`;
+  return format
+    .replace(/%Y/g, year)
+    .replace(/%m/g, month)
+    .replace(/%d/g, day);
+}
 
 function addSqlParam(params, value) {
   params.push(value);
@@ -478,9 +510,9 @@ function evalExpression(expression, doc, variables = {}) {
       : resolved;
   }
   if (Object.prototype.hasOwnProperty.call(expression, "$dateToString")) {
-    const date = new Date(evalExpression(expression.$dateToString.date, doc, variables));
-    if (!Number.isFinite(date.getTime())) return "";
-    return date.toISOString().slice(0, 10);
+    const dateExpression = expression.$dateToString || {};
+    const date = evalExpression(dateExpression.date, doc, variables);
+    return formatDateToString(date, dateExpression);
   }
 
   const output = {};

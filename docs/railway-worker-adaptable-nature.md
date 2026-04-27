@@ -26,13 +26,14 @@
 
 ## Verified Counts
 
-- `chat_history` latest-month scope: `2026-04-01T00:00:00.000Z` to `2026-05-01T00:00:00.000Z`.
-- Final frozen delta source/target: `chat_history=55610`, missing `0`.
-- Post-deploy verify allowed live target extras: `chat_history` target `55613`, missing `0`.
+- Initial cutover used `chat_history` latest-month scope: `2026-04-01T00:00:00.000Z` to `2026-05-01T00:00:00.000Z`.
+- Follow-up full-history run on `2026-04-27` migrated `chat_history` scope `all`.
+- Full-history source: `chat_history=92003`, preserved without user `0`.
+- Full-history verification allowed live Postgres target extras: `chat_history` target `92017`, missing `0`.
 - Regular collection verification passed with missing `0`.
-- Key counts: `orders=1581`, `openai_usage_logs=10932`, `user_profiles=5494`, `follow_up_tasks=6847`, `follow_up_status=5494`, `conversation_threads=5494`, `short_links=1480`, `notification_logs=1484`.
+- Key counts after full-history run: `orders=1581`, `openai_usage_logs=10933`, `user_profiles=5494`, `follow_up_tasks=6847`, `follow_up_status=5494`, `conversation_threads=5494`, `short_links=1480`, `notification_logs=1484`.
 - Asset verification passed: `instructionAssets=50`, `followupAssets=66`, `broadcastAssets=0`.
-- Native verification passed: `orders`, `openai_usage_logs`, `user_profiles`, `follow_up_tasks`, and `chat_conversation_heads`.
+- Native rebuild and verification passed after the full-history run: `orders`, `openai_usage_logs`, `user_profiles`, `follow_up_tasks`, and `chat_conversation_heads`.
 
 ## Smoke Check
 
@@ -47,3 +48,4 @@
 - Use explicit service IDs when checking variables after a script run. Service name `web` can be ambiguous if the Railway CLI is linked elsewhere.
 - `railway run` injects private Railway hostnames; local verification needs `DATABASE_PUBLIC_URL` as `DATABASE_URL`.
 - The CLI/account can update variables, scale services, stop deployments, and update deployment triggers in this workspace, but cannot delete the MongoDB service or volume. A workspace owner/admin must finish that cleanup.
+- Because MongoDB deployment had been stopped after cutover, the full-history run needed `railway scale --service MongoDB --asia-southeast1-eqsg3a 1` to temporarily start it. After migration and verification, MongoDB was stopped again with `railway down`; final status showed MongoDB `activeSuccess=0`.

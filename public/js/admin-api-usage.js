@@ -29,6 +29,7 @@ const isBrowserReload =
     performance.getEntriesByType &&
     performance.getEntriesByType('navigation')[0]?.type === 'reload';
 let firstSummaryRequest = true;
+const bangkokDate = window.AdminBangkokDate || null;
 
 // ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', function () {
@@ -114,30 +115,11 @@ async function loadDashboardData() {
 
 function getDateParams() {
     const range = document.getElementById('dateRangeSelect').value;
-    const now = new Date();
-    const endDate = new Date(now);
-    endDate.setHours(23, 59, 59, 999);
-    let startDate = null;
-
-    if (range === 'today') {
-        startDate = new Date(now);
-    } else if (range === '7days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 6); // รวมวันนี้ + ย้อน 6 วัน = 7 วัน
-    } else if (range === '30days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 29);
-    } else if (range === 'all') {
-        startDate = new Date(0);
-    }
-
-    if (startDate) {
-        startDate.setHours(0, 0, 0, 0);
-    }
+    const { startDate, endDate } = getQuickDateRange(range);
 
     const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate.toISOString());
-    params.append('endDate', endDate.toISOString());
+    if (startDate) params.append('startDate', startDate);
+    params.append('endDate', endDate);
     return params;
 }
 
@@ -899,7 +881,7 @@ function exportToCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `api-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `api-usage-${getQuickDateRange('today').endDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -943,18 +925,59 @@ function formatCost(cost) {
 }
 
 function formatShortDate(dateStr) {
+    if (bangkokDate) {
+        return bangkokDate.formatDate(dateStr, { day: 'numeric', month: 'short' });
+    }
     const date = new Date(dateStr);
-    return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+    return date.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short' });
 }
 
 function formatDateTime(dateStr) {
+    if (bangkokDate) {
+        return bangkokDate.formatDate(dateStr, {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
     const date = new Date(dateStr);
     return date.toLocaleString('th-TH', {
+        timeZone: 'Asia/Bangkok',
         day: 'numeric',
         month: 'short',
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+
+function getQuickDateRange(range) {
+    if (bangkokDate) return bangkokDate.rangeForPreset(range);
+
+    const now = new Date();
+    const endDate = formatDateKey(now);
+    let startDate = endDate;
+
+    if (range === '7days') {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 6);
+        startDate = formatDateKey(start);
+    } else if (range === '30days') {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 29);
+        startDate = formatDateKey(start);
+    } else if (range === 'all') {
+        startDate = '1970-01-01';
+    }
+
+    return { startDate, endDate };
+}
+
+function formatDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function escapeHtml(str) {

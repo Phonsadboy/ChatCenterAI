@@ -18,6 +18,7 @@
     chartMode: 'all', // 'all', 'buyers', 'nonBuyers'
     isLoading: false
   };
+  const bangkokDate = window.AdminBangkokDate || null;
 
   // ============ DOM Elements ============
   const els = {};
@@ -66,12 +67,11 @@
   }
 
   function setDefaultDates() {
-    const today = new Date();
-    const todayStr = formatDateForInput(today);
-    state.filters.startDate = todayStr;
-    state.filters.endDate = todayStr;
-    els.startDate.value = todayStr;
-    els.endDate.value = todayStr;
+    const { startDate, endDate } = getQuickDateRange('today');
+    state.filters.startDate = startDate;
+    state.filters.endDate = endDate;
+    els.startDate.value = startDate;
+    els.endDate.value = endDate;
   }
 
   // ============ Event Handlers ============
@@ -90,19 +90,9 @@
 
   function handleQuickDate(range) {
     state.filters.quickDate = range;
-    const today = new Date();
-    let startDate = new Date();
-
-    if (range === 'today') {
-      startDate = today;
-    } else if (range === '7days') {
-      startDate.setDate(today.getDate() - 6);
-    } else if (range === '30days') {
-      startDate.setDate(today.getDate() - 29);
-    }
-
-    state.filters.startDate = formatDateForInput(startDate);
-    state.filters.endDate = formatDateForInput(today);
+    const { startDate, endDate } = getQuickDateRange(range);
+    state.filters.startDate = startDate;
+    state.filters.endDate = endDate;
     els.startDate.value = state.filters.startDate;
     els.endDate.value = state.filters.endDate;
     updateQuickDateButtons();
@@ -666,10 +656,30 @@
   }
 
   function formatDateForInput(date) {
+    if (bangkokDate) return bangkokDate.formatInputDate(date);
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  }
+
+  function getQuickDateRange(range) {
+    if (bangkokDate) return bangkokDate.rangeForPreset(range);
+    const today = new Date();
+    let startDate = new Date(today);
+
+    if (range === 'today') {
+      startDate = today;
+    } else if (range === '7days') {
+      startDate.setDate(today.getDate() - 6);
+    } else if (range === '30days') {
+      startDate.setDate(today.getDate() - 29);
+    }
+
+    return {
+      startDate: formatDateForInput(startDate),
+      endDate: formatDateForInput(today)
+    };
   }
 
   function escapeHtml(str) {

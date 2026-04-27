@@ -42,6 +42,7 @@
   let forceFreshNextOrdersRequest = false;
   let realtimeRefreshTimer = null;
   let socketInitialized = false;
+  const bangkokDate = window.AdminBangkokDate || null;
 
   // ============ Status Config ============
   const STATUS_CONFIG = {
@@ -633,21 +634,7 @@
     document.querySelectorAll('.orders-quick-date-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
 
-    const today = new Date();
-    let startDate = '';
-    let endDate = formatDateInput(today);
-
-    if (range === 'today') {
-      startDate = endDate;
-    } else if (range === '7days') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 7);
-      startDate = formatDateInput(d);
-    } else if (range === '30days') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 30);
-      startDate = formatDateInput(d);
-    }
+    const { startDate, endDate } = getQuickDateRange(range);
 
     state.filters.startDate = startDate;
     state.filters.endDate = endDate;
@@ -1119,6 +1106,13 @@
       }
 
       state.filters = { ...state.filters, ...filters };
+      if (state.filters.quickDate) {
+        const presetRange = getQuickDateRange(state.filters.quickDate);
+        if (presetRange.startDate || presetRange.endDate) {
+          state.filters.startDate = presetRange.startDate;
+          state.filters.endDate = presetRange.endDate;
+        }
+      }
 
       // Apply to inputs
       if (els.searchInput) els.searchInput.value = state.filters.search || '';
@@ -1186,6 +1180,11 @@
 
   function formatDate(dateStr, full = false) {
     if (!dateStr) return '-';
+    if (bangkokDate) {
+      return bangkokDate.formatDate(dateStr, full
+        ? { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+        : { day: '2-digit', month: '2-digit' });
+    }
     const d = new Date(dateStr);
     const day = d.getDate().toString().padStart(2, '0');
     const month = (d.getMonth() + 1).toString().padStart(2, '0');
@@ -1199,10 +1198,32 @@
   }
 
   function formatDateInput(date) {
+    if (bangkokDate) return bangkokDate.formatInputDate(date);
     const y = date.getFullYear();
     const m = (date.getMonth() + 1).toString().padStart(2, '0');
     const d = date.getDate().toString().padStart(2, '0');
     return `${y}-${m}-${d}`;
+  }
+
+  function getQuickDateRange(range) {
+    if (bangkokDate) return bangkokDate.rangeForPreset(range);
+    const today = new Date();
+    let startDate = '';
+    const endDate = formatDateInput(today);
+
+    if (range === 'today') {
+      startDate = endDate;
+    } else if (range === '7days') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 6);
+      startDate = formatDateInput(d);
+    } else if (range === '30days') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 29);
+      startDate = formatDateInput(d);
+    }
+
+    return { startDate, endDate };
   }
 
   function escapeHtml(str) {
