@@ -2140,6 +2140,10 @@ class Chat2Manager {
   }
 
   renderMessage(message, isMatch = false) {
+    const tokenSegments = this.normalizeImageTokenSegments(message?.imageTokenSegments);
+    if (tokenSegments.length > 0) {
+      return this.renderSegmentedMessage(message, tokenSegments, isMatch);
+    }
     const role = this.messageVisualRole(message);
     const content = this.renderMessageContent(message);
     const messageId = this.resolveId(message);
@@ -2160,6 +2164,68 @@ class Chat2Manager {
           <div class="cc2-message-text">${content}</div>
           ${images ? `<div class="cc2-message-images">${images}</div>` : ""}
           ${messageId && message.role !== "user" ? `
+            <div class="cc2-message-actions">
+              <button type="button" class="${feedback === "positive" ? "is-active" : ""}" data-feedback="positive" title="คำตอบดี" aria-label="ให้คะแนนคำตอบดี"><i class="fas fa-thumbs-up"></i></button>
+              <button type="button" class="${feedback === "negative" ? "is-active" : ""}" data-feedback="negative" title="คำตอบควรแก้" aria-label="ให้คะแนนว่าคำตอบควรแก้"><i class="fas fa-thumbs-down"></i></button>
+              ${feedback ? `<button type="button" data-feedback="clear" title="ล้าง feedback" aria-label="ล้าง feedback"><i class="fas fa-xmark"></i></button>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  renderSegmentedMessage(message, segments, isMatch = false) {
+    const visibleSegments = segments.filter((segment) =>
+      segment.type === "image" || (typeof segment.text === "string" && segment.text.trim()),
+    );
+    if (!visibleSegments.length) return "";
+
+    return visibleSegments.map((segment, index) => {
+      const isLast = index === visibleSegments.length - 1;
+      const segmentMessage = {
+        ...message,
+        imageTokenSegments: [],
+        images: [],
+        _plainText: segment.type === "text"
+          ? segment.text
+          : `[รูปภาพ: ${segment.label || "รูปภาพ"}]`,
+        content: segment.type === "text" ? segment.text : "",
+      };
+      const content = segment.type === "image"
+        ? this.renderTokenImageSegment(segment)
+        : this.renderMessageText((segment.text || "").trim());
+      return this.renderMessageBubble(segmentMessage, {
+        content,
+        isMatch,
+        showActions: isLast,
+        segmentIndex: index,
+        mediaOnly: segment.type === "image",
+      });
+    }).join("");
+  }
+
+  renderMessageBubble(message, options = {}) {
+    const role = this.messageVisualRole(message);
+    const messageId = this.resolveId(message);
+    const feedback = message.feedback || "";
+    const images = Array.isArray(options.images)
+      ? options.images.join("")
+      : "";
+    const dataMessageId = options.showActions === false
+      ? `${messageId}:segment:${options.segmentIndex || 0}`
+      : messageId;
+    const mediaClass = options.mediaOnly ? " cc2-message--media" : "";
+    return `
+      <div class="cc2-message is-${role}${mediaClass} ${options.isMatch ? "cc2-highlight" : ""}" data-message-id="${this.escapeAttr(dataMessageId)}">
+        <div class="cc2-message-bubble">
+          <div class="cc2-message-head">
+            <span>${this.messageLabel(message)}</span>
+            <span>${this.time(message.timestamp)}${message.sending ? " · กำลังส่ง" : ""}</span>
+          </div>
+          <div class="cc2-message-text">${options.content || ""}</div>
+          ${images ? `<div class="cc2-message-images">${images}</div>` : ""}
+          ${options.showActions !== false && messageId && message.role !== "user" ? `
             <div class="cc2-message-actions">
               <button type="button" class="${feedback === "positive" ? "is-active" : ""}" data-feedback="positive" title="คำตอบดี" aria-label="ให้คะแนนคำตอบดี"><i class="fas fa-thumbs-up"></i></button>
               <button type="button" class="${feedback === "negative" ? "is-active" : ""}" data-feedback="negative" title="คำตอบควรแก้" aria-label="ให้คะแนนว่าคำตอบควรแก้"><i class="fas fa-thumbs-down"></i></button>
@@ -2506,23 +2572,22 @@ class Chat2Manager {
       .replace(/\n/g, "<br>");
   }
 
+  renderTokenImageSegment(segment) {
+    const previewSrc = segment.previewUrl || segment.thumbUrl || segment.url;
+    const fullSrc = segment.url || previewSrc;
+    if (!previewSrc && !fullSrc) {
+      return this.renderMessageText(`[รูป ${segment.label || "image"} ไม่พบ]`);
+    }
+    const label = segment.label || segment.alt || "รูปภาพ";
+    return `<button type="button" class="cc2-token-image" data-image-src="${this.escapeAttr(fullSrc || previewSrc)}" title="${this.escapeAttr(label)}" aria-label="ดูรูป ${this.escapeAttr(label)}"><img src="${this.escapeAttr(previewSrc || fullSrc)}" alt="${this.escapeAttr(label)}" loading="lazy"><span>${this.escapeHtml(label)}</span></button>`;
+  }
+
   renderMessageContent(message) {
     const segments = this.normalizeImageTokenSegments(message?.imageTokenSegments);
     if (segments.length > 0) {
       const parts = segments.map((segment) => {
         if (segment.type === "image") {
-          const previewSrc = segment.previewUrl || segment.thumbUrl || segment.url;
-          const fullSrc = segment.url || previewSrc;
-          if (!previewSrc && !fullSrc) {
-            return `<div class="cc2-token-text">${this.renderMessageText(`[รูป ${segment.label || "image"} ไม่พบ]`)}</div>`;
-          }
-          const label = segment.label || segment.alt || "รูปภาพ";
-          return `
-            <button type="button" class="cc2-token-image" data-image-src="${this.escapeAttr(fullSrc || previewSrc)}" title="${this.escapeAttr(label)}" aria-label="ดูรูป ${this.escapeAttr(label)}">
-              <img src="${this.escapeAttr(previewSrc || fullSrc)}" alt="${this.escapeAttr(label)}" loading="lazy">
-              <span>${this.escapeHtml(label)}</span>
-            </button>
-          `;
+          return this.renderTokenImageSegment(segment);
         }
         const text = typeof segment.text === "string" ? segment.text.trim() : "";
         return text ? `<div class="cc2-token-text">${this.renderMessageText(text)}</div>` : "";
