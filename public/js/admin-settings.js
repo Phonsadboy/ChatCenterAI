@@ -16,7 +16,6 @@ let currentBotInstructions = [];
 let availableLibraries = [];
 let passcodeCache = [];
 let passcodeSectionInitialized = false;
-const DEFAULT_AUDIO_ATTACHMENT_RESPONSE = 'ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน';
 
 const TAB_RESOURCE_REQUIREMENTS = {
     'line-ai-tab': { instructions: true, lineBots: true, facebookBots: true },
@@ -397,15 +396,6 @@ function populateSettings() {
         if (showTokenUsage) showTokenUsage.checked = false;
     }
 
-    const audioResponseInput = document.getElementById('audioAttachmentResponse');
-    if (audioResponseInput) {
-        if (typeof currentSettings.audioAttachmentResponse === 'string' && currentSettings.audioAttachmentResponse.trim() !== '') {
-            audioResponseInput.value = currentSettings.audioAttachmentResponse;
-        } else {
-            audioResponseInput.value = DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-        }
-    }
-
     // AI settings
     if (currentSettings.textModel) {
         const textModel = document.getElementById('textModel');
@@ -523,19 +513,9 @@ async function saveChatSettings() {
     const maxQueueMessages = document.getElementById('maxQueueMessages');
     const enableMessageMerging = document.getElementById('enableMessageMerging');
     const showTokenUsage = document.getElementById('showTokenUsage');
-    const audioAttachmentResponse = document.getElementById('audioAttachmentResponse');
     
-    if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging || !showTokenUsage ||
-        !audioAttachmentResponse) {
+    if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging || !showTokenUsage) {
         showAlert('ไม่พบฟอร์มการตั้งค่าแชท', 'danger');
-        return;
-    }
-
-    const audioResponseValue = audioAttachmentResponse.value.trim();
-    const normalizedAudioResponse = audioResponseValue || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-
-    if (normalizedAudioResponse.length > 1000) {
-        showAlert('ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร', 'danger');
         return;
     }
     
@@ -543,8 +523,7 @@ async function saveChatSettings() {
         chatDelaySeconds: parseInt(chatDelaySeconds.value),
         maxQueueMessages: parseInt(maxQueueMessages.value),
         enableMessageMerging: enableMessageMerging.checked,
-        showTokenUsage: showTokenUsage.checked,
-        audioAttachmentResponse: normalizedAudioResponse
+        showTokenUsage: showTokenUsage.checked
     };
 
     try {

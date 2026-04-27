@@ -218,6 +218,9 @@ async function run() {
   assert.ok(inventory.sections.toolRegistry.tools.some((tool) => tool.name === "propose_update_semantic_mapping"));
   assert.strictEqual(inventory.sections.starter.enabled, true);
   assert.ok(Array.isArray(inventory.sections.model.catalog));
+  assert.deepStrictEqual(inventory.sections.model.default, { model: "gpt-5.5", reasoningEffort: "medium" });
+  assert.strictEqual(inventory.sections.model.catalog.find((item) => item.model === "gpt-5.5")?.recommended, true);
+  assert.strictEqual(inventory.sections.model.catalog.filter((item) => item.recommended).length, 1);
   assert.ok(service.readTrace.some((entry) => entry.type === "inventory"));
 
   const evalSuite = buildRetailEvalSuite(fakeDb.collection("instructions_v2").rows[0], template);
@@ -306,6 +309,7 @@ async function run() {
   const usageResult = await service.applyImageUsageRebuild(usageProposal);
   assert.strictEqual(usageResult.rebuilt, true);
 
+  assert.deepStrictEqual(service.modelValidator("gpt-5.5", "medium").ok, true);
   assert.deepStrictEqual(service.modelValidator("gpt-5.4-mini", "low").ok, true);
   assert.deepStrictEqual(service.modelValidator("not-real", "low").ok, false);
 

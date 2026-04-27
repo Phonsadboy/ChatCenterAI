@@ -15,6 +15,7 @@ const BOT_LABELS = {
 };
 const DEFAULT_BOT_MODEL = 'gpt-5.4-mini';
 const BOT_MODEL_PRESETS = [
+    'gpt-5.5',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.4-nano',
@@ -1177,7 +1178,6 @@ async function loadChatSettings() {
         setInputValue('maxQueueMessages', settings.maxQueueMessages || 10);
         setCheckboxValue('enableMessageMerging', settings.enableMessageMerging ?? true);
         setCheckboxValue('showTokenUsage', settings.showTokenUsage ?? false);
-        setInputValue('audioAttachmentResponse', settings.audioAttachmentResponse || '');
 
     } catch (error) {
         console.error('Error loading chat settings:', error);
@@ -1193,8 +1193,7 @@ async function saveChatSettings(e) {
         chatDelaySeconds: parseInt(getInputValue('chatDelaySeconds')),
         maxQueueMessages: parseInt(getInputValue('maxQueueMessages')),
         enableMessageMerging: getCheckboxValue('enableMessageMerging'),
-        showTokenUsage: getCheckboxValue('showTokenUsage'),
-        audioAttachmentResponse: getInputValue('audioAttachmentResponse')
+        showTokenUsage: getCheckboxValue('showTokenUsage')
     };
 
     try {
@@ -1542,13 +1541,14 @@ function getBotReasoningSupport(modelId) {
     }
 
     if (
+        normalized === 'gpt-5.5' ||
         normalized === 'gpt-5.4' ||
         normalized === 'gpt-5.4-mini' ||
         normalized === 'gpt-5.4-nano'
     ) {
         return {
             allowed: ['none', 'low', 'medium', 'high', 'xhigh'],
-            defaultEffort: 'none'
+            defaultEffort: normalized === 'gpt-5.5' ? 'medium' : 'none'
         };
     }
 

@@ -82,22 +82,31 @@
                 <div class="ic-topbar-right">
                     <!-- Model Selector in topbar -->
                     <div class="ic-model-selector" id="icModelSelector">
-                        <button class="ic-model-pill" id="icModelBtn" type="button" title="เลือกโมเดล" aria-label="เลือกโมเดล GPT-5.4" aria-haspopup="dialog" aria-expanded="false" aria-controls="icModelDropdown">
+                        <button class="ic-model-pill" id="icModelBtn" type="button" title="เลือกโมเดล" aria-label="เลือกโมเดล GPT-5.5" aria-haspopup="dialog" aria-expanded="false" aria-controls="icModelDropdown">
                             <span class="ic-model-dot" aria-hidden="true"></span>
-                            <span id="icModelLabel">GPT-5.4</span>
+                            <span id="icModelLabel">GPT-5.5</span>
                             <i class="fas fa-chevron-down ic-model-chevron" aria-hidden="true"></i>
                         </button>
                         <div class="ic-model-dropdown" id="icModelDropdown" role="dialog" aria-label="เลือกโมเดลและระดับ Thinking" aria-hidden="true">
                             <div class="ic-dropdown-header">Model</div>
-                            <div class="ic-model-option active" data-model="gpt-5.4" role="button" tabindex="0" aria-pressed="true">
+                            <div class="ic-model-option active" data-model="gpt-5.5" role="button" tabindex="0" aria-pressed="true">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon star"><i class="fas fa-star" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.5</div>
+                                        <div class="ic-model-option-desc">ค่าเริ่มต้นสำหรับงาน reasoning และแก้ instruction</div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">แนะนำ</span>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.4" role="button" tabindex="0" aria-pressed="false">
                                 <div class="ic-model-option-left">
                                     <div class="ic-model-option-icon star"><i class="fas fa-star" aria-hidden="true"></i></div>
                                     <div>
                                         <div class="ic-model-option-name">GPT-5.4</div>
-                                        <div class="ic-model-option-desc">รุ่นใหม่ล่าสุดสำหรับงาน reasoning และแก้ instruction</div>
+                                        <div class="ic-model-option-desc">รุ่นเร็วและคุ้มค่าสำหรับงาน reasoning</div>
                                     </div>
                                 </div>
-                                <span class="ic-badge-recommended">ล่าสุด</span>
                             </div>
                             <div class="ic-model-option" data-model="gpt-5.4-mini" role="button" tabindex="0" aria-pressed="false">
                                 <div class="ic-model-option-left">
@@ -107,7 +116,6 @@
                                         <div class="ic-model-option-desc">เร็วขึ้นและคุ้มกว่าสำหรับงาน instruction ส่วนใหญ่</div>
                                     </div>
                                 </div>
-                                <span class="ic-badge-recommended">แนะนำ</span>
                             </div>
                             <div class="ic-model-option" data-model="gpt-5.4-nano" role="button" tabindex="0" aria-pressed="false">
                                 <div class="ic-model-option-left">
@@ -127,7 +135,6 @@
                                         </div>
                                     </div>
                                 </div>
-                                <span class="ic-badge-recommended">แนะนำ</span>
                             </div>
                             <div class="ic-model-option" data-model="gpt-5.2-codex" role="button" tabindex="0" aria-pressed="false">
                                 <div class="ic-model-option-left">
@@ -243,7 +250,7 @@
                         <div class="ic-input-info">
                             <span id="icStatusInfo" style="display:none;">
                                 <span class="ic-dot-live"></span>
-                                <span id="icStatusModel">GPT-5.4</span> ·
+                                <span id="icStatusModel">GPT-5.5</span> ·
                                 Thinking: <span id="icStatusThinking">Medium</span> ·
                                 <span id="icStatusTokens">0</span> tokens ·
                                 <span id="icStatusChanges">0</span> edits

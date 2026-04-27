@@ -121,9 +121,6 @@
         const tokenToggle = document.getElementById('showTokenUsage');
         if (tokenToggle) tokenToggle.checked = settings.showTokenUsage ?? false;
 
-        const audioResponse = document.getElementById('audioAttachmentResponse');
-        if (audioResponse) audioResponse.value = settings.audioAttachmentResponse || '';
-
         const aiEnabled = document.getElementById('aiEnabled');
         if (aiEnabled) aiEnabled.checked = settings.aiEnabled ?? true;
 
@@ -161,8 +158,7 @@
             chatDelaySeconds: parseInt(document.getElementById('chatDelaySeconds')?.value || '0', 10),
             maxQueueMessages: parseInt(document.getElementById('maxQueueMessages')?.value || '10', 10),
             enableMessageMerging: Boolean(document.getElementById('enableMessageMerging')?.checked),
-            showTokenUsage: Boolean(document.getElementById('showTokenUsage')?.checked),
-            audioAttachmentResponse: document.getElementById('audioAttachmentResponse')?.value || ''
+            showTokenUsage: Boolean(document.getElementById('showTokenUsage')?.checked)
         };
 
         try {

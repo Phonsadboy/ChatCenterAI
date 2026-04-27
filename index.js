@@ -59,8 +59,6 @@ const ASSETS_DIR =
 const FOLLOWUP_ASSETS_DIR =
   process.env.FOLLOWUP_ASSETS_DIR ||
   path.join(__dirname, "public", "assets", "followup");
-const DEFAULT_AUDIO_ATTACHMENT_RESPONSE =
-  "ขออภัยค่ะ ระบบไม่สามารถถอดเสียงจากข้อความเสียงนี้ได้ กรุณาพิมพ์ข้อความหรือส่งเสียงใหม่อีกครั้ง";
 const DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const AUDIO_TRANSCRIPTION_MODELS = new Set([
   "gpt-4o-transcribe",
@@ -12757,6 +12755,7 @@ function getResponsesReasoningSupport(modelId) {
     };
   }
   if (
+    normalized === "gpt-5.5" ||
     normalized === "gpt-5.4" ||
     normalized === "gpt-5.4-mini" ||
     normalized === "gpt-5.4-nano" ||
@@ -12765,7 +12764,7 @@ function getResponsesReasoningSupport(modelId) {
   ) {
     return {
       allowed: ["none", "low", "medium", "high", "xhigh"],
-      defaultEffort: "none",
+      defaultEffort: normalized === "gpt-5.5" ? "medium" : "none",
     };
   }
   if (normalized === "gpt-5.1") {
@@ -13578,10 +13577,12 @@ function normalizeImageDataUrl(rawContent) {
 
 function resolveVisionDetail(modelId, useHighDetail) {
   const chatDetail = useHighDetail ? "high" : "low";
+  const normalizedModel = normalizeModelIdentifier(modelId);
+  const preservesOriginalDetail =
+    normalizedModel.startsWith("gpt-5.5") ||
+    normalizedModel.startsWith("gpt-5.4");
   const responsesDetail =
-    useHighDetail && normalizeModelIdentifier(modelId).startsWith("gpt-5.4")
-      ? "original"
-      : chatDetail;
+    useHighDetail && preservesOriginalDetail ? "original" : chatDetail;
   return { chatDetail, responsesDetail };
 }
 
@@ -14150,10 +14151,6 @@ async function ensureSettings() {
     {
       key: "orderRequiredFields",
       value: { ...ORDER_REQUIRED_FIELDS_DEFAULT },
-    },
-    {
-      key: "audioAttachmentResponse",
-      value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
     },
     { key: "enableAudioTranscription", value: true },
     { key: "audioTranscriptionModel", value: DEFAULT_AUDIO_TRANSCRIPTION_MODEL },
@@ -18821,73 +18818,6 @@ async function queueTranscribedAudioMessage({
   return data;
 }
 
-async function sendAudioFallbackResponse({
-  userId,
-  platform,
-  replyToken = null,
-  queueOptions = {},
-}) {
-  const fallbackText = await getSettingValue(
-    "audioAttachmentResponse",
-    DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
-  );
-  const normalizedPlatform = normalizeChatPlatform(platform);
-
-  try {
-    if (normalizedPlatform === "line") {
-      if (replyToken) {
-        await sendMessage(
-          replyToken,
-          fallbackText,
-          userId,
-          true,
-          queueOptions.channelAccessToken,
-          queueOptions.channelSecret,
-        );
-      }
-    } else if (normalizedPlatform === "facebook" && queueOptions.facebookAccessToken) {
-      await sendFacebookMessage(
-        userId,
-        fallbackText,
-        queueOptions.facebookAccessToken,
-        { metadata: "audio_transcription_failed", selectedImageCollections: null },
-      );
-    } else if (
-      normalizedPlatform === "instagram" &&
-      queueOptions.instagramAccessToken &&
-      (queueOptions.instagramBusinessAccountId ||
-        queueOptions.instagramUserId ||
-        queueOptions.igUserId)
-    ) {
-      await sendInstagramMessage(
-        userId,
-        fallbackText,
-        queueOptions.instagramAccessToken,
-        queueOptions.instagramBusinessAccountId ||
-        queueOptions.instagramUserId ||
-        queueOptions.igUserId,
-        { selectedImageCollections: null },
-      );
-    } else if (
-      normalizedPlatform === "whatsapp" &&
-      queueOptions.whatsappAccessToken &&
-      (queueOptions.whatsappPhoneNumberId || queueOptions.phoneNumberId)
-    ) {
-      await sendWhatsAppMessage(
-        userId,
-        fallbackText,
-        queueOptions.whatsappAccessToken,
-        queueOptions.whatsappPhoneNumberId || queueOptions.phoneNumberId,
-        { selectedImageCollections: null },
-      );
-    }
-  } catch (error) {
-    console.error("[Audio Transcription] Failed to send fallback response:", error);
-  }
-
-  return fallbackText;
-}
-
 async function recordAudioTranscriptionFailure({
   userId,
   platform,
@@ -18896,32 +18826,30 @@ async function recordAudioTranscriptionFailure({
   audioPayload = {},
   instructionRefs = [],
   instructionMeta = null,
-  queueOptions = {},
-  replyToken = null,
   error,
 }) {
-  const fallbackText = await sendAudioFallbackResponse({
-    userId,
-    platform,
-    replyToken,
-    queueOptions,
-  });
+  const transcriptionError = error?.message || String(error || "unknown");
+  console.warn(
+    `[Audio Transcription] Skipping customer fallback for ${platform || "unknown"} audio from ${userId || "unknown"}: ${transcriptionError}`,
+  );
+
   try {
     await saveChatHistory(
       userId,
       {
         ...audioPayload,
         type: "audio",
-        transcriptionError: error?.message || String(error || "unknown"),
+        transcriptionError,
       },
-      fallbackText,
+      "",
       platform,
       botId,
       instructionRefs,
       botName,
       {
         instructionMeta,
-        audioTranscriptionError: error?.message || String(error || "unknown"),
+        audioTranscriptionError: transcriptionError,
+        audioTranscriptionFallbackSkipped: true,
       },
     );
   } catch (historyError) {
@@ -30424,7 +30352,6 @@ app.get("/api/settings", async (req, res) => {
       enableMessageMerging: true,
       showTokenUsage: false,
       showDebugInfo: false,
-      audioAttachmentResponse: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
       enableAudioTranscription: true,
       audioTranscriptionModel: DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       textModel: DEFAULT_ASSISTANT_MODEL,
@@ -30448,6 +30375,7 @@ app.get("/api/settings", async (req, res) => {
     const finalSettings = { ...defaultSettings, ...settingsObj };
     delete finalSettings.followUpShowInChat;
     delete finalSettings.followUpShowInDashboard;
+    delete finalSettings.audioAttachmentResponse;
     finalSettings.orderRequiredFields = normalizeOrderRequiredFields(
       finalSettings.orderRequiredFields,
     );
@@ -30467,7 +30395,6 @@ app.post("/api/settings/chat", async (req, res) => {
       maxQueueMessages,
       enableMessageMerging,
       showTokenUsage,
-      audioAttachmentResponse,
     } = req.body;
 
     const client = await connectDB();
@@ -30514,32 +30441,13 @@ app.post("/api/settings/chat", async (req, res) => {
       { upsert: true },
     );
 
-    const sanitizedAudioResponse =
-      typeof audioAttachmentResponse === "string"
-        ? audioAttachmentResponse.trim()
-        : "";
-    const finalAudioResponse =
-      sanitizedAudioResponse || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-
-    if (finalAudioResponse.length > 1000) {
-      return res.status(400).json({
-        success: false,
-        error: "ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร",
-      });
-    }
-
-    await coll.updateOne(
-      { key: "audioAttachmentResponse" },
-      { $set: { value: finalAudioResponse } },
-      { upsert: true },
-    );
+    await coll.deleteOne({ key: "audioAttachmentResponse" });
 
     invalidateSettingsCacheKeys([
       "chatDelaySeconds",
       "maxQueueMessages",
       "enableMessageMerging",
       "showTokenUsage",
-      "audioAttachmentResponse",
     ]);
     invalidateAllRuntimeCaches();
 
@@ -30562,6 +30470,7 @@ app.post("/api/settings/ai", async (req, res) => {
 
     // Validate input
     const validModels = [
+      "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
       "gpt-5.4-nano",
@@ -30841,6 +30750,7 @@ app.post("/api/settings/filter", async (req, res) => {
 // Model pricing (USD per 1M tokens)
 const OPENAI_MODEL_PRICING = {
   // GPT-5 series
+  "gpt-5.5": { input: 5.0, cachedInput: 0.5, output: 30.0 },
   "gpt-5": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.1": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.4": { input: 2.5, cachedInput: 0.25, output: 15.0 },
