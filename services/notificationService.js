@@ -6,6 +6,8 @@ const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const ORDER_NOTIFICATION_EVENT_NEW = "new_order";
+const ORDER_NOTIFICATION_EVENT_UPDATED = "order_updated";
 
 function normalizePlatform(value) {
   const platform = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -22,6 +24,15 @@ function normalizeTelegramChatId(value) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return "";
+}
+
+function normalizeTelegramMessageId(value) {
+  const messageId = normalizeIdString(value);
+  if (!messageId) return null;
+  const parsed = Number.parseInt(messageId, 10);
+  return Number.isFinite(parsed) && String(parsed) === messageId
+    ? parsed
+    : null;
 }
 
 function normalizeIdString(value) {
@@ -268,6 +279,130 @@ function shouldNotifyChannelForOrder(channel, order) {
   );
 }
 
+function extractLineMessageReference(response) {
+  const chunks = Array.isArray(response) ? response : [response];
+  for (const chunk of chunks) {
+    const sentMessages = Array.isArray(chunk?.sentMessages)
+      ? chunk.sentMessages
+      : [];
+    for (const sentMessage of sentMessages) {
+      const messageId = normalizeIdString(sentMessage?.id);
+      const quoteToken = normalizeIdString(sentMessage?.quoteToken);
+      if (messageId || quoteToken) {
+        return {
+          lineMessageId: messageId || null,
+          lineQuoteToken: quoteToken || null,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function extractTelegramMessageReference(response) {
+  const results = Array.isArray(response) ? response : [response];
+  for (const result of results) {
+    const messageId = normalizeTelegramMessageId(result?.message_id);
+    if (messageId !== null) {
+      return { telegramMessageId: messageId };
+    }
+  }
+  return null;
+}
+
+async function saveOrderNotificationMessageRef(db, payload = {}) {
+  try {
+    const orderId = normalizeIdString(payload.orderId);
+    const channelId = normalizeIdString(payload.channelId);
+    const eventType = normalizeIdString(payload.eventType);
+    if (!db || !orderId || !channelId || !eventType) return;
+
+    const now = new Date();
+    const doc = {
+      orderId,
+      channelId,
+      eventType,
+      channelType: normalizeNotificationChannelType(payload.channelType),
+      senderBotId: normalizeIdString(payload.senderBotId) || null,
+      targetId: normalizeIdString(payload.targetId) || null,
+      telegramBotId: normalizeIdString(payload.telegramBotId) || null,
+      telegramChatId: normalizeTelegramChatId(payload.telegramChatId) || null,
+      lineMessageId: normalizeIdString(payload.lineMessageId) || null,
+      lineQuoteToken: normalizeIdString(payload.lineQuoteToken) || null,
+      telegramMessageId: normalizeTelegramMessageId(payload.telegramMessageId),
+      updatedAt: now,
+    };
+
+    if (!doc.lineQuoteToken && !doc.lineMessageId && doc.telegramMessageId === null) {
+      return;
+    }
+
+    await db.collection("notification_message_refs").updateOne(
+      { orderId, channelId, eventType },
+      {
+        $set: doc,
+        $setOnInsert: { createdAt: now },
+      },
+      { upsert: true },
+    );
+  } catch (err) {
+    console.warn(
+      "[Notifications] ไม่สามารถบันทึก message reference ได้:",
+      err?.message || err,
+    );
+  }
+}
+
+async function findOrderNotificationReplyRef(db, orderId, channelId) {
+  if (!db || !orderId || !channelId) return null;
+  const refs = db.collection("notification_message_refs");
+  const baseQuery = { orderId, channelId };
+  const newOrderRef = await refs.findOne({
+    ...baseQuery,
+    eventType: ORDER_NOTIFICATION_EVENT_NEW,
+  });
+  if (newOrderRef) return newOrderRef;
+  return refs.findOne(
+    {
+      ...baseQuery,
+      eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+    },
+    { sort: { updatedAt: -1, createdAt: -1 } },
+  );
+}
+
+function buildLineReplyPayload(message, ref, senderBotId, targetId) {
+  if (!message || typeof message !== "object") return message;
+  const quoteToken = normalizeIdString(ref?.lineQuoteToken);
+  if (!quoteToken) return message;
+  if (normalizeIdString(ref?.senderBotId) !== normalizeIdString(senderBotId)) {
+    return message;
+  }
+  if (normalizeIdString(ref?.targetId) !== normalizeIdString(targetId)) {
+    return message;
+  }
+  return { ...message, quoteToken };
+}
+
+function buildTelegramReplyPayload(payload, ref, telegramBotId, telegramChatId) {
+  if (!payload || typeof payload !== "object") return payload;
+  const messageId = normalizeTelegramMessageId(ref?.telegramMessageId);
+  if (messageId === null) return payload;
+  if (normalizeIdString(ref?.telegramBotId) !== normalizeIdString(telegramBotId)) {
+    return payload;
+  }
+  if (normalizeTelegramChatId(ref?.telegramChatId) !== normalizeTelegramChatId(telegramChatId)) {
+    return payload;
+  }
+  return {
+    ...payload,
+    reply_parameters: {
+      message_id: messageId,
+      allow_sending_without_reply: true,
+    },
+  };
+}
+
 function shortenText(value, maxLength) {
   if (!value) return "";
   const text = String(value).trim();
@@ -279,6 +414,24 @@ function shortenText(value, maxLength) {
 function formatCurrency(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return `฿${value.toLocaleString()}`;
+}
+
+function formatOrderStatusLabel(value) {
+  const status = normalizeIdString(value).toLowerCase();
+  const labels = {
+    pending: "รอดำเนินการ",
+    confirmed: "ยืนยันแล้ว",
+    shipped: "จัดส่งแล้ว",
+    completed: "เสร็จสิ้น",
+    cancelled: "ยกเลิก",
+  };
+  return labels[status] || status || "-";
+}
+
+function formatBangkokDateTime(value) {
+  if (!value) return "";
+  const parsed = moment.tz(value, "Asia/Bangkok");
+  return parsed.isValid() ? parsed.format("DD/MM/YYYY HH:mm") : "";
 }
 
 function buildOrderAddress(orderData) {
@@ -742,6 +895,13 @@ function formatNewOrderMessage(order, settings, publicBaseUrl, options = {}) {
   const includeFacebookName = cfg.includeFacebookName !== false;
   const chatLinkOverride =
     typeof options.chatLink === "string" ? options.chatLink.trim() : "";
+  const title =
+    typeof options.title === "string" && options.title.trim()
+      ? options.title.trim()
+      : "🛒 ออเดอร์ใหม่!";
+  const includeStatus = options.includeStatus === true;
+  const includeNotes = options.includeNotes === true;
+  const includeUpdatedAt = options.includeUpdatedAt === true;
 
   const orderId = normalizeIdString(order?._id);
   const orderData = order?.orderData || {};
@@ -768,7 +928,25 @@ function formatNewOrderMessage(order, settings, publicBaseUrl, options = {}) {
       ? shippingCostRaw
       : 0;
 
-  const lines = ["🛒 ออเดอร์ใหม่!", `📦 ID: ${orderId || "-"}`];
+  const lines = [title, `📦 ID: ${orderId || "-"}`];
+
+  if (includeStatus) {
+    lines.push(`📌 สถานะ: ${formatOrderStatusLabel(order?.status)}`);
+  }
+
+  if (includeUpdatedAt) {
+    const updatedAtLabel = formatBangkokDateTime(order?.updatedAt);
+    if (updatedAtLabel) {
+      lines.push(`🕒 อัปเดท: ${updatedAtLabel}`);
+    }
+  }
+
+  if (includeNotes) {
+    const notes = normalizeIdString(order?.notes);
+    if (notes) {
+      lines.push(`🗒 หมายเหตุ: ${shortenText(notes, 300)}`);
+    }
+  }
 
   // 1. ชื่อ Facebook (ถ้ามี)
   if (includeFacebookName && facebookName && platform === "facebook") {
@@ -864,6 +1042,7 @@ async function insertNotificationLog(db, payload) {
       eventType: payload.eventType || null,
       status: payload.status || "failed",
       errorMessage: payload.errorMessage || null,
+      metadata: payload.metadata || null,
       response: payload.response || null,
       createdAt: new Date(),
     });
@@ -974,15 +1153,21 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     const normalizedTargetId = normalizeTelegramChatId(targetId);
     if (!normalizedTargetId) throw new Error("Invalid telegram chat id");
     if (!payload || typeof payload !== "object") return null;
+    const replyParameters =
+      payload.reply_parameters && typeof payload.reply_parameters === "object"
+        ? payload.reply_parameters
+        : null;
 
     if (payload.type === "text") {
       const text = typeof payload.text === "string" ? payload.text.trim() : "";
       if (!text) return null;
-      return sendTelegramApiRequest(botToken, "sendMessage", {
+      const body = {
         chat_id: normalizedTargetId,
         text,
         disable_web_page_preview: true,
-      });
+      };
+      if (replyParameters) body.reply_parameters = replyParameters;
+      return sendTelegramApiRequest(botToken, "sendMessage", body);
     }
 
     if (payload.type === "image") {
@@ -995,6 +1180,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         photo: photoUrl,
       };
       if (caption) body.caption = caption.slice(0, 1024);
+      if (replyParameters) body.reply_parameters = replyParameters;
       return sendTelegramApiRequest(botToken, "sendPhoto", body);
     }
 
@@ -1047,7 +1233,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       .collection("notification_channels")
       .find({
         isActive: true,
-        eventTypes: "new_order",
+        eventTypes: ORDER_NOTIFICATION_EVENT_NEW,
       })
       .toArray();
 
@@ -1114,15 +1300,25 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
           await insertNotificationLog(db, {
             channelId,
             orderId: orderIdString,
-            eventType: "new_order",
+            eventType: ORDER_NOTIFICATION_EVENT_NEW,
             status: "success",
             response: response || null,
+          });
+          const reference = extractTelegramMessageReference(response);
+          await saveOrderNotificationMessageRef(db, {
+            orderId: orderIdString,
+            channelId,
+            eventType: ORDER_NOTIFICATION_EVENT_NEW,
+            channelType,
+            telegramBotId,
+            telegramChatId,
+            ...reference,
           });
         } catch (err) {
           await insertNotificationLog(db, {
             channelId,
             orderId: orderIdString,
-            eventType: "new_order",
+            eventType: ORDER_NOTIFICATION_EVENT_NEW,
             status: "failed",
             errorMessage: err?.message || String(err),
           });
@@ -1145,15 +1341,25 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         await insertNotificationLog(db, {
           channelId,
           orderId: orderIdString,
-          eventType: "new_order",
+          eventType: ORDER_NOTIFICATION_EVENT_NEW,
           status: "success",
           response: response || null,
+        });
+        const reference = extractLineMessageReference(response);
+        await saveOrderNotificationMessageRef(db, {
+          orderId: orderIdString,
+          channelId,
+          eventType: ORDER_NOTIFICATION_EVENT_NEW,
+          channelType,
+          senderBotId,
+          targetId,
+          ...reference,
         });
       } catch (err) {
         await insertNotificationLog(db, {
           channelId,
           orderId: orderIdString,
-          eventType: "new_order",
+          eventType: ORDER_NOTIFICATION_EVENT_NEW,
           status: "failed",
           errorMessage: err?.message || String(err),
         });
@@ -1161,6 +1367,223 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     }
 
     return { success: true, sentCount };
+  };
+
+  const sendOrderUpdated = async (orderId, options = {}) => {
+    const orderIdString = normalizeIdString(orderId);
+    if (!ObjectId.isValid(orderIdString)) {
+      throw new Error("Invalid orderId");
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const order = await db
+      .collection("orders")
+      .findOne({ _id: new ObjectId(orderIdString) });
+    if (!order) {
+      return { success: false, error: "ORDER_NOT_FOUND" };
+    }
+
+    const channels = await db
+      .collection("notification_channels")
+      .find({
+        isActive: true,
+        eventTypes: ORDER_NOTIFICATION_EVENT_NEW,
+      })
+      .toArray();
+
+    const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
+    const canBuildLinks = isHttpUrl(normalizedBaseUrl);
+    const orderUserId = normalizeIdString(order?.userId);
+    let shortChatLink = "";
+    if (canBuildLinks && orderUserId) {
+      const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(orderUserId)}`;
+      try {
+        const code = await createShortLink(db, chatUrl);
+        if (code) {
+          shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
+        }
+      } catch (err) {
+        console.warn(
+          "[Notifications] สร้าง short link สำหรับอัปเดทออเดอร์ไม่สำเร็จ:",
+          err?.message || err,
+        );
+      }
+    }
+
+    const title =
+      typeof options.title === "string" && options.title.trim()
+        ? options.title.trim()
+        : "🔄 อัปเดทออเดอร์!";
+
+    let sentCount = 0;
+    let repliedCount = 0;
+    let fallbackCount = 0;
+
+    for (const channel of channels) {
+      if (!shouldNotifyChannelForOrder(channel, order)) continue;
+
+      const channelId = normalizeIdString(channel?._id);
+      const channelType = normalizeNotificationChannelType(channel?.type);
+      const message = formatNewOrderMessage(order, channel.settings, baseUrl, {
+        chatLink: shortChatLink,
+        title,
+        includeStatus: true,
+        includeNotes: true,
+        includeUpdatedAt: true,
+      });
+      const replyRef = await findOrderNotificationReplyRef(
+        db,
+        orderIdString,
+        channelId,
+      );
+
+      if (channelType === "telegram_group") {
+        const telegramBotId = normalizeIdString(channel.telegramBotId);
+        const telegramChatId = normalizeTelegramChatId(channel.telegramChatId);
+        if (!telegramBotId || !telegramChatId) continue;
+
+        const replyPayload = buildTelegramReplyPayload(
+          message,
+          replyRef,
+          telegramBotId,
+          telegramChatId,
+        );
+        const hasReplyReference = !!replyPayload.reply_parameters;
+        let usedReplyReference = hasReplyReference;
+        let fallbackError = null;
+        try {
+          let response;
+          try {
+            response = await sendTelegramMessagesInOrder(
+              db,
+              telegramBotId,
+              telegramChatId,
+              [replyPayload],
+            );
+          } catch (err) {
+            if (!hasReplyReference) throw err;
+            fallbackError = err?.message || String(err);
+            usedReplyReference = false;
+            response = await sendTelegramMessagesInOrder(
+              db,
+              telegramBotId,
+              telegramChatId,
+              [message],
+            );
+          }
+          sentCount += 1;
+          if (usedReplyReference) repliedCount += 1;
+          if (fallbackError) fallbackCount += 1;
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: orderIdString,
+            eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+            status: "success",
+            response: response || null,
+            metadata: {
+              replyReferenceUsed: usedReplyReference,
+              fallbackError,
+            },
+          });
+          const reference = extractTelegramMessageReference(response);
+          await saveOrderNotificationMessageRef(db, {
+            orderId: orderIdString,
+            channelId,
+            eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+            channelType,
+            telegramBotId,
+            telegramChatId,
+            ...reference,
+          });
+        } catch (err) {
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: orderIdString,
+            eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+            status: "failed",
+            errorMessage: err?.message || String(err),
+            metadata: { replyReferenceUsed: hasReplyReference },
+          });
+        }
+        continue;
+      }
+
+      const senderBotId =
+        normalizeIdString(channel.senderBotId) || normalizeIdString(channel.botId);
+      const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
+      if (!senderBotId || !targetId) continue;
+
+      const replyPayload = buildLineReplyPayload(
+        message,
+        replyRef,
+        senderBotId,
+        targetId,
+      );
+      const hasReplyReference = !!replyPayload.quoteToken;
+      let usedReplyReference = hasReplyReference;
+      let fallbackError = null;
+      try {
+        let response;
+        try {
+          response = await sendLineMessagesInChunks(
+            senderBotId,
+            targetId,
+            [replyPayload],
+          );
+        } catch (err) {
+          if (!hasReplyReference) throw err;
+          fallbackError = err?.message || String(err);
+          usedReplyReference = false;
+          response = await sendLineMessagesInChunks(
+            senderBotId,
+            targetId,
+            [message],
+          );
+        }
+        sentCount += 1;
+        if (usedReplyReference) repliedCount += 1;
+        if (fallbackError) fallbackCount += 1;
+        await insertNotificationLog(db, {
+          channelId,
+          orderId: orderIdString,
+          eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+          status: "success",
+          response: response || null,
+          metadata: {
+            replyReferenceUsed: usedReplyReference,
+            fallbackError,
+          },
+        });
+        const reference = extractLineMessageReference(response);
+        await saveOrderNotificationMessageRef(db, {
+          orderId: orderIdString,
+          channelId,
+          eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+          channelType,
+          senderBotId,
+          targetId,
+          ...reference,
+        });
+      } catch (err) {
+        await insertNotificationLog(db, {
+          channelId,
+          orderId: orderIdString,
+          eventType: ORDER_NOTIFICATION_EVENT_UPDATED,
+          status: "failed",
+          errorMessage: err?.message || String(err),
+          metadata: { replyReferenceUsed: hasReplyReference },
+        });
+      }
+    }
+
+    return {
+      success: true,
+      sentCount,
+      repliedCount,
+      fallbackCount,
+    };
   };
 
   const sendOrderSummary = async (channel, options = {}) => {
@@ -1366,6 +1789,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
   return {
     sendNewOrder,
+    sendOrderUpdated,
     sendOrderSummary,
     testChannel,
   };

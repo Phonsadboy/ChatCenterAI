@@ -1448,6 +1448,15 @@ async function ensureNotificationIndexes(db) {
       },
     ]);
 
+    await db.collection("notification_message_refs").createIndexes([
+      {
+        key: { orderId: 1, channelId: 1, eventType: 1 },
+        unique: true,
+      },
+      { key: { orderId: 1, channelId: 1, updatedAt: -1 } },
+      { key: { updatedAt: -1 } },
+    ]);
+
     console.log("[DB] Notification indexes ensured");
   } catch (err) {
     console.warn(
@@ -6762,6 +6771,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
   const updatedOrder = await coll.findOne({ _id: order._id });
   await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
   await invalidateOrdersAdminCache("tool-update");
+  triggerOrderUpdateNotification(orderIdString, { source: "ai_tool" });
 
   try {
     if (io) {
@@ -6821,6 +6831,21 @@ async function triggerOrderNotification(orderId) {
 
   } catch (err) {
     console.warn(`[Notification] Error triggering for ${orderId}:`, err.message);
+  }
+}
+
+async function triggerOrderUpdateNotification(orderId, options = {}) {
+  if (!orderId) return;
+  try {
+    const result = await notificationService.sendOrderUpdated(orderId, options);
+    console.log(
+      `[Notification] Order ${orderId} update notification: sent=${result?.sentCount || 0}, replied=${result?.repliedCount || 0}`,
+    );
+  } catch (err) {
+    console.warn(
+      `[Notification] Error triggering update for ${orderId}:`,
+      err?.message || err,
+    );
   }
 }
 
@@ -28154,6 +28179,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
     await invalidateOrdersAdminCache("chat-update");
+    triggerOrderUpdateNotification(orderId, { source: "admin_chat" });
 
     // Emit socket event
     try {
@@ -33764,19 +33790,32 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+    const objectIds = validIds.map((id) => new ObjectId(id));
+    const ordersBeforeStatusUpdate = await coll
+      .find({ _id: { $in: objectIds } })
+      .project({ _id: 1, status: 1 })
+      .toArray();
+    const changedObjectIds = ordersBeforeStatusUpdate
+      .filter((order) => order.status !== status)
+      .map((order) => order._id);
 
     const result = await coll.updateMany(
-      { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
+      { _id: { $in: objectIds } },
       { $set: { status, updatedAt: new Date() } }
     );
     if (result.modifiedCount > 0) {
       await maybeMirrorAppDocumentByQuery(
         db,
         "orders",
-        { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
+        { _id: { $in: objectIds } },
         { multiple: true },
       );
       await invalidateOrdersAdminCache("bulk-status");
+      changedObjectIds.forEach((objectId) => {
+        triggerOrderUpdateNotification(objectId.toString(), {
+          source: "orders_bulk_status",
+        });
+      });
     }
 
     console.log(`[Orders] อัปเดตสถานะ ${result.modifiedCount} ออเดอร์เป็น ${status}`);
@@ -33939,6 +33978,9 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     const mirroredOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", mirroredOrder);
     await invalidateOrdersAdminCache("status");
+    if (status !== previousStatus) {
+      triggerOrderUpdateNotification(orderId, { source: "orders_status" });
+    }
 
     res.json({
       success: true,
@@ -33968,6 +34010,15 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+    const existingOrder = await coll.findOne(
+      { _id: new ObjectId(orderId) },
+      { projection: { notes: 1 } },
+    );
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+    const previousNotes =
+      typeof existingOrder.notes === "string" ? existingOrder.notes : "";
 
     const result = await coll.updateOne(
       { _id: new ObjectId(orderId) },
@@ -33981,6 +34032,9 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
       _id: new ObjectId(orderId),
     });
     await invalidateOrdersAdminCache("notes");
+    if (sanitizedNotes !== previousNotes) {
+      triggerOrderUpdateNotification(orderId, { source: "orders_notes" });
+    }
 
     console.log(`[Orders] อัปเดต notes ออเดอร์ ${orderId}`);
     res.json({ success: true, orderId, notes: sanitizedNotes });
