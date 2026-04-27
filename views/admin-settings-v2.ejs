@@ -724,6 +724,102 @@
                                 </form>
                             </div>
                         </div>
+
+                        <div class="settings-card" id="crEventSettingsCard">
+                            <div class="card-header-v2">
+                                <div>
+                                    <h3 class="card-title-v2"><i class="fas fa-link me-2"></i>ส่ง Event ไป CRM/CR</h3>
+                                    <p class="card-subtitle-v2 mb-0">ตั้งค่า Webhook สำหรับส่ง event ระบบและส่งออก Data Form</p>
+                                </div>
+                            </div>
+                            <div class="card-body-v2">
+                                <form id="crEventSettingsForm">
+                                    <div class="row g-4">
+                                        <div class="col-12">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="crEventEnabled">เปิดส่ง Event ไป CRM/CR</label>
+                                                    <div class="form-text-v2 mt-0">เมื่อเปิดแล้วระบบจะ POST event ไปยัง URL ด้านล่าง</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="crEventEnabled">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <label class="form-label-v2" for="crEventUrl">Webhook URL</label>
+                                            <input type="url" class="form-control-v2" id="crEventUrl"
+                                                placeholder="https://crm.example.com/webhooks/chatcenter">
+                                            <div class="form-text-v2">รองรับเฉพาะ http/https และใช้ URL นี้ทั้ง event ทั่วไปกับ Data Form export</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label-v2" for="crEventSecret">Signing Secret</label>
+                                            <input type="password" class="form-control-v2" id="crEventSecret"
+                                                placeholder="เว้นว่างได้">
+                                            <div class="form-text-v2">ระบบจะส่ง header X-ChatCenter-Signature แบบ HMAC SHA-256</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded h-100">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="crEventIncludeMessageContent">ส่งเนื้อหาแชทจริง</label>
+                                                    <div class="form-text-v2 mt-0">ปิดไว้จะส่ง metadata และแทนข้อความด้วย [omitted]</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="crEventIncludeMessageContent">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="alert alert-info mb-0">
+                                                <i class="fas fa-circle-info me-2"></i>
+                                                ตั้งค่า CRM Export Mode ต่อฟอร์ม: ไม่ส่ง / Auto / Manual / Dynamic
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="crEventAutoEnabled">เปิด Auto Export</label>
+                                                    <div class="form-text-v2 mt-0">เหมาะกับ Incident Form ที่ไม่ต้องรอคนตรวจ</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="crEventAutoEnabled">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="crEventManualEnabled">เปิด Manual Export</label>
+                                                    <div class="form-text-v2 mt-0">เหมาะกับ Order Form ที่ต้องตรวจยอดชำระเงินก่อน</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="crEventManualEnabled">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="alert alert-light border mb-0" id="crEventTestResult" hidden></div>
+                                        </div>
+                                        <div class="col-12 d-flex justify-content-end gap-2">
+                                            <button type="button" class="btn-v2 btn-v2-secondary" id="crEventTestBtn">
+                                                <i class="fas fa-vial"></i> ทดสอบส่ง
+                                            </button>
+                                            <button type="submit" class="btn-v2 btn-v2-primary">
+                                                <i class="fas fa-save"></i> บันทึก Webhook
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
                     </section>
 
                     <!-- Security Settings Section -->
@@ -1158,6 +1254,16 @@
                                         <input type="text" class="form-control" id="dataFormStatuses"
                                             placeholder="draft, submitted, reviewing">
                                         <div class="form-text">ระบบจะบังคับมี draft และ submitted เสมอ</div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="dataFormCrmExportMode">CRM Export Mode</label>
+                                        <select class="form-select" id="dataFormCrmExportMode">
+                                            <option value="none">ไม่ส่งเข้า CRM</option>
+                                            <option value="auto">Auto - ส่งอัตโนมัติเมื่อฟอร์มครบ</option>
+                                            <option value="manual">Manual - ให้ Agent ตรวจแล้วกดส่ง</option>
+                                            <option value="dynamic">Dynamic - Sync อัตโนมัติและกดส่งเองได้</option>
+                                        </select>
+                                        <div class="form-text">Dynamic จะส่งสถานะฟอร์มครบ/ไม่ครบไปใน payload ให้ CRM</div>
                                     </div>
                                     <div class="col-md-6 d-flex align-items-end">
                                         <div class="form-check form-switch">

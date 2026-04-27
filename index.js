@@ -17,6 +17,7 @@ const socketIo = require("socket.io");
 const InstructionDataService = require("./services/instructionDataService");
 const ConversationThreadService = require("./services/conversationThreadService");
 const createNotificationService = require("./services/notificationService");
+const createCrEventService = require("./services/crEventService");
 const slipOkService = require("./services/slipOkService");
 const { AgentForgeService } = require("./services/agentForgeService");
 const { AgentForgeRunner } = require("./services/agentForgeRunner");
@@ -1785,6 +1786,27 @@ const notificationService = createNotificationService({
   publicBaseUrl: PUBLIC_BASE_URL,
 });
 
+const crEventService = createCrEventService({
+  connectDB,
+  publicBaseUrl: PUBLIC_BASE_URL,
+});
+
+async function emitCrEvent(eventType, payload = {}, options = {}) {
+  try {
+    return await crEventService.sendEvent(eventType, payload, options);
+  } catch (error) {
+    console.warn("[CR Event] send failed:", error?.message || error);
+    return { success: false, error: error?.message || String(error) };
+  }
+}
+
+function queueCrEvent(eventType, payload = {}, options = {}) {
+  guardPromiseRejection(
+    emitCrEvent(eventType, payload, options),
+    `[CR Event] ${eventType} failed:`,
+  );
+}
+
 function isPostgresChatWriteEnabled() {
   return (
     chatStorageService.isConfigured() &&
@@ -2768,6 +2790,7 @@ function sanitizeDataFormPayload(payload = {}) {
   if (!fields.length) {
     throw new Error("กรุณาเพิ่ม field อย่างน้อย 1 รายการ");
   }
+  const crmExportMode = normalizeDataFormCrmExportMode(payload.crmExportMode);
   return {
     name: name.slice(0, 160),
     description:
@@ -2777,8 +2800,13 @@ function sanitizeDataFormPayload(payload = {}) {
     fields,
     statuses: normalizeFormStatuses(payload.statuses || []),
     enabledPages: normalizeVoxtronPageAssignments(payload.enabledPages || []),
+    crmExportMode,
     isActive: payload.isActive !== false,
   };
+}
+
+function normalizeDataFormCrmExportMode(value) {
+  return ["none", "auto", "manual", "dynamic"].includes(value) ? value : "none";
 }
 
 function mapDataForm(doc) {
@@ -2790,6 +2818,7 @@ function mapDataForm(doc) {
     fields: Array.isArray(doc.fields) ? doc.fields : [],
     statuses: normalizeFormStatuses(doc.statuses || []),
     enabledPages: normalizeVoxtronPageAssignments(doc.enabledPages || []),
+    crmExportMode: normalizeDataFormCrmExportMode(doc.crmExportMode),
     isActive: doc.isActive !== false,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -2834,6 +2863,34 @@ function validateSubmissionValues(values, fields) {
   return missing;
 }
 
+function buildDataFormCompletionState(form = {}, values = {}, status = "draft") {
+  const fields = Array.isArray(form?.fields) ? form.fields : [];
+  const requiredFields = fields.filter((field) => field.required);
+  const completedFields = fields.filter((field) => valueIsPresentForField(values?.[field.key], field));
+  const missingRequiredFields = requiredFields
+    .filter((field) => !valueIsPresentForField(values?.[field.key], field))
+    .map((field) => ({
+      id: field.id || "",
+      key: field.key || "",
+      label: field.label || field.key || "",
+      type: field.type || "text",
+    }));
+  const requiredComplete = missingRequiredFields.length === 0;
+  const normalizedStatus = String(status || "draft");
+  const isComplete = normalizedStatus === "submitted" && requiredComplete;
+  return {
+    isComplete,
+    status: isComplete ? "complete" : "incomplete",
+    submissionStatus: normalizedStatus,
+    totalFieldCount: fields.length,
+    completedFieldCount: completedFields.length,
+    requiredFieldCount: requiredFields.length,
+    completedRequiredFieldCount: Math.max(requiredFields.length - missingRequiredFields.length, 0),
+    missingRequiredFields,
+    completionRate: fields.length ? completedFields.length / fields.length : 1,
+  };
+}
+
 function buildSubmissionSummary(form, values, maxFields = 6) {
   const lines = [];
   const fields = Array.isArray(form?.fields) ? form.fields : [];
@@ -2865,11 +2922,280 @@ function mapDataFormSubmission(doc) {
     status: doc.status || "submitted",
     summary: doc.summary || "",
     source: doc.source || "admin",
+    crmExport: doc.crmExport && typeof doc.crmExport === "object" ? doc.crmExport : null,
     history,
     latestActor: latestHistory?.by || doc.updatedBy || doc.createdBy || doc.source || "",
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
   };
+}
+
+function buildDataFormCrmExportPayload(form = {}, submission = {}, mode = "manual", options = {}) {
+  const completion = buildDataFormCompletionState(form, submission.values || {}, submission.status || "draft");
+  const requestedAt = options.requestedAt || new Date().toISOString();
+  return {
+    form: {
+      id: submission.formId || form._id?.toString?.() || "",
+      name: submission.formName || form.name || "",
+      description: form.description || "",
+      crmExportMode: normalizeDataFormCrmExportMode(form.crmExportMode),
+      fields: Array.isArray(form.fields) ? form.fields : [],
+    },
+    submission: {
+      id: submission.id || submission._id?.toString?.() || "",
+      status: submission.status || "submitted",
+      isComplete: completion.isComplete,
+      completionStatus: completion.status,
+      values: submission.values || {},
+      summary: submission.summary || "",
+      source: submission.source || "",
+      createdAt: submission.createdAt || null,
+      updatedAt: submission.updatedAt || null,
+    },
+    completion,
+    export: {
+      mode,
+      trigger: options.trigger || mode,
+      requestedAt,
+    },
+    userId: submission.userId || "",
+    platform: normalizeChatPlatform(submission.platform || "line"),
+    botId: submission.botId || null,
+  };
+}
+
+async function updateDataFormCrmExportState(db, submissionId, patch = {}) {
+  if (!db || !ObjectId.isValid(String(submissionId || ""))) return null;
+  const now = new Date();
+  const set = {};
+  Object.entries(patch).forEach(([key, value]) => {
+    set[`crmExport.${key}`] = value;
+  });
+  set["crmExport.updatedAt"] = now;
+  set.updatedAt = now;
+  const result = await db.collection("data_form_submissions").findOneAndUpdate(
+    { _id: new ObjectId(String(submissionId)) },
+    { $set: set },
+    { returnDocument: "after" },
+  );
+  const doc = result.value || result;
+  if (doc) {
+    await maybeMirrorAppDocumentFromCollection("data_form_submissions", doc);
+    emitAdminRealtime("dataFormSubmissionUpdated", mapDataFormSubmission(doc));
+  }
+  return doc ? mapDataFormSubmission(doc) : null;
+}
+
+async function exportDataFormSubmissionToCrm(db, form, submission, options = {}) {
+  const submissionId = submission?.id || submission?._id?.toString?.() || "";
+  if (!submissionId || !ObjectId.isValid(submissionId)) {
+    return { success: false, error: "Submission ID ไม่ถูกต้อง" };
+  }
+
+  const mode = ["auto", "manual", "dynamic"].includes(options.mode) ? options.mode : "manual";
+  const eventType = options.eventType || "data_form.exported";
+  const trigger = options.trigger || mode;
+  const requestedAt = new Date();
+  const completion = buildDataFormCompletionState(form, submission.values || {}, submission.status || "draft");
+  await updateDataFormCrmExportState(db, submissionId, {
+    mode,
+    status: "sending",
+    trigger,
+    isComplete: completion.isComplete,
+    completionStatus: completion.status,
+    missingRequiredFields: completion.missingRequiredFields,
+    lastError: "",
+    requestedBy: options.actor || "system",
+    requestedAt,
+  });
+
+  const payload = buildDataFormCrmExportPayload(form, submission, mode, {
+    trigger,
+    requestedAt: requestedAt.toISOString(),
+  });
+  const updatedAtMs = new Date(submission.updatedAt || requestedAt).getTime();
+  const idempotencyKey = options.idempotencyKey || (
+    eventType === "data_form.updated"
+      ? `data_form_submission:${submissionId}:sync:${mode}:${Number.isFinite(updatedAtMs) ? updatedAtMs : requestedAt.getTime()}`
+      : `data_form_submission:${submissionId}:export:${mode}`
+  );
+  const result = await emitCrEvent(eventType, payload, {
+    entityType: "data_form_submission",
+    entityId: submissionId,
+    customerId: submission.userId || "",
+    platform: submission.platform || "",
+    botId: submission.botId || "",
+    actor: {
+      label: options.actor || "system",
+      role: options.actorRole || (mode === "manual" ? "admin" : "system"),
+    },
+    idempotencyKey,
+  });
+
+  const exported = result?.success === true;
+  const mapped = await updateDataFormCrmExportState(db, submissionId, {
+    mode,
+    status: exported ? (options.successStatus || "exported") : "failed",
+    trigger,
+    isComplete: completion.isComplete,
+    completionStatus: completion.status,
+    missingRequiredFields: completion.missingRequiredFields,
+    eventId: result?.eventId || "",
+    responseStatus: result?.status || null,
+    lastError: exported ? "" : String(result?.error || result?.data?.error || "ส่งเข้า CRM ไม่สำเร็จ").slice(0, 500),
+    exportedBy: options.actor || "system",
+    exportedAt: exported ? new Date() : null,
+  });
+
+  if (!exported) {
+    queueCrEvent("data_form.export_failed", {
+      ...payload,
+      error: result?.error || result?.data?.error || "send_failed",
+    }, {
+      entityType: "data_form_submission",
+      entityId: submissionId,
+      customerId: submission.userId || "",
+      platform: submission.platform || "",
+      botId: submission.botId || "",
+      actor: { label: options.actor || "system" },
+    });
+  }
+
+  return { ...result, submission: mapped };
+}
+
+async function requestManualDataFormCrmReview(db, form, submission, options = {}, mode = "manual") {
+  const completion = buildDataFormCompletionState(form, submission.values || {}, submission.status || "draft");
+  const mapped = await updateDataFormCrmExportState(db, submission.id, {
+    mode,
+    status: "waiting_review",
+    trigger: "manual_review",
+    isComplete: completion.isComplete,
+    completionStatus: completion.status,
+    missingRequiredFields: completion.missingRequiredFields,
+    requestedBy: options.actor || "system",
+    requestedAt: new Date(),
+    lastError: "",
+  });
+  await emitVoxtronWorkflowEvent(db, {
+    eventType: "crm_export_review_requested",
+    userId: submission.userId || "",
+    platform: submission.platform || "line",
+    botId: submission.botId || null,
+    formId: submission.formId || "",
+    formName: submission.formName || form.name || "",
+    submissionId: submission.id || "",
+    reason: "Data Form รอ Agent ตรวจสอบก่อนส่งเข้า CRM",
+    summary: submission.summary || "",
+    source: "crm_export_workflow",
+  }, options.req || null);
+  queueCrEvent("data_form.export_requested", buildDataFormCrmExportPayload(form, submission, mode, {
+    trigger: "manual_review",
+  }), {
+    entityType: "data_form_submission",
+    entityId: submission.id,
+    customerId: submission.userId || "",
+    platform: submission.platform || "",
+    botId: submission.botId || "",
+    actor: { label: options.actor || "system" },
+  });
+  return { mode, submission: mapped || submission };
+}
+
+async function handleDynamicDataFormCrmWorkflow(db, form, submission, config, options = {}) {
+  const completion = buildDataFormCompletionState(form, submission.values || {}, submission.status || "draft");
+  const autoEnabled = config.dataFormAutoExportEnabled === true;
+  const manualEnabled = config.dataFormManualExportEnabled === true;
+
+  if (autoEnabled) {
+    if (!config.enabled || !config.url) {
+      const mapped = await updateDataFormCrmExportState(db, submission.id, {
+        mode: "dynamic",
+        status: "waiting_config",
+        trigger: completion.isComplete ? "auto_complete" : "auto_partial",
+        isComplete: completion.isComplete,
+        completionStatus: completion.status,
+        missingRequiredFields: completion.missingRequiredFields,
+        requestedBy: options.actor || "system",
+        requestedAt: new Date(),
+        lastError: "CR Event Webhook ยังไม่ได้เปิดหรือยังไม่ได้ใส่ URL",
+      });
+      return { mode: "dynamic", submission: mapped || submission };
+    }
+
+    const result = await exportDataFormSubmissionToCrm(db, form, submission, {
+      mode: "dynamic",
+      eventType: completion.isComplete ? "data_form.exported" : "data_form.updated",
+      trigger: completion.isComplete ? "auto_complete" : "auto_partial",
+      successStatus: completion.isComplete ? "exported" : "synced",
+      actor: options.actor || "ai",
+      actorRole: "system",
+    });
+    return { mode: "dynamic", submission: result?.submission || submission, result };
+  }
+
+  if (manualEnabled && completion.isComplete) {
+    return requestManualDataFormCrmReview(db, form, submission, options, "dynamic");
+  }
+
+  if (manualEnabled) {
+    const mapped = await updateDataFormCrmExportState(db, submission.id, {
+      mode: "dynamic",
+      status: "waiting_completion",
+      trigger: "manual_review",
+      isComplete: false,
+      completionStatus: completion.status,
+      missingRequiredFields: completion.missingRequiredFields,
+      requestedBy: options.actor || "system",
+      requestedAt: new Date(),
+      lastError: "",
+    });
+    return { mode: "dynamic", submission: mapped || submission };
+  }
+
+  return { mode: "dynamic", submission };
+}
+
+async function handleDataFormCrmWorkflow(db, form, submission, options = {}) {
+  if (!db || !form || !submission) {
+    return { mode: "", submission };
+  }
+  const config = await crEventService.getConfig().catch(() => crEventService.normalizeConfig({}));
+  const mode = crEventService.resolveDataFormExportMode(config, form);
+  if (!mode) return { mode: "", submission };
+
+  if (mode === "dynamic") {
+    return handleDynamicDataFormCrmWorkflow(db, form, submission, config, options);
+  }
+
+  if (submission.status !== "submitted") {
+    return { mode: "", submission };
+  }
+
+  if (mode === "auto") {
+    if (!config.enabled || !config.url) {
+      const completion = buildDataFormCompletionState(form, submission.values || {}, submission.status || "draft");
+      const mapped = await updateDataFormCrmExportState(db, submission.id, {
+        mode: "auto",
+        status: "waiting_config",
+        trigger: "auto",
+        isComplete: completion.isComplete,
+        completionStatus: completion.status,
+        missingRequiredFields: completion.missingRequiredFields,
+        requestedBy: options.actor || "system",
+        requestedAt: new Date(),
+        lastError: "CR Event Webhook ยังไม่ได้เปิดหรือยังไม่ได้ใส่ URL",
+      });
+      return { mode, submission: mapped || submission };
+    }
+    const result = await exportDataFormSubmissionToCrm(db, form, submission, {
+      mode: "auto",
+      actor: options.actor || "ai",
+    });
+    return { mode, submission: result?.submission || submission, result };
+  }
+
+  return requestManualDataFormCrmReview(db, form, submission, options, "manual");
 }
 
 async function getAvailableDataFormsForContext(
@@ -3034,10 +3360,11 @@ async function createOrUpdateDataFormSubmission(
   }
 
   await maybeMirrorAppDocumentFromCollection("data_form_submissions", doc);
-  const mapped = mapDataFormSubmission(doc);
+  let mapped = mapDataFormSubmission(doc);
   emitAdminRealtime("dataFormSubmissionUpdated", mapped);
 
   if (status === "submitted" && options.notify !== false) {
+    const completion = buildDataFormCompletionState(form, values, status);
     await emitVoxtronWorkflowEvent(db, {
       eventType: "form_submitted",
       userId,
@@ -3049,7 +3376,17 @@ async function createOrUpdateDataFormSubmission(
       reason: options.reason || "Data Form submitted",
       summary,
       source,
+      isComplete: completion.isComplete,
+      completion,
     }, options.req || null);
+  }
+
+  const crmWorkflow = await handleDataFormCrmWorkflow(db, form, mapped, {
+    actor,
+    req: options.req || null,
+  });
+  if (crmWorkflow?.submission) {
+    mapped = crmWorkflow.submission;
   }
 
   return { success: true, submission: mapped };
@@ -3680,6 +4017,20 @@ async function saveAndEmitAdminChatFileMessage(db, options = {}) {
     sender: "assistant",
     timestamp: doc.timestamp,
   });
+  queueCrEvent("file.sent", {
+    userId,
+    platform: normalizedPlatform,
+    botId: normalizedBotId,
+    messageId: doc._id?.toString?.() || "",
+    message,
+    source,
+  }, {
+    entityType: "chat_message",
+    entityId: doc._id?.toString?.() || "",
+    customerId: userId,
+    platform: normalizedPlatform,
+    botId: normalizedBotId || "",
+  });
   return doc;
 }
 
@@ -3816,6 +4167,20 @@ async function emitVoxtronWorkflowEvent(db, event = {}, req = null) {
   } catch (error) {
     console.warn("[Voxtron] workflow notification failed:", error?.message || error);
   }
+
+  const crEventType =
+    eventType === "form_submitted"
+      ? "data_form.submitted"
+      : eventType === "ai_stuck"
+        ? "conversation.ai_stuck"
+        : "conversation.handoff_requested";
+  queueCrEvent(crEventType, doc, {
+    entityType: eventType === "form_submitted" ? "data_form_submission" : "conversation",
+    entityId: doc.submissionId || doc.userId || "",
+    customerId: doc.userId,
+    platform: doc.platform,
+    botId: doc.botId || "",
+  });
 
   return doc;
 }
@@ -4901,6 +5266,28 @@ function mapAuditLogDoc(doc) {
   };
 }
 
+function mapAuditEventToCrEventType(eventType = "") {
+  const type = String(eventType || "");
+  if (/permission/i.test(type)) return "security.permission_changed";
+  if (/user_|passcode|access_toggled|admin/i.test(type)) return "security.admin_user_changed";
+  if (/data_form_submission_updated/.test(type)) return "data_form.updated";
+  if (/data_form.*submitted|form_submitted/.test(type)) return "data_form.submitted";
+  if (/tag/.test(type)) return type.includes("system") ? "system_tag.changed" : "customer.tags_changed";
+  if (/assignment|assign/.test(type)) return "chat.assignment_changed";
+  if (/queue|status/.test(type) && /chat|user/.test(type)) return "chat.queue_status_changed";
+  if (/purchase_status/.test(type)) return "customer.purchase_status_changed";
+  if (/feedback/.test(type)) return "message.feedback_recorded";
+  if (/note/.test(type)) return "note.updated";
+  if (/order.*delete/.test(type)) return "order.deleted";
+  if (/order.*status/.test(type)) return "order.status_changed";
+  if (/order/.test(type)) return "order.updated";
+  if (/bot/.test(type)) return type.includes("status") ? "bot.status_changed" : "bot.config_changed";
+  if (/instruction.*batch.*commit/.test(type)) return "instruction.batch_committed";
+  if (/instruction.*batch.*reject/.test(type)) return "instruction.batch_rejected";
+  if (/instruction.*version|instruction.*created|instruction.*updated/.test(type)) return "instruction.version_created";
+  return "admin.audit_logged";
+}
+
 async function recordAuditLog(req, entry = {}) {
   try {
     const actor = getAuditActor(req);
@@ -4927,6 +5314,20 @@ async function recordAuditLog(req, entry = {}) {
     const db = client.db("chatbot");
     const result = await db.collection("audit_logs").insertOne(doc);
     doc._id = result.insertedId;
+    if (entry.skipCrEvent !== true) {
+      queueCrEvent(mapAuditEventToCrEventType(doc.eventType), {
+        auditLog: doc,
+        actor: getAdminActorIdentity(req),
+      }, {
+        entityType: doc.targetType || "audit_log",
+        entityId: doc.targetId || doc._id?.toString?.() || "",
+        customerId: doc.userId,
+        platform: doc.platform,
+        botId: doc.botId,
+        inboxKey: doc.inboxKey,
+        actor: getAdminActorIdentity(req),
+      });
+    }
     return mapAuditLogDoc(doc);
   } catch (error) {
     console.warn("[AuditLog] record failed:", error?.message || error);
@@ -5774,6 +6175,25 @@ async function saveChatHistory(
     userMessageDoc._id = userInsertResult.insertedId;
   }
   await maybeMirrorChatMessage(userMessageDoc, "saveChatHistory:user");
+  queueCrEvent("conversation.message_received", {
+    userId,
+    platform,
+    botId,
+    message: {
+      id: userMessageDoc._id?.toString?.() || "",
+      role: "user",
+      content: userMessageDoc.content,
+      timestamp: userTimestamp,
+      source: "user",
+    },
+    instructionRefs: normalizedInstructionRefs,
+  }, {
+    entityType: "chat_message",
+    entityId: userMessageDoc._id?.toString?.() || "",
+    customerId: userId,
+    platform,
+    botId: botId || "",
+  });
 
   let emittedUserMessage = userMessageDoc;
   try {
@@ -5876,6 +6296,41 @@ async function saveChatHistory(
       assistantMessageDoc,
       "saveChatHistory:assistant",
     );
+    queueCrEvent("conversation.message_sent", {
+      userId,
+      platform,
+      botId,
+      message: {
+        id: assistantMessageDoc._id?.toString?.() || "",
+        role: "assistant",
+        content: assistantMessageDoc.content,
+        timestamp: assistantTimestamp,
+        source: assistantSource,
+      },
+      instructionRefs: normalizedInstructionRefs,
+      imageAssetIdsSent,
+    }, {
+      entityType: "chat_message",
+      entityId: assistantMessageDoc._id?.toString?.() || "",
+      customerId: userId,
+      platform,
+      botId: botId || "",
+    });
+    if (imageAssetIdsSent.length > 0) {
+      queueCrEvent("asset.sent", {
+        userId,
+        platform,
+        botId,
+        messageId: assistantMessageDoc._id?.toString?.() || "",
+        assetIds: imageAssetIdsSent,
+      }, {
+        entityType: "chat_message",
+        entityId: assistantMessageDoc._id?.toString?.() || "",
+        customerId: userId,
+        platform,
+        botId: botId || "",
+      });
+    }
     void recordInstructionAI2MessageUsage(db, {
       userMessageDoc,
       assistantMessageDoc,
@@ -7168,6 +7623,21 @@ async function scheduleFollowUpForUser(userId, options = {}) {
         status: "scheduled",
         nextScheduledAt,
       });
+      queueCrEvent("followup.scheduled", {
+        taskId: existingTask._id?.toString?.() || "",
+        userId,
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+        contextKey,
+        nextScheduledAt,
+        rescheduled: true,
+      }, {
+        entityType: "follow_up_task",
+        entityId: existingTask._id?.toString?.() || "",
+        customerId: userId,
+        platform: normalizedPlatform,
+        botId: normalizedBotId || "",
+      });
       return null;
     }
 
@@ -7229,6 +7699,22 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       contextKey,
       status: "scheduled",
       nextScheduledAt: taskDoc.nextScheduledAt,
+    });
+    queueCrEvent("followup.scheduled", {
+      taskId: taskDoc._id?.toString?.() || "",
+      userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      contextKey,
+      nextScheduledAt: taskDoc.nextScheduledAt,
+      rescheduled: false,
+      roundCount: rounds.length,
+    }, {
+      entityType: "follow_up_task",
+      entityId: taskDoc._id?.toString?.() || "",
+      customerId: userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId || "",
     });
     return taskDoc;
   } catch (error) {
@@ -7298,6 +7784,20 @@ async function cancelFollowUpTasksForUser(
         contextKey: contextKey || undefined,
         status: "canceled",
         reason,
+      });
+      queueCrEvent("followup.cancelled", {
+        userId,
+        platform: normalizedPlatform || "",
+        botId: normalizedBotId === undefined ? "" : normalizedBotId,
+        contextKey: contextKey || "",
+        reason,
+        modifiedCount: result.modifiedCount,
+      }, {
+        entityType: "follow_up_task",
+        entityId: "",
+        customerId: userId,
+        platform: normalizedPlatform || "",
+        botId: normalizedBotId === undefined ? "" : normalizedBotId || "",
       });
     }
   } catch (error) {
@@ -7376,6 +7876,19 @@ async function handleFollowUpTask(task, db) {
       contextKey: derivedContextKey,
       status: "completed",
     });
+    queueCrEvent("followup.completed", {
+      taskId: task._id?.toString?.() || "",
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+    }, {
+      entityType: "follow_up_task",
+      entityId: task._id?.toString?.() || "",
+      customerId: task.userId,
+      platform: task.platform || "",
+      botId: task.botId || "",
+    });
     return;
   }
 
@@ -7404,6 +7917,20 @@ async function handleFollowUpTask(task, db) {
       contextKey: derivedContextKey,
       status: "canceled",
       reason: "already_purchased",
+    });
+    queueCrEvent("followup.cancelled", {
+      taskId: task._id?.toString?.() || "",
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      reason: "already_purchased",
+    }, {
+      entityType: "follow_up_task",
+      entityId: task._id?.toString?.() || "",
+      customerId: task.userId,
+      platform: task.platform || "",
+      botId: task.botId || "",
     });
     return;
   }
@@ -7449,6 +7976,20 @@ async function handleFollowUpTask(task, db) {
       status: "canceled",
       reason: "order_exists",
     });
+    queueCrEvent("followup.cancelled", {
+      taskId: task._id?.toString?.() || "",
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      reason: "order_exists",
+    }, {
+      entityType: "follow_up_task",
+      entityId: task._id?.toString?.() || "",
+      customerId: task.userId,
+      platform: task.platform || "",
+      botId: task.botId || "",
+    });
     return;
   }
 
@@ -7487,6 +8028,22 @@ async function handleFollowUpTask(task, db) {
       nextRound: hasMore ? nextIndex : null,
       nextScheduledAt: updateSet.nextScheduledAt,
     });
+    queueCrEvent(updateSet.completed ? "followup.completed" : "followup.sent", {
+      taskId: task._id?.toString?.() || "",
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      currentRound: currentIndex,
+      nextRound: hasMore ? nextIndex : null,
+      nextScheduledAt: updateSet.nextScheduledAt,
+    }, {
+      entityType: "follow_up_task",
+      entityId: task._id?.toString?.() || "",
+      customerId: task.userId,
+      platform: task.platform || "",
+      botId: task.botId || "",
+    });
   } catch (error) {
     console.error("[FollowUp] ส่งข้อความติดตามไม่สำเร็จ:", error.message);
     await coll.updateOne(
@@ -7510,6 +8067,21 @@ async function handleFollowUpTask(task, db) {
       contextKey: derivedContextKey,
       status: "failed",
       reason: "send_failed",
+    });
+    queueCrEvent("followup.failed", {
+      taskId: task._id?.toString?.() || "",
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      reason: "send_failed",
+      error: error.message,
+    }, {
+      entityType: "follow_up_task",
+      entityId: task._id?.toString?.() || "",
+      customerId: task.userId,
+      platform: task.platform || "",
+      botId: task.botId || "",
     });
   }
 }
@@ -9055,6 +9627,29 @@ async function saveOrderToDatabase(
     }
     await maybeMirrorAppDocumentFromCollection("orders", orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
+    queueCrEvent("order.created", {
+      order: {
+        id: orderDoc._id?.toString?.() || "",
+        userId,
+        platform: orderDoc.platform,
+        botId: orderDoc.botId,
+        orderData: orderDoc.orderData,
+        status: orderDoc.status,
+        notes: orderDoc.notes,
+        extractedFrom,
+        isManualExtraction,
+        extractedAt: orderDoc.extractedAt,
+      },
+      userId,
+      platform: orderDoc.platform,
+      botId: orderDoc.botId,
+    }, {
+      entityType: "order",
+      entityId: orderDoc._id?.toString?.() || "",
+      customerId: userId,
+      platform: orderDoc.platform,
+      botId: orderDoc.botId || "",
+    });
 
     return result.insertedId;
   } catch (error) {
@@ -9389,6 +9984,20 @@ async function updateOrderFromTool(args = {}, context = {}) {
   await coll.updateOne({ _id: order._id }, { $set: updateDoc });
   const updatedOrder = await coll.findOne({ _id: order._id });
   await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
+  queueCrEvent(status ? "order.status_changed" : "order.updated", {
+    order: updatedOrder,
+    previousStatus: order.status || null,
+    changedFields: Object.keys(updateDoc).filter((key) => key !== "updatedAt"),
+    userId,
+    platform,
+    botId,
+  }, {
+    entityType: "order",
+    entityId: orderIdString,
+    customerId: userId,
+    platform,
+    botId: botId || "",
+  });
 
   try {
     if (io) {
@@ -9443,6 +10052,22 @@ async function triggerOrderNotification(orderId) {
       ...order,
       notificationStatus: status,
       notificationSentAt,
+    });
+    queueCrEvent("notification.delivery_attempted", {
+      channel: "order_notification",
+      success: result.success === true,
+      status,
+      result,
+      order,
+      userId: order.userId || "",
+      platform: order.platform || "",
+      botId: order.botId || "",
+    }, {
+      entityType: "order",
+      entityId: orderId?.toString?.() || String(orderId || ""),
+      customerId: order.userId || "",
+      platform: order.platform || "",
+      botId: order.botId || "",
     });
     console.log(`[Notification] Order ${orderId} notification: ${status}`);
 
@@ -12159,6 +12784,23 @@ async function handleLineGroupSlipOkImage(event, queueOptions = {}) {
     buffer: imageBuffer,
     filename: `line-slip-${message.id}.jpg`,
     contentType,
+  });
+  queueCrEvent("payment.slip_checked", {
+    provider: "slipok",
+    ok: result?.ok === true,
+    code: result?.code ?? null,
+    message: result?.message || "",
+    slip: result?.slip || null,
+    groupId,
+    sourceType,
+    messageId: message.id,
+    platform: "line",
+    botId,
+  }, {
+    entityType: "payment_slip",
+    entityId: message.id,
+    platform: "line",
+    botId,
   });
 
   const replyText = buildSlipOkReplyText(result);
@@ -19376,6 +20018,14 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
     });
 
     if (!verifyResult.valid) {
+      queueCrEvent("auth.login_failed", {
+        ipAddress: req.ip,
+        userAgent: req.headers?.["user-agent"] || "",
+        reason: "invalid_passcode",
+      }, {
+        entityType: "admin_session",
+        entityId: "",
+      });
       return res.status(401).json({
         success: false,
         error: "รหัสผ่านไม่ถูกต้อง",
@@ -19383,6 +20033,15 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
     }
 
     registerAdminSession(req, verifyResult);
+    queueCrEvent("auth.login_succeeded", {
+      user: getAdminUserContext(req),
+      ipAddress: req.ip,
+      userAgent: req.headers?.["user-agent"] || "",
+    }, {
+      entityType: "admin_session",
+      entityId: req.sessionID || "",
+      actor: getAdminActorIdentity(req),
+    });
     res.json({
       success: true,
       user: getAdminUserContext(req),
@@ -19398,7 +20057,17 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
 
 app.post("/admin/logout", async (req, res) => {
   try {
+    const actor = getAdminActorIdentity(req);
     await destroyAdminSession(req);
+    queueCrEvent("auth.logout", {
+      actor,
+      ipAddress: req.ip,
+      userAgent: req.headers?.["user-agent"] || "",
+    }, {
+      entityType: "admin_session",
+      entityId: req.sessionID || "",
+      actor,
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({
@@ -19419,6 +20088,7 @@ app.use(
     agentForgeService,
     agentForgeRunner,
     agentForgeScheduler,
+    emitCrEvent: queueCrEvent,
   }),
 );
 
@@ -19435,6 +20105,7 @@ app.use(
     requireInstructionUpdate: requirePermission("instructions:update"),
     canAccessInstruction: (req, instruction) => canAdminAccessInstruction(req, instruction),
     buildInstructionActorFields,
+    emitCrEvent: queueCrEvent,
   }),
 );
 
@@ -21546,6 +22217,25 @@ async function sendAdminChatTextToPlatform(options = {}) {
       message: frontendDoc,
       sender: "assistant",
       timestamp: doc.timestamp,
+    });
+    queueCrEvent("conversation.message_sent", {
+      userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      message: {
+        id: doc._id?.toString?.() || "",
+        role: "assistant",
+        content: doc.content,
+        timestamp: doc.timestamp,
+        source,
+      },
+      actor: { label: source, role: "admin" },
+    }, {
+      entityType: "chat_message",
+      entityId: doc._id?.toString?.() || "",
+      customerId: userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId || "",
     });
     return frontendDoc;
   };
@@ -28122,6 +28812,16 @@ class BroadcastQueue {
     this.stats.status = "running";
     this.stats.startTime = new Date();
     await this.saveHistory();
+    queueCrEvent("broadcast.started", {
+      jobId: this.jobId,
+      stats: this.stats,
+      channels: this.data.channels || [],
+      targetCount: this.data.targets.length,
+      messageCount: Array.isArray(this.data.messages) ? this.data.messages.length : 0,
+    }, {
+      entityType: "broadcast",
+      entityId: this.jobId,
+    });
 
     try {
       await this.loadBots();
@@ -28141,6 +28841,21 @@ class BroadcastQueue {
     } finally {
       this.stats.endTime = new Date();
       await this.saveHistory();
+      queueCrEvent(
+        this.stats.status === "cancelled"
+          ? "broadcast.cancelled"
+          : this.stats.status === "failed"
+            ? "broadcast.failed"
+            : "broadcast.completed",
+        {
+          jobId: this.jobId,
+          stats: this.stats,
+        },
+        {
+          entityType: "broadcast",
+          entityId: this.jobId,
+        },
+      );
       setTimeout(() => activeBroadcasts.delete(this.jobId), 5 * 60 * 1000);
     }
   }
@@ -28289,6 +29004,14 @@ class BroadcastQueue {
 
   cancel() {
     this.isCancelled = true;
+    queueCrEvent("broadcast.cancelled", {
+      jobId: this.jobId,
+      stats: this.stats,
+      reason: "admin_cancelled",
+    }, {
+      entityType: "broadcast",
+      entityId: this.jobId,
+    });
   }
 
   async loadBots() {
@@ -28336,6 +29059,13 @@ class BroadcastQueue {
     if (typeof io !== 'undefined') {
       io.to("admin").emit("broadcastProgress", { jobId: this.jobId, stats: this.stats });
     }
+    queueCrEvent("broadcast.progress", {
+      jobId: this.jobId,
+      stats: this.stats,
+    }, {
+      entityType: "broadcast",
+      entityId: this.jobId,
+    });
     await this.saveHistory();
   }
 }
@@ -31712,7 +32442,15 @@ app.put("/admin/api/data-form-submissions/:id", requirePermission("data-forms:ma
     );
     const doc = result.value || result;
     await maybeMirrorAppDocumentFromCollection("data_form_submissions", doc);
-    emitAdminRealtime("dataFormSubmissionUpdated", mapDataFormSubmission(doc));
+    let mapped = mapDataFormSubmission(doc);
+    emitAdminRealtime("dataFormSubmissionUpdated", mapped);
+    const crmWorkflow = await handleDataFormCrmWorkflow(db, form || existing, mapped, {
+      actor: req.session?.adminUser?.label || req.session?.adminUser?.role || "admin",
+      req,
+    });
+    if (crmWorkflow?.submission) {
+      mapped = crmWorkflow.submission;
+    }
     await recordAuditLog(req, {
       eventType: "data_form_submission_updated",
       action: "update",
@@ -31725,12 +32463,93 @@ app.put("/admin/api/data-form-submissions/:id", requirePermission("data-forms:ma
       summary: `Updated Data Form submission ${doc.formName || submissionId} to ${doc.status}`,
       metadata: { status: doc.status },
     });
-    res.json({ success: true, submission: mapDataFormSubmission(doc) });
+    res.json({ success: true, submission: mapped });
   } catch (err) {
     console.error("[DataForms] submission update failed:", err);
     res.status(400).json({ success: false, error: err.message });
   }
 });
+
+async function handleManualDataFormCrmExport(req, res) {
+  try {
+    const submissionId = req.params.id;
+    if (!ObjectId.isValid(submissionId)) {
+      return res.status(400).json({ success: false, error: "Submission ID ไม่ถูกต้อง" });
+    }
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const existing = await db.collection("data_form_submissions").findOne({
+      _id: new ObjectId(submissionId),
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ submission" });
+    }
+    if (!isAdminInboxAllowed(req, existing.platform || "line", existing.botId || "default")) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์เข้าถึง submission นี้" });
+    }
+    const form = existing.formId && ObjectId.isValid(existing.formId)
+      ? await db.collection("data_forms").findOne({ _id: new ObjectId(existing.formId) })
+      : null;
+    const submission = mapDataFormSubmission(existing);
+    if (submission.status !== "submitted") {
+      return res.status(400).json({ success: false, error: "ส่งเข้า CRM ได้เฉพาะ submission ที่ส่งครบแล้ว" });
+    }
+    const formMode = form
+      ? normalizeDataFormCrmExportMode(form.crmExportMode)
+      : normalizeDataFormCrmExportMode(submission.crmExport?.mode);
+    if (!["manual", "dynamic"].includes(formMode)) {
+      return res.status(400).json({
+        success: false,
+        error: "ฟอร์มนี้ไม่ได้ตั้ง CRM Export Mode เป็น Manual หรือ Dynamic",
+      });
+    }
+    const actor =
+      getAdminUserContext(req)?.label ||
+      getAdminUserContext(req)?.role ||
+      "admin";
+    const exportMode = formMode === "dynamic" ? "dynamic" : "manual";
+    const result = await exportDataFormSubmissionToCrm(db, form || existing, submission, {
+      mode: exportMode,
+      trigger: "manual",
+      actorRole: "admin",
+      actor,
+    });
+    await recordAuditLog(req, {
+      eventType: result.success ? "data_form_crm_exported" : "data_form_crm_export_failed",
+      action: "export_crm",
+      targetType: "data_form_submission",
+      targetId: submissionId,
+      targetLabel: submission.formName,
+      userId: submission.userId,
+      platform: submission.platform,
+      botId: submission.botId,
+      summary: `${result.success ? "Exported" : "Failed to export"} Data Form ${submission.formName || submissionId} to CRM`,
+      metadata: { mode: exportMode, trigger: "manual", eventId: result.eventId || "", status: result.status || null },
+    });
+    res.json({
+      success: result.success === true,
+      result,
+      submission: result.submission,
+      error: result.success ? undefined : (result.error || "ส่งเข้า CRM ไม่สำเร็จ"),
+    });
+  } catch (err) {
+    console.error("[DataForms] CRM export failed:", err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+}
+
+app.post(
+  "/admin/chat/data-form-submissions/:id/export-crm",
+  requirePermission("chat:forms"),
+  requireChatWorkspaceTab("forms"),
+  handleManualDataFormCrmExport,
+);
+
+app.post(
+  "/admin/api/data-form-submissions/:id/export-crm",
+  requirePermission("data-forms:manage"),
+  handleManualDataFormCrmExport,
+);
 
 app.get("/admin/api/file-assets", requirePermission("file-assets:view"), async (req, res) => {
   try {
@@ -35719,6 +36538,69 @@ app.post("/api/settings/system", requirePermission("settings:general"), async (r
   }
 });
 
+app.get("/api/settings/cr-events", requireSuperadmin, async (req, res) => {
+  try {
+    const config = await crEventService.getConfig();
+    res.json({ success: true, config: crEventService.publicConfig(config) });
+  } catch (err) {
+    console.error("[CR Event] load settings failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/settings/cr-events", requireSuperadmin, async (req, res) => {
+  try {
+    const config = await crEventService.saveConfig(req.body || {}, getAdminActorIdentity(req));
+    await recordAuditLog(req, {
+      eventType: "cr_event_webhook_updated",
+      action: "update",
+      targetType: "settings",
+      targetId: "crEventWebhook",
+      targetLabel: "CR Event Webhook",
+      summary: `Updated CR Event webhook settings (${config.enabled ? "enabled" : "disabled"})`,
+      metadata: {
+        enabled: config.enabled,
+        url: config.url,
+        dataFormAutoExportEnabled: config.dataFormAutoExportEnabled,
+        dataFormManualExportEnabled: config.dataFormManualExportEnabled,
+      },
+    });
+    res.json({ success: true, config });
+  } catch (err) {
+    console.error("[CR Event] save settings failed:", err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/settings/cr-events/test", requireSuperadmin, async (req, res) => {
+  try {
+    const result = await crEventService.sendTest(
+      req.body?.url || "",
+      getAdminActorIdentity(req),
+      req.body || {},
+    );
+    await recordAuditLog(req, {
+      eventType: "cr_event_webhook_tested",
+      action: "test",
+      targetType: "settings",
+      targetId: "crEventWebhook",
+      targetLabel: "CR Event Webhook",
+      summary: `Tested CR Event webhook (${result.success ? "success" : "failed"})`,
+      metadata: {
+        success: result.success,
+        status: result.status || null,
+        eventId: result.eventId || "",
+        error: result.error || "",
+      },
+      skipCrEvent: true,
+    });
+    res.json({ success: result.success === true, result });
+  } catch (err) {
+    console.error("[CR Event] test failed:", err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 // API endpoint สำหรับบันทึกการตั้งค่าการกรอง
 app.post("/api/settings/filter", requirePermission("settings:security-filter"), async (req, res) => {
   try {
@@ -36022,7 +36904,7 @@ async function logOpenAIUsage(data) {
             cachedPromptCount,
           );
 
-    await db.collection("openai_usage_logs").insertOne({
+    const usageDoc = {
       apiKeyId: apiKeyId ? new ObjectId(apiKeyId) : null,
       botId: botId || null,
       platform: platform || null,
@@ -36037,6 +36919,18 @@ async function logOpenAIUsage(data) {
       estimatedCost,
       functionName: functionName || null,
       timestamp: new Date(),
+    };
+    const usageResult = await db.collection("openai_usage_logs").insertOne(usageDoc);
+    if (usageResult?.insertedId) usageDoc._id = usageResult.insertedId;
+    queueCrEvent("ai.usage_logged", {
+      usage: usageDoc,
+      platform: usageDoc.platform,
+      botId: usageDoc.botId,
+    }, {
+      entityType: "openai_usage_log",
+      entityId: usageDoc._id?.toString?.() || "",
+      platform: usageDoc.platform || "",
+      botId: usageDoc.botId || "",
     });
 
     // Update usage count on API key

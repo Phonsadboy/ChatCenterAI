@@ -39,6 +39,7 @@ function createAgentForgeRouter(options = {}) {
     agentForgeService,
     agentForgeRunner,
     agentForgeScheduler,
+    emitCrEvent = null,
   } = options;
 
   if (!connectDB) throw new Error("connectDB_required");
@@ -48,6 +49,11 @@ function createAgentForgeRouter(options = {}) {
 
   const router = express.Router();
   router.use(requireAdmin);
+  const queueCrEvent = (eventType, payload, eventOptions) => {
+    if (typeof emitCrEvent === "function") {
+      emitCrEvent(eventType, payload, eventOptions);
+    }
+  };
 
   async function loadTools() {
     const db = (await connectDB()).db("chatbot");
@@ -90,6 +96,11 @@ function createAgentForgeRouter(options = {}) {
     try {
       const userContext = buildUserContext(req, getAdminUserContext);
       const agent = await agentForgeService.createAgent(req.body || {}, userContext);
+      queueCrEvent("agent_forge.agent_changed", { action: "create", agent }, {
+        entityType: "agent_forge_agent",
+        entityId: agent?._id?.toString?.() || agent?.id || "",
+        actor: userContext,
+      });
       return res.status(201).json({ success: true, agent });
     } catch (error) {
       return handleError(res, error);
@@ -200,6 +211,11 @@ function createAgentForgeRouter(options = {}) {
     try {
       const userContext = buildUserContext(req, getAdminUserContext);
       const agent = await agentForgeService.updateAgent(req.params.agentId, req.body || {}, userContext);
+      queueCrEvent("agent_forge.agent_changed", { action: "update", agent }, {
+        entityType: "agent_forge_agent",
+        entityId: req.params.agentId,
+        actor: userContext,
+      });
       return res.json({ success: true, agent });
     } catch (error) {
       return handleError(res, error);
@@ -209,6 +225,10 @@ function createAgentForgeRouter(options = {}) {
   router.delete("/agents/:agentId", async (req, res) => {
     try {
       const result = await agentForgeService.deleteAgent(req.params.agentId);
+      queueCrEvent("agent_forge.agent_changed", { action: "delete", result }, {
+        entityType: "agent_forge_agent",
+        entityId: req.params.agentId,
+      });
       return res.json({ success: true, ...result });
     } catch (error) {
       if (error?.message === "agent_not_found") {
@@ -223,6 +243,11 @@ function createAgentForgeRouter(options = {}) {
       const userContext = buildUserContext(req, getAdminUserContext);
       const mode = sanitizeMode(req.body?.mode);
       const agent = await agentForgeService.updateAgentMode(req.params.agentId, mode, userContext);
+      queueCrEvent("agent_forge.agent_changed", { action: "mode", mode, agent }, {
+        entityType: "agent_forge_agent",
+        entityId: req.params.agentId,
+        actor: userContext,
+      });
       return res.json({ success: true, agent });
     } catch (error) {
       return handleError(res, error);
@@ -244,6 +269,11 @@ function createAgentForgeRouter(options = {}) {
         },
         userContext,
       );
+      queueCrEvent("agent_forge.run_started", { agentId: req.params.agentId, run }, {
+        entityType: "agent_forge_run",
+        entityId: run?._id?.toString?.() || run?.id || run?.runId || "",
+        actor: userContext,
+      });
       return res.status(202).json({ success: true, run });
     } catch (error) {
       return handleError(res, error);
@@ -254,6 +284,11 @@ function createAgentForgeRouter(options = {}) {
     try {
       const userContext = buildUserContext(req, getAdminUserContext);
       const run = await agentForgeService.requestStopRun(req.params.runId, userContext);
+      queueCrEvent("agent_forge.run_stopped", { runId: req.params.runId, run }, {
+        entityType: "agent_forge_run",
+        entityId: req.params.runId,
+        actor: userContext,
+      });
       return res.json({ success: true, run });
     } catch (error) {
       return handleError(res, error);

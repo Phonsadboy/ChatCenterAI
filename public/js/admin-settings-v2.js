@@ -63,6 +63,11 @@ function adminCan(permission) {
     return Array.isArray(user.permissions) && user.permissions.includes(permission);
 }
 
+function isSuperadminUser() {
+    const user = window.adminAuth?.user || null;
+    return !user || user.role === 'superadmin';
+}
+
 function canUpdateBots() {
     return adminCan(['settings:bot', 'bots:update', 'bots:manage']);
 }
@@ -90,6 +95,8 @@ function initSettingsPermissionVisibility() {
     const securityForm = document.getElementById('securitySettingsForm');
     const securityCard = securityForm?.closest('.settings-card');
     if (securityCard) securityCard.hidden = !adminCan('settings:security-filter');
+    const crEventCard = document.getElementById('crEventSettingsCard');
+    if (crEventCard) crEventCard.hidden = !isSuperadminUser();
     const addApiKeyBtn = document.getElementById('addApiKeyBtn');
     if (addApiKeyBtn) addApiKeyBtn.hidden = !adminCan('api-keys:manage');
     document.querySelectorAll('.bot-secret-action').forEach((button) => {
@@ -220,6 +227,9 @@ function initNavigation() {
             } else if (targetId === 'security-settings') {
                 if (adminCan('settings:security-filter')) loadSecuritySettings();
                 if (adminCan('audit:view')) loadAuditLogs();
+            } else if (targetId === 'system-settings') {
+                loadSystemSettings();
+                if (isSuperadminUser()) loadCrEventSettings();
             }
         });
     });
@@ -241,7 +251,10 @@ async function loadAllSettings() {
             loadTasks.push(loadChatSettings());
             if (adminCan('chat:tags')) loadTasks.push(loadChatSystemTags());
         }
-        if (adminCan('settings:general')) loadTasks.push(loadSystemSettings());
+        if (adminCan('settings:general')) {
+            loadTasks.push(loadSystemSettings());
+            if (isSuperadminUser()) loadTasks.push(loadCrEventSettings());
+        }
         if (adminCan('settings:security-filter')) loadTasks.push(loadSecuritySettings());
         if (adminCan('audit:view')) loadTasks.push(loadAuditLogs());
         if (adminCan(IMAGE_COLLECTION_PERMISSIONS)) loadTasks.push(window.imageCollectionsManager?.refreshAll?.());
@@ -1606,6 +1619,94 @@ async function saveSystemSettings(e) {
     }
 }
 
+function setCrEventTestResult(message, type = 'info') {
+    const box = document.getElementById('crEventTestResult');
+    if (!box) return;
+    box.hidden = !message;
+    box.className = `alert mb-0 alert-${type === 'success' ? 'success' : type === 'danger' ? 'danger' : 'light'} border`;
+    box.textContent = message || '';
+}
+
+async function loadCrEventSettings() {
+    if (!isSuperadminUser()) return;
+    try {
+        const res = await fetch('/api/settings/cr-events');
+        const data = await res.json();
+        if (!res.ok || data.success === false) throw new Error(data.error || 'Load failed');
+        const config = data.config || {};
+        setCheckboxValue('crEventEnabled', config.enabled === true);
+        setInputValue('crEventUrl', config.url || '');
+        setInputValue('crEventSecret', config.hasSecret ? '********' : '');
+        setCheckboxValue('crEventIncludeMessageContent', config.includeMessageContent === true);
+        setCheckboxValue('crEventAutoEnabled', config.dataFormAutoExportEnabled !== false);
+        setCheckboxValue('crEventManualEnabled', config.dataFormManualExportEnabled !== false);
+        setCrEventTestResult('');
+    } catch (error) {
+        console.error('[CR Event] load failed:', error);
+        setCrEventTestResult(error.message || 'โหลดการตั้งค่า CR Event ไม่สำเร็จ', 'danger');
+    }
+}
+
+function readCrEventSettingsForm() {
+    return {
+        enabled: getCheckboxValue('crEventEnabled'),
+        url: getInputValue('crEventUrl'),
+        secret: getInputValue('crEventSecret'),
+        includeMessageContent: getCheckboxValue('crEventIncludeMessageContent'),
+        dataFormAutoExportEnabled: getCheckboxValue('crEventAutoEnabled'),
+        dataFormManualExportEnabled: getCheckboxValue('crEventManualEnabled')
+    };
+}
+
+async function saveCrEventSettings(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    setLoading(btn, true);
+    setCrEventTestResult('');
+    try {
+        const res = await fetch('/api/settings/cr-events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(readCrEventSettingsForm())
+        });
+        const data = await res.json();
+        if (!res.ok || data.success === false) throw new Error(data.error || 'Save failed');
+        showToast('บันทึก CR Event Webhook แล้ว', 'success');
+        await loadCrEventSettings();
+    } catch (error) {
+        showToast(error.message || 'บันทึก CR Event Webhook ไม่สำเร็จ', 'danger');
+        setCrEventTestResult(error.message || 'บันทึกไม่สำเร็จ', 'danger');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function testCrEventWebhook() {
+    const btn = document.getElementById('crEventTestBtn');
+    setLoading(btn, true);
+    setCrEventTestResult('กำลังทดสอบส่ง webhook...', 'info');
+    try {
+        const res = await fetch('/api/settings/cr-events/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(readCrEventSettingsForm())
+        });
+        const data = await res.json();
+        if (!res.ok || data.success === false) {
+            const detail = data.result?.status ? `HTTP ${data.result.status}` : data.error || data.result?.error || 'ส่งไม่สำเร็จ';
+            throw new Error(detail);
+        }
+        const status = data.result?.status ? `HTTP ${data.result.status}` : 'success';
+        setCrEventTestResult(`ทดสอบสำเร็จ (${status}) Event ID: ${data.result?.eventId || '-'}`, 'success');
+        showToast('ทดสอบ CR Event Webhook สำเร็จ', 'success');
+    } catch (error) {
+        setCrEventTestResult(`ทดสอบไม่สำเร็จ: ${error.message || error}`, 'danger');
+        showToast('ทดสอบ CR Event Webhook ไม่สำเร็จ', 'danger');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
 // --- Security Settings ---
 async function loadSecuritySettings() {
     try {
@@ -1772,7 +1873,10 @@ function setupEventListeners() {
                 loadChatSettings();
                 if (adminCan('chat:tags')) loadChatSystemTags();
             }
-            if (adminCan('settings:general')) loadSystemSettings();
+            if (adminCan('settings:general')) {
+                loadSystemSettings();
+                if (isSuperadminUser()) loadCrEventSettings();
+            }
             if (adminCan('settings:security-filter')) loadSecuritySettings();
             if (adminCan('audit:view')) loadAuditLogs();
             if (adminCan(IMAGE_COLLECTION_PERMISSIONS) && window.imageCollectionsManager?.refreshAll) {
@@ -1814,6 +1918,11 @@ function setupEventListeners() {
 
     const systemForm = document.getElementById('systemSettingsForm');
     if (systemForm) systemForm.addEventListener('submit', saveSystemSettings);
+
+    const crEventForm = document.getElementById('crEventSettingsForm');
+    if (crEventForm) crEventForm.addEventListener('submit', saveCrEventSettings);
+    const crEventTestBtn = document.getElementById('crEventTestBtn');
+    if (crEventTestBtn) crEventTestBtn.addEventListener('click', testCrEventWebhook);
 
     const securityForm = document.getElementById('securitySettingsForm');
     if (securityForm) securityForm.addEventListener('submit', saveSecuritySettings);

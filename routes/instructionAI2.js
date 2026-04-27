@@ -216,6 +216,7 @@ function createInstructionAI2Router(deps = {}) {
     requireInstructionUpdate = requireAdmin,
     canAccessInstruction = () => true,
     buildInstructionActorFields = () => ({}),
+    emitCrEvent = null,
   } = deps;
 
   if (!requireAdmin || !connectDB || !getOpenAIApiKeyForBot || !buildLLMClientFromKey || !resolveModelForProvider) {
@@ -223,6 +224,11 @@ function createInstructionAI2Router(deps = {}) {
   }
 
   const router = express.Router();
+  const queueCrEvent = (eventType, payload, options) => {
+    if (typeof emitCrEvent === "function") {
+      emitCrEvent(eventType, payload, options);
+    }
+  };
 
   const loadInstructionForAccess = async (db, instructionId) => {
     if (ObjectId.isValid(instructionId)) {
@@ -513,6 +519,15 @@ function createInstructionAI2Router(deps = {}) {
         { _id: inst._id },
         { $set: { version: nextVersion, updatedAt: snapshotAt, ...buildInstructionActorFields(req, "updated") } },
       );
+      queueCrEvent("instruction.version_created", {
+        instructionId: logicalId,
+        version: nextVersion,
+        note: snapshot.note,
+        source: "instruction_ai2",
+      }, {
+        entityType: "instruction",
+        entityId: logicalId,
+      });
       res.json({ success: true, version: nextVersion, note: snapshot.note, snapshotAt });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -600,7 +615,7 @@ function createInstructionAI2Router(deps = {}) {
       return;
     }
     state.listeners.add(res);
-    req.on("close", () => state.listeners.delete(res));
+    res.on("close", () => state.listeners.delete(res));
   });
 
   router.post("/api/instruction-ai2/stream", requireAdmin, requireInstructionUpdate, async (req, res) => {
@@ -637,7 +652,7 @@ function createInstructionAI2Router(deps = {}) {
       error: null,
     };
     activeAI2Requests.set(requestId, requestState);
-    req.on("close", () => {
+    res.on("close", () => {
       requestState.listeners.delete(res);
     });
 
@@ -695,8 +710,12 @@ function createInstructionAI2Router(deps = {}) {
 
     const finish = () => {
       clearInterval(heartbeat);
+      const shouldEndPrimaryResponse = !requestState.listeners.has(res) && !res.writableEnded;
       for (const listener of Array.from(requestState.listeners)) {
         try { listener.end(); } catch (_) { }
+      }
+      if (shouldEndPrimaryResponse) {
+        try { res.end(); } catch (_) { }
       }
       requestState.listeners.clear();
       cleanupAI2Request(requestId);
@@ -1282,6 +1301,15 @@ function createInstructionAI2Router(deps = {}) {
       if (result?.success && typeof invalidateAllRuntimeCaches === "function") {
         invalidateAllRuntimeCaches();
       }
+      if (result?.success) {
+        queueCrEvent("instruction.batch_committed", {
+          batchId: req.params.batchId,
+          result,
+        }, {
+          entityType: "instruction_batch",
+          entityId: req.params.batchId,
+        });
+      }
       res.status(result?.pending ? 202 : 200).json(result);
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -1334,6 +1362,14 @@ function createInstructionAI2Router(deps = {}) {
       if (!(await assertBatchInstructionAccess(req, res, db, targetBatch))) return;
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, req.body?.reason || "");
+      queueCrEvent("instruction.batch_rejected", {
+        batchId: req.params.batchId,
+        reason: req.body?.reason || "",
+        batch: service.presentBatchForClient(batch),
+      }, {
+        entityType: "instruction_batch",
+        entityId: req.params.batchId,
+      });
       res.json({ success: true, batch: service.presentBatchForClient(batch) });
     } catch (error) {
       const service = db ? new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" }) : null;

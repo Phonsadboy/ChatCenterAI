@@ -552,9 +552,10 @@ class Chat2Manager {
     this.$("chat2SaveDraft")?.addEventListener("click", () => this.submitDataForm("draft"));
     this.$("chat2SubmitForm")?.addEventListener("click", () => this.submitDataForm("submitted"));
     this.$("chat2SubmissionList")?.addEventListener("click", (event) => {
-      const btn = event.target.closest("[data-edit-submission]");
-      if (!btn) return;
-      this.loadSubmissionIntoForm(btn.dataset.editSubmission);
+      const editBtn = event.target.closest("[data-edit-submission]");
+      const exportBtn = event.target.closest("[data-export-crm-submission]");
+      if (editBtn) this.loadSubmissionIntoForm(editBtn.dataset.editSubmission);
+      if (exportBtn) this.exportSubmissionToCrm(exportBtn.dataset.exportCrmSubmission);
     });
 
     this.$("chat2OrderList")?.addEventListener("click", (event) => {
@@ -1600,6 +1601,14 @@ class Chat2Manager {
     const rows = Object.entries(submission.values || {}).slice(0, compact ? 3 : 8).map(([key, value]) => `
       <span>${this.escapeHtml(key)}</span><strong>${this.escapeHtml(this.formatValue(value))}</strong>
     `).join("");
+    const crmExport = submission.crmExport || {};
+    const crmStatus = crmExport.status || "";
+    const manualExportMode = ["manual", "dynamic"].includes(crmExport.mode);
+    const manualExportReady = ["", "manual", "waiting_review", "failed"].includes(crmStatus);
+    const canManualExport = !compact && submission.status === "submitted" && manualExportMode && manualExportReady;
+    const crmStatusText = crmStatus
+      ? `<div class="cc2-card-meta">CRM: ${this.escapeHtml(crmStatus)}${crmExport.lastError ? ` · ${this.escapeHtml(crmExport.lastError)}` : ""}</div>`
+      : "";
     return `
       <div class="cc2-card">
         <div class="cc2-card-title">
@@ -1607,11 +1616,35 @@ class Chat2Manager {
           <span class="cc2-status ${this.escapeAttr(submission.status || "submitted")}">${this.escapeHtml(submission.status || "submitted")}</span>
         </div>
         <div class="cc2-card-meta">${this.escapeHtml(submission.formName || "Data Form")} · ${this.dateTime(submission.createdAt)}</div>
+        ${crmStatusText}
         ${submission.summary ? `<div class="cc2-card-body">${this.escapeHtml(submission.summary)}</div>` : ""}
         ${rows ? `<div class="cc2-kv">${rows}</div>` : ""}
-        ${compact ? "" : `<div class="cc2-card-actions"><button type="button" data-edit-submission="${this.escapeAttr(submission.id)}">แก้ไข</button></div>`}
+        ${compact ? "" : `<div class="cc2-card-actions">
+          <button type="button" data-edit-submission="${this.escapeAttr(submission.id)}">แก้ไข</button>
+          ${canManualExport ? `<button type="button" data-export-crm-submission="${this.escapeAttr(submission.id)}">ส่งเข้า CRM</button>` : ""}
+        </div>`}
       </div>
     `;
+  }
+
+  async exportSubmissionToCrm(submissionId) {
+    if (!submissionId) return;
+    try {
+      const data = await this.fetchJson(`/admin/chat/data-form-submissions/${encodeURIComponent(submissionId)}/export-crm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (data.submission) {
+        const index = this.context.submissions.findIndex((entry) => entry.id === submissionId);
+        if (index >= 0) this.context.submissions[index] = data.submission;
+      }
+      this.renderForms();
+      this.toast("ส่งข้อมูลเข้า CRM แล้ว", "success");
+    } catch (error) {
+      this.toast(error.message || "ส่งข้อมูลเข้า CRM ไม่สำเร็จ", "error");
+      this.loadContext(this.currentUserId);
+    }
   }
 
   renderOrders() {

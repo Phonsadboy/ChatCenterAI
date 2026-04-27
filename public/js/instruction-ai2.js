@@ -368,6 +368,8 @@
         const streamStartedAt = Date.now();
         const STATE_POLL_MS = 450;
         const SSE_STALE_FOR_STATE_MS = 700;
+        const STREAM_RECOVERY_POLL_MS = 900;
+        const STREAM_RECOVERY_TIMEOUT_MS = 10 * 60 * 1000;
         let cancelledByState = false;
         let statePollTimer = null;
         let statePollInFlight = false;
@@ -967,6 +969,33 @@
             statePollTimer = setInterval(pollStateOnce, STATE_POLL_MS);
         };
 
+        const recoverFromBrokenStream = async () => {
+            const requestId = state.activeRequestId;
+            if (!requestId || doneHandled || errorHandled || cancelledByState) {
+                return doneHandled || errorHandled || cancelledByState;
+            }
+
+            showStatus("การเชื่อมต่อ stream หลุด กำลังกู้ผลลัพธ์");
+            if (statePollTimer) {
+                clearInterval(statePollTimer);
+                statePollTimer = null;
+            }
+
+            const deadline = Date.now() + STREAM_RECOVERY_TIMEOUT_MS;
+            while (
+                Date.now() < deadline &&
+                state.activeRequestId === requestId &&
+                !doneHandled &&
+                !errorHandled
+            ) {
+                await pollStateOnce();
+                if (doneHandled || errorHandled) return true;
+                await delay(STREAM_RECOVERY_POLL_MS);
+            }
+
+            return doneHandled || errorHandled;
+        };
+
         const getTimelineTime = (value, fallback = 0) => {
             if (Number.isFinite(value)) return value;
             const parsed = Date.parse(value);
@@ -1223,7 +1252,10 @@
             }
         } catch (streamError) {
             if (streamError?.name === "AbortError") throw streamError;
-            if (!cancelledByState) throw streamError;
+            if (!cancelledByState) {
+                const recovered = await recoverFromBrokenStream();
+                if (!recovered) throw streamError;
+            }
         } finally {
             stopStatePolling();
             stopLiveStatusTicker();

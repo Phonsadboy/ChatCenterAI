@@ -93,6 +93,7 @@
     els.formName = document.getElementById("dataFormName");
     els.formDescription = document.getElementById("dataFormDescription");
     els.formStatuses = document.getElementById("dataFormStatuses");
+    els.formCrmExportMode = document.getElementById("dataFormCrmExportMode");
     els.formIsActive = document.getElementById("dataFormIsActive");
     els.formFieldsList = document.getElementById("dataFormFieldsList");
     els.formEnabledPages = document.getElementById("dataFormEnabledPages");
@@ -273,12 +274,23 @@
       const fields = Array.isArray(form.fields) ? form.fields : [];
       const requiredCount = fields.filter((field) => field.required).length;
       const assignedCount = Array.isArray(form.enabledPages) ? form.enabledPages.length : 0;
+      const crmExportMode = ["auto", "manual", "dynamic"].includes(form.crmExportMode)
+        ? form.crmExportMode
+        : "none";
+      const crmExportLabel = crmExportMode === "auto"
+        ? "CRM Auto"
+        : crmExportMode === "manual"
+          ? "CRM Manual"
+          : crmExportMode === "dynamic"
+            ? "CRM Dynamic"
+            : "ไม่ส่ง CRM";
       return `
         <div class="voxtron-item">
           <div class="voxtron-item-main">
             <div class="voxtron-item-title">
               <span>${escapeHtml(form.name)}</span>
               <span class="badge badge-default">${form.isActive ? "Active" : "Inactive"}</span>
+              <span class="badge badge-default">${escapeHtml(crmExportLabel)}</span>
             </div>
             <div class="voxtron-item-desc">${escapeHtml(form.description || "-")}</div>
             <div class="voxtron-item-meta">
@@ -510,6 +522,7 @@
     els.formName.value = "";
     els.formDescription.value = "";
     els.formStatuses.value = "draft, submitted";
+    if (els.formCrmExportMode) els.formCrmExportMode.value = "none";
     els.formIsActive.checked = true;
     els.formFieldsList.innerHTML = "";
     addFieldRow({ type: "text", required: true });
@@ -533,6 +546,11 @@
     els.formStatuses.value = (Array.isArray(form.statuses) ? form.statuses : [])
       .map((status) => status.label || status.key)
       .join(", ");
+    if (els.formCrmExportMode) {
+      els.formCrmExportMode.value = ["none", "auto", "manual", "dynamic"].includes(form.crmExportMode)
+        ? form.crmExportMode
+        : "none";
+    }
     els.formIsActive.checked = form.isActive !== false;
     els.formFieldsList.innerHTML = "";
     (Array.isArray(form.fields) && form.fields.length ? form.fields : [{ type: "text" }])
@@ -625,6 +643,9 @@
       fields: readFormFields(),
       statuses: readStatuses(),
       enabledPages: readAssignments(els.formEnabledPages),
+      crmExportMode: ["none", "auto", "manual", "dynamic"].includes(els.formCrmExportMode?.value)
+        ? els.formCrmExportMode.value
+        : "none",
       isActive: els.formIsActive?.checked !== false,
     };
     if (!payload.name) {
