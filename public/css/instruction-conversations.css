@@ -28,6 +28,13 @@
     --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
     --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     --font: var(--font-family-base, 'Mali', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
+    --conv-text-micro: var(--font-size-ui-micro, 0.6875rem);
+    --conv-text-caption: var(--font-size-ui-caption, 0.75rem);
+    --conv-text-control: var(--font-size-ui-action, 0.8125rem);
+    --conv-text-body: var(--font-size-ui-control, 0.875rem);
+    --conv-text-title: var(--heading-5-size, 1rem);
+    --conv-text-heading: var(--heading-4-size, 1.125rem);
+    --conv-text-icon-display: 3rem;
 }
 
 * {
@@ -70,7 +77,7 @@ body {
 }
 
 .sidebar-header h2 {
-    font-size: 16px;
+    font-size: var(--conv-text-title);
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -102,7 +109,7 @@ body {
 
 .instruction-selector label {
     display: block;
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-muted);
@@ -118,7 +125,7 @@ body {
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: var(--font);
-    font-size: 13px;
+    font-size: var(--conv-text-control);
     cursor: pointer;
     transition: var(--transition);
 }
@@ -136,7 +143,7 @@ body {
 }
 
 .analytics-panel h3 {
-    font-size: 13px;
+    font-size: var(--conv-text-control);
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 12px;
@@ -162,7 +169,7 @@ body {
 }
 
 .stat-label {
-    font-size: 10px;
+    font-size: var(--conv-text-micro);
     text-transform: uppercase;
     letter-spacing: 0.3px;
     color: var(--text-muted);
@@ -170,7 +177,7 @@ body {
 }
 
 .stat-value {
-    font-size: 18px;
+    font-size: var(--conv-text-heading);
     font-weight: 700;
     color: var(--text-primary);
 }
@@ -180,7 +187,7 @@ body {
 }
 
 .top-products h4 {
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     text-transform: uppercase;
     letter-spacing: 0.3px;
     color: var(--text-muted);
@@ -193,7 +200,7 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 6px 0;
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     border-bottom: 1px solid var(--border);
 }
 
@@ -217,7 +224,7 @@ body {
 }
 
 .platform-badge {
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     padding: 4px 10px;
     border-radius: 20px;
     font-weight: 600;
@@ -247,7 +254,7 @@ body {
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     cursor: pointer;
     transition: var(--transition);
     display: flex;
@@ -296,7 +303,7 @@ body {
 }
 
 .filter-group label {
-    font-size: 10px;
+    font-size: var(--conv-text-micro);
     text-transform: uppercase;
     letter-spacing: 0.3px;
     color: var(--text-muted);
@@ -325,7 +332,7 @@ body {
     background: var(--bg-tertiary);
     color: var(--text-secondary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     cursor: pointer;
     transition: var(--transition);
     display: flex;
@@ -360,7 +367,7 @@ body {
     border-radius: var(--radius-xs);
     color: var(--text-primary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
 }
 
 .range-inputs input:focus {
@@ -370,7 +377,7 @@ body {
 
 .range-inputs span {
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
 }
 
 /* Selects */
@@ -381,7 +388,7 @@ body {
     border-radius: var(--radius-xs);
     color: var(--text-primary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     cursor: pointer;
 }
 
@@ -402,7 +409,7 @@ body {
 .product-tag {
     padding: 4px 10px;
     border-radius: 16px;
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     cursor: pointer;
     transition: var(--transition);
     border: 1px solid var(--border);
@@ -431,7 +438,7 @@ body {
     top: 50%;
     transform: translateY(-50%);
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
 }
 
 .search-input-wrapper input {
@@ -442,7 +449,7 @@ body {
     border-radius: var(--radius-xs);
     color: var(--text-primary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
 }
 
 .search-input-wrapper input:focus {
@@ -457,7 +464,7 @@ body {
     border-radius: var(--radius-xs);
     color: #fff;
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     font-weight: 600;
     cursor: pointer;
     transition: var(--transition);
@@ -485,19 +492,19 @@ body {
 }
 
 .empty-state i {
-    font-size: 48px;
+    font-size: var(--conv-text-icon-display);
     margin-bottom: 16px;
     color: var(--border-light);
 }
 
 .empty-state h3 {
-    font-size: 16px;
+    font-size: var(--conv-text-title);
     margin-bottom: 8px;
     color: var(--text-secondary);
 }
 
 .empty-state p {
-    font-size: 13px;
+    font-size: var(--conv-text-control);
 }
 
 .thread-card {
@@ -552,22 +559,22 @@ body {
     align-items: center;
     justify-content: center;
     color: var(--accent);
-    font-size: 14px;
+    font-size: var(--conv-text-body);
 }
 
 .thread-user .user-info .user-id {
-    font-size: 13px;
+    font-size: var(--conv-text-control);
     font-weight: 600;
     color: var(--text-primary);
 }
 
 .thread-user .user-info .bot-name {
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     color: var(--text-muted);
 }
 
 .thread-time {
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     color: var(--text-muted);
 }
 
@@ -575,7 +582,7 @@ body {
     display: flex;
     align-items: center;
     gap: 16px;
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     color: var(--text-secondary);
 }
 
@@ -586,13 +593,13 @@ body {
 }
 
 .thread-stats .stat i {
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
 }
 
 .outcome-badge {
     padding: 3px 10px;
     border-radius: 12px;
-    font-size: 11px;
+    font-size: var(--conv-text-micro);
     font-weight: 600;
 }
 
@@ -627,7 +634,7 @@ body {
 .thread-tag {
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: var(--conv-text-micro);
     background: var(--bg-tertiary);
     color: var(--text-muted);
     border: 1px solid var(--border);
@@ -663,7 +670,7 @@ body {
 }
 
 .pagination #pageInfo {
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     color: var(--text-muted);
 }
 
@@ -700,7 +707,7 @@ body {
     border-radius: var(--radius-xs);
     color: var(--text-secondary);
     font-family: var(--font);
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     cursor: pointer;
     transition: var(--transition);
     display: flex;
@@ -714,7 +721,7 @@ body {
 }
 
 .thread-meta {
-    font-size: 13px;
+    font-size: var(--conv-text-control);
     color: var(--text-secondary);
 }
 
@@ -731,7 +738,7 @@ body {
     max-width: 80%;
     padding: 10px 16px;
     border-radius: var(--radius);
-    font-size: 13px;
+    font-size: var(--conv-text-control);
     line-height: 1.5;
     animation: fadeIn 0.2s ease;
     word-break: break-word;
@@ -753,7 +760,7 @@ body {
 }
 
 .message-time {
-    font-size: 10px;
+    font-size: var(--conv-text-micro);
     color: var(--text-muted);
     margin-top: 4px;
 }
@@ -778,7 +785,7 @@ body {
 }
 
 .order-card h4 {
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 8px;
@@ -788,13 +795,13 @@ body {
 }
 
 .order-products {
-    font-size: 12px;
+    font-size: var(--conv-text-caption);
     color: var(--text-primary);
 }
 
 .order-amount {
     margin-top: 6px;
-    font-size: 14px;
+    font-size: var(--conv-text-body);
     font-weight: 700;
     color: var(--green);
 }
@@ -811,7 +818,7 @@ body {
     gap: 12px;
     z-index: 20;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: var(--conv-text-control);
 }
 
 .spinner {

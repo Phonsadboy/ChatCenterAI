@@ -7,6 +7,11 @@
 :root {
   --orders-sidebar-width: 280px;
   --orders-header-height: auto;
+  --orders-text-label: var(--font-size-ui-caption, 0.75rem);
+  --orders-text-action: var(--font-size-ui-action, 0.8125rem);
+  --orders-text-table-head: var(--font-size-ui-table-head, 0.75rem);
+  --orders-text-table-body: var(--font-size-ui-table-body, 0.875rem);
+  --orders-text-section-title: var(--heading-4-size, 1.125rem);
 }
 
 /* ============ Layout ============ */
@@ -94,7 +99,7 @@
 }
 
 .orders-summary-label {
-  font-size: 0.7rem;
+  font-size: var(--orders-text-label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-light, #5C6372);
@@ -103,7 +108,7 @@
 }
 
 .orders-summary-value {
-  font-size: 1.35rem;
+  font-size: var(--heading-3-size, 1.25rem);
   font-weight: 700;
   color: var(--text-dark, #1E2430);
   line-height: 1.1;
@@ -130,7 +135,7 @@
 }
 
 .orders-summary-inline-label {
-  font-size: 0.72rem;
+  font-size: var(--orders-text-label);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -154,7 +159,7 @@
 }
 
 .orders-filter-title {
-  font-size: 0.7rem;
+  font-size: var(--orders-text-label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-light, #5C6372);
@@ -534,7 +539,7 @@
 .orders-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--orders-text-table-body);
 }
 
 .orders-table thead {
@@ -549,7 +554,7 @@
   text-align: left;
   font-weight: 600;
   color: var(--text-light);
-  font-size: 0.75rem;
+  font-size: var(--orders-text-table-head);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
@@ -617,7 +622,7 @@
 .orders-checkbox:checked::after {
   content: '✓';
   color: #fff;
-  font-size: 0.7rem;
+  font-size: var(--orders-text-label);
   font-weight: bold;
 }
 
@@ -650,7 +655,7 @@
 }
 
 .orders-items-count {
-  font-size: 0.7rem;
+  font-size: var(--orders-text-label);
   color: var(--text-light);
 }
 
@@ -903,7 +908,7 @@
 }
 
 .orders-detail-title {
-  font-size: 1.1rem;
+  font-size: var(--orders-text-section-title);
   font-weight: 600;
   color: var(--text-dark);
 }
@@ -936,7 +941,7 @@
 }
 
 .orders-detail-section-title {
-  font-size: 0.7rem;
+  font-size: var(--orders-text-label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-light);
@@ -1071,7 +1076,7 @@
   padding: 0.5rem 1rem;
   border-radius: 6px;
   border: none;
-  font-size: 0.8rem;
+  font-size: var(--orders-text-action);
   font-weight: 500;
   cursor: pointer;
   display: inline-flex;

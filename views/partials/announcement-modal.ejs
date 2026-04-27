@@ -28,7 +28,7 @@
         <button id="annCloseBtn" style="
       position: absolute; top: 12px; right: 12px;
       background: transparent; border: 1px solid var(--border, #E1E5EF);
-      color: var(--text-muted, #8B92A3); font-size: 16px; cursor: pointer;
+      color: var(--text-muted, #8B92A3); font-size: var(--heading-5-size, 1rem); cursor: pointer;
       width: 30px; height: 30px; border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
       transition: all 0.2s ease;
@@ -38,22 +38,22 @@
         <div style="
       display: inline-flex; align-items: center; gap: 5px;
       background: rgba(74, 111, 165, 0.1);
-      color: var(--color-primary, #4A6FA5); font-size: 11px; font-weight: 600;
+      color: var(--color-primary, #4A6FA5); font-size: var(--font-size-ui-micro, 0.6875rem); font-weight: 600;
       padding: 4px 10px; border-radius: 999px;
       margin-bottom: 14px;
     ">
-            <span style="font-size: 12px;">✨</span> ฟีเจอร์ใหม่
+            <span style="font-size: var(--font-size-ui-caption, 0.75rem);">✨</span> ฟีเจอร์ใหม่
         </div>
 
         <!-- Title -->
         <h2 style="
       font-family: var(--font-family-heading, var(--font-family-base, 'Mali', 'Inter', sans-serif));
-      font-size: 20px; font-weight: 700; margin: 0 0 6px;
+      font-size: var(--heading-3-size, 1.25rem); font-weight: 700; margin: 0 0 6px;
       color: var(--text-main, #1E2430); line-height: 1.3;
     ">InstructionAI2</h2>
 
         <p style="
-      font-size: 13.5px; color: var(--text-sub, #5C6372); margin: 0 0 18px;
+      font-size: var(--font-size-ui-control, 0.875rem); color: var(--text-sub, #5C6372); margin: 0 0 18px;
       line-height: 1.65;
     ">จัดการข้อมูล Instruction ผ่านการ<b style="color:var(--color-primary-dark, #365983);">แชทกับ AI</b> พร้อม batch preview ก่อนบันทึกจริง</p>
 
@@ -71,11 +71,11 @@
           width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
           background: rgba(61, 127, 193, 0.12);
           display: flex; align-items: center; justify-content: center;
-          font-size: 15px;
+          font-size: var(--font-size-ui-card-title, 0.9375rem);
         ">🔍</div>
                 <div>
-                    <div style="font-size: 13px; font-weight: 600; color: #1E2430;">ค้นหาข้อมูลทันที</div>
-                    <div style="font-size: 11.5px; color: #8B92A3; line-height: 1.4;">ถาม AI
+                    <div style="font-size: var(--font-size-ui-label, 0.8125rem); font-weight: 600; color: #1E2430;">ค้นหาข้อมูลทันที</div>
+                    <div style="font-size: var(--font-size-ui-caption, 0.75rem); color: #8B92A3; line-height: 1.4;">ถาม AI
                         เพื่อค้นหาในตารางและเนื้อหาทั้งหมด</div>
                 </div>
             </div>
@@ -85,11 +85,11 @@
           width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
           background: rgba(230, 183, 92, 0.15);
           display: flex; align-items: center; justify-content: center;
-          font-size: 15px;
+          font-size: var(--font-size-ui-card-title, 0.9375rem);
         ">✏️</div>
                 <div>
-                    <div style="font-size: 13px; font-weight: 600; color: var(--text-main, #1E2430);">แก้ไขด้วยคำสั่ง</div>
-                    <div style="font-size: 11.5px; color: var(--text-muted, #8B92A3); line-height: 1.4;">สั่ง AI เพิ่ม ลบ
+                    <div style="font-size: var(--font-size-ui-label, 0.8125rem); font-weight: 600; color: var(--text-main, #1E2430);">แก้ไขด้วยคำสั่ง</div>
+                    <div style="font-size: var(--font-size-ui-caption, 0.75rem); color: var(--text-muted, #8B92A3); line-height: 1.4;">สั่ง AI เพิ่ม ลบ
                         แก้ไขข้อมูลผ่านการพิมพ์</div>
                 </div>
             </div>
@@ -99,11 +99,11 @@
           width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
           background: rgba(45, 143, 111, 0.12);
           display: flex; align-items: center; justify-content: center;
-          font-size: 15px;
+          font-size: var(--font-size-ui-card-title, 0.9375rem);
         ">🧠</div>
                 <div>
-                    <div style="font-size: 13px; font-weight: 600; color: var(--text-main, #1E2430);">วิเคราะห์อัตโนมัติ</div>
-                    <div style="font-size: 11.5px; color: var(--text-muted, #8B92A3); line-height: 1.4;">ตรวจสอบ เปรียบเทียบ
+                    <div style="font-size: var(--font-size-ui-label, 0.8125rem); font-weight: 600; color: var(--text-main, #1E2430);">วิเคราะห์อัตโนมัติ</div>
+                    <div style="font-size: var(--font-size-ui-caption, 0.75rem); color: var(--text-muted, #8B92A3); line-height: 1.4;">ตรวจสอบ เปรียบเทียบ
                         หาข้อผิดพลาดในข้อมูล</div>
                 </div>
             </div>
@@ -113,11 +113,11 @@
           width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
           background: rgba(74, 111, 165, 0.12);
           display: flex; align-items: center; justify-content: center;
-          font-size: 15px;
+          font-size: var(--font-size-ui-card-title, 0.9375rem);
         ">↩️</div>
                 <div>
-                    <div style="font-size: 13px; font-weight: 600; color: var(--text-main, #1E2430);">ย้อนกลับได้ทุกขั้นตอน</div>
-                    <div style="font-size: 11.5px; color: var(--text-muted, #8B92A3); line-height: 1.4;">ทุกการแก้ไขมี Undo
+                    <div style="font-size: var(--font-size-ui-label, 0.8125rem); font-weight: 600; color: var(--text-main, #1E2430);">ย้อนกลับได้ทุกขั้นตอน</div>
+                    <div style="font-size: var(--font-size-ui-caption, 0.75rem); color: var(--text-muted, #8B92A3); line-height: 1.4;">ทุกการแก้ไขมี Undo
                         พร้อมบันทึกประวัติ</div>
                 </div>
             </div>
@@ -128,7 +128,7 @@
       display: flex; align-items: center; justify-content: center; gap: 6px;
       width: 100%; padding: 10px 0;
       background: #4A6FA5;
-      color: #fff; font-size: 14px; font-weight: 600;
+      color: #fff; font-size: var(--font-size-ui-action, 0.8125rem); font-weight: 600;
       border: none; border-radius: 8px; cursor: pointer;
       text-decoration: none;
       transition: all 0.2s ease;
@@ -136,14 +136,14 @@
       box-shadow: 0 2px 8px rgba(74, 111, 165, 0.25);
     ">
             <span>ไปลองเลย</span>
-            <span style="font-size: 15px;">→</span>
+            <span style="font-size: var(--font-size-ui-card-title, 0.9375rem);">→</span>
         </a>
 
         <!-- Dismiss checkbox -->
         <label id="annDismissLabel" style="
       display: flex; align-items: center; gap: 7px;
       margin-top: 14px; cursor: pointer;
-      font-size: 12px; color: var(--text-muted, #8B92A3);
+      font-size: var(--font-size-ui-caption, 0.75rem); color: var(--text-muted, #8B92A3);
       user-select: none;
     ">
             <input type="checkbox" id="annDismissCheck" style="

@@ -47,6 +47,13 @@
     --chat-header-height: 52px;
     --chat-input-height: 56px;
     --chat-navbar-height: 56px;
+    --chat-text-list-title-size: var(--font-size-chat-list-title, 0.875rem);
+    --chat-text-list-meta-size: var(--font-size-chat-list-meta, 0.75rem);
+    --chat-text-control-size: var(--font-size-ui-control, 0.875rem);
+    --chat-text-action-size: var(--font-size-ui-action, 0.8125rem);
+    --chat-text-action-sm-size: var(--font-size-ui-action-sm, 0.75rem);
+    --chat-text-body-size: var(--font-size-chat-body, 0.9375rem);
+    --chat-text-meta-size: var(--font-size-chat-meta, 0.6875rem);
 
     /* Transitions */
     --chat-transition: var(--transition-base, all 0.2s ease);
@@ -212,7 +219,7 @@
     border: none;
     background: transparent;
     padding: 0.625rem 0.75rem;
-    font-size: 0.875rem;
+    font-size: var(--chat-text-control-size);
     color: var(--chat-text-primary);
     outline: none;
     font-family: var(--font-family-base, 'Prompt', sans-serif);
@@ -281,14 +288,14 @@
 .filter-title {
     font-weight: 600;
     color: var(--chat-text-primary);
-    font-size: 0.875rem;
+    font-size: var(--chat-text-control-size);
 }
 
 .btn-clear-filter {
     background: none;
     border: none;
     color: var(--chat-primary);
-    font-size: 0.8125rem;
+    font-size: var(--chat-text-action-size);
     cursor: pointer;
     padding: 0.25rem 0.5rem;
     border-radius: var(--chat-border-radius);
@@ -308,7 +315,7 @@
 }
 
 .filter-section-title {
-    font-size: 0.6875rem;
+    font-size: var(--chat-text-meta-size);
     font-weight: 600;
     color: var(--chat-text-secondary);
     margin-bottom: 0.5rem;
@@ -328,7 +335,7 @@
     color: var(--chat-text-secondary);
     padding: 0.375rem 0.75rem;
     border-radius: 16px;
-    font-size: 0.8125rem;
+    font-size: var(--chat-text-action-size);
     cursor: pointer;
     transition: var(--chat-transition);
     display: flex;
@@ -609,14 +616,14 @@
 .user-name {
     font-weight: 600;
     color: var(--chat-text-primary);
-    font-size: 0.9375rem;
+    font-size: var(--chat-text-list-title-size);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .user-time {
-    font-size: 0.75rem;
+    font-size: var(--chat-text-list-meta-size);
     color: var(--chat-text-tertiary);
     white-space: nowrap;
 }
@@ -1605,14 +1612,14 @@
 }
 
 .message-content {
-    font-size: 0.9375rem;
+    font-size: var(--chat-text-body-size);
     line-height: 1.4;
     word-wrap: break-word;
     white-space: pre-wrap;
 }
 
 .message-time {
-    font-size: 0.6875rem;
+    font-size: var(--chat-text-meta-size);
     margin-top: 0.25rem;
     opacity: 0.7;
 }
@@ -1777,7 +1784,7 @@
     background: transparent;
     resize: none;
     outline: none;
-    font-size: 0.9375rem;
+    font-size: var(--chat-text-body-size);
     line-height: 1.4;
     color: var(--chat-text-primary);
     padding: 0.5rem 0;
@@ -2372,7 +2379,7 @@
         background: #fff;
         border: 1px solid var(--chat-border-color);
         color: var(--chat-text-primary);
-        font-size: 0.9375rem;
+        font-size: var(--chat-text-action-size);
     }
 
     .btn-input-action--mobile.is-active {
@@ -2898,7 +2905,7 @@
     gap: 0.45rem;
     padding: 0 0.75rem 0.5rem;
     color: var(--chat-text-primary);
-    font-size: 0.82rem;
+    font-size: var(--chat-text-action-size);
     font-weight: 800;
 }
 
@@ -2928,14 +2935,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    font-size: 0.82rem;
+    font-size: var(--chat-text-action-size);
     font-weight: 800;
     color: var(--chat-text-primary);
 }
 
 .chat-data-form-card__head em {
     font-style: normal;
-    font-size: 0.7rem;
+    font-size: var(--chat-text-meta-size);
     color: var(--chat-primary);
     background: var(--chat-primary-light);
     border-radius: 999px;
@@ -3002,7 +3009,7 @@
 .chat-file-title {
     color: var(--chat-text-primary);
     font-weight: 800;
-    font-size: 0.88rem;
+    font-size: var(--chat-text-list-title-size);
 }
 
 .chat-file-desc {

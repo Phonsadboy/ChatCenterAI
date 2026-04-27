@@ -3,6 +3,12 @@
   --layout-sidebar-width: 240px;
   --layout-sidebar-collapsed: 64px;
   --layout-mobile-nav-height: 72px;
+  --layout-text-title: var(--heading-5-size, 1rem);
+  --layout-text-nav: var(--font-size-ui-control, 0.875rem);
+  --layout-text-nav-mobile: var(--font-size-ui-micro, 0.6875rem);
+  --layout-text-meta: var(--font-size-ui-caption, 0.75rem);
+  --layout-text-section: var(--font-size-ui-micro, 0.6875rem);
+  --layout-text-badge: var(--font-size-ui-micro, 0.6875rem);
   --layout-content-gap-top: 0.25rem;
   --layout-content-gap-side: 0.625rem;
   --layout-content-gap-bottom: 0.5rem;
@@ -163,7 +169,7 @@ body.has-admin-layout .page-chat .app-content {
 }
 
 .app-topbar__title {
-  font-size: 1rem;
+  font-size: var(--layout-text-title);
   font-weight: 600;
   color: var(--text-main);
   white-space: nowrap;
@@ -190,7 +196,7 @@ body.has-admin-layout .page-chat .app-content {
   background: var(--bg-body, #f6f7fb);
   border: 1px solid var(--layout-sidebar-border);
   border-radius: var(--radius-pill, 999px);
-  font-size: 0.8rem;
+  font-size: var(--layout-text-meta);
   font-weight: 500;
   color: var(--text-sub);
   white-space: nowrap;
@@ -282,7 +288,7 @@ body.sidebar-collapsed .app-sidebar__scroll {
 
 /* Sidebar sections */
 .app-sidebar__section-title {
-  font-size: 0.65rem;
+  font-size: var(--layout-text-section);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -313,7 +319,7 @@ body.sidebar-collapsed .app-sidebar__section-title {
   border-radius: var(--radius-md, 8px);
   color: var(--text-sub);
   text-decoration: none;
-  font-size: 0.9rem;
+  font-size: var(--layout-text-nav);
   font-weight: 500;
   transition: background 0.15s ease, color 0.15s ease;
   position: relative;
@@ -375,7 +381,7 @@ body.sidebar-collapsed .app-sidebar__text {
   padding: 0 5px;
   background: var(--color-danger);
   color: #fff;
-  font-size: 0.7rem;
+  font-size: var(--layout-text-badge);
   font-weight: 700;
   border-radius: 999px;
   display: inline-flex;
@@ -392,7 +398,7 @@ body.sidebar-collapsed .app-sidebar__badge {
   margin-left: 0;
   min-width: 14px;
   height: 14px;
-  font-size: 0.6rem;
+  font-size: var(--layout-text-badge);
   padding: 0 3px;
 }
 
@@ -537,7 +543,7 @@ body.sidebar-collapsed .app-sidebar__footer {
     padding: 0.35rem 0.25rem;
     color: var(--text-muted);
     text-decoration: none;
-    font-size: 0.65rem;
+    font-size: var(--layout-text-nav-mobile);
     font-weight: 500;
     position: relative;
     border: none;
@@ -591,7 +597,7 @@ body.sidebar-collapsed .app-sidebar__footer {
     padding: 0 4px;
     background: var(--color-danger);
     color: #fff;
-    font-size: 0.6rem;
+    font-size: var(--layout-text-badge);
     font-weight: 700;
     border-radius: 999px;
     display: inline-flex;
@@ -720,7 +726,7 @@ body.sidebar-collapsed .app-sidebar__footer {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--layout-text-meta);
   cursor: pointer;
   padding: 0.15rem 0.25rem;
   border-radius: 6px;
@@ -742,7 +748,7 @@ body.sidebar-collapsed .app-sidebar__footer {
    ================================================================ */
 @media (max-width: 991.98px) {
   .app-topbar__title {
-    font-size: 0.95rem;
+    font-size: var(--layout-text-title);
   }
 
   .app-topbar__role {

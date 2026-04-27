@@ -1,5 +1,13 @@
 /* Admin Dashboard V2 - Split Workspace (Polished) */
 
+:root {
+  --dashboard-text-title: var(--heading-5-size, 1rem);
+  --dashboard-text-item-title: var(--font-size-ui-card-title, 0.9375rem);
+  --dashboard-text-meta: var(--font-size-ui-caption, 0.75rem);
+  --dashboard-text-action: var(--font-size-ui-action, 0.8125rem);
+  --dashboard-text-action-sm: var(--font-size-ui-action-sm, 0.75rem);
+}
+
 /* ===== Workspace Layout ===== */
 .dashboard-workspace {
   display: flex;
@@ -34,7 +42,7 @@
 }
 
 .ws-sidebar-header h5 {
-  font-size: 1rem;
+  font-size: var(--dashboard-text-title);
   font-weight: 700;
   color: var(--text-main, #1E2430);
 }
@@ -84,7 +92,7 @@
 
 .ws-list-item .ws-list-name {
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: var(--dashboard-text-item-title);
   color: var(--text-main, #1E2430);
   display: flex;
   align-items: center;
@@ -100,7 +108,7 @@
 }
 
 .ws-list-item .ws-list-meta {
-  font-size: 0.82rem;
+  font-size: var(--dashboard-text-meta);
   color: var(--text-sub, #5C6372);
   margin-top: 0.25rem;
   white-space: nowrap;
@@ -116,7 +124,7 @@
 }
 
 .ws-badge {
-  font-size: 0.7rem;
+  font-size: var(--dashboard-text-meta);
   font-weight: 700;
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
@@ -172,7 +180,7 @@
 .ws-header-info h3 {
   font-weight: 700;
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--dashboard-text-title);
   color: var(--text-main, #1E2430);
   letter-spacing: -0.01em;
   overflow-wrap: break-word;
@@ -204,7 +212,7 @@
   font-weight: 600;
   border-radius: 8px;
   transition: all 0.15s ease;
-  font-size: 0.8rem;
+  font-size: var(--dashboard-text-action);
   padding: 0.3rem 0.6rem;
 }
 
@@ -262,7 +270,7 @@
   background: transparent;
   color: var(--text-sub, #5C6372);
   font-weight: 600;
-  font-size: 0.78rem;
+  font-size: var(--dashboard-text-action-sm);
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: var(--font-family-base, 'Mali', 'Inter', sans-serif);
@@ -325,13 +333,13 @@
 .ws-mini-metric .num {
   font-weight: 700;
   color: var(--text-main, #1E2430);
-  font-size: 0.95rem;
+  font-size: var(--dashboard-text-item-title);
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
 
 .ws-mini-metric .lbl {
-  font-size: 0.62rem;
+  font-size: var(--font-size-ui-micro, 0.6875rem);
   color: var(--text-muted, #8B92A3);
   font-weight: 600;
   text-transform: uppercase;
@@ -403,7 +411,7 @@
 }
 
 .instruction-editor-status {
-  font-size: 0.95rem;
+  font-size: var(--dashboard-text-item-title);
   color: var(--text-sub, #5C6372);
   display: inline-flex;
   align-items: center;
@@ -442,12 +450,12 @@
   border: 1px solid var(--border, #E1E5EF);
   background: #f8f9fc;
   color: var(--text-sub, #5C6372);
-  font-size: 0.82rem;
+  font-size: var(--dashboard-text-meta);
   width: fit-content;
 }
 
 .instruction-starter-status-chip i {
-  font-size: 0.78rem;
+  font-size: var(--dashboard-text-action-sm);
 }
 
 .instruction-starter-status-chip.is-on {
@@ -529,7 +537,7 @@
 .instruction-actions .btn {
   --bs-btn-padding-y: 0.35rem;
   --bs-btn-padding-x: 0.55rem;
-  --bs-btn-font-size: 0.85rem;
+  --bs-btn-font-size: var(--dashboard-text-action);
   border-radius: 8px;
 }
 
@@ -557,7 +565,7 @@
 }
 
 .data-item-title {
-  font-size: 0.95rem;
+  font-size: var(--dashboard-text-item-title);
   font-weight: 600;
   margin: 0;
   color: var(--text-main, #1E2430);
@@ -583,7 +591,7 @@
   gap: 0.2rem;
   padding: 0.15rem 0.45rem;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: var(--dashboard-text-meta);
   font-weight: 700;
   letter-spacing: 0.01em;
   text-transform: uppercase;
@@ -608,7 +616,7 @@
 .data-item-actions .btn {
   --bs-btn-padding-y: 0.3rem;
   --bs-btn-padding-x: 0.45rem;
-  --bs-btn-font-size: 0.8rem;
+  --bs-btn-font-size: var(--dashboard-text-action-sm);
   border-radius: 8px;
 }
 
@@ -657,14 +665,14 @@
   padding: 0.2rem 0.5rem;
   border-radius: 999px;
   border: 1px solid var(--border, #E1E5EF);
-  font-size: 0.72rem;
+  font-size: var(--dashboard-text-meta);
   font-weight: 700;
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
 .starter-status-badge i {
-  font-size: 0.7rem;
+  font-size: var(--dashboard-text-meta);
 }
 
 .starter-status-badge.is-on {
@@ -781,7 +789,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.78rem;
+  font-size: var(--dashboard-text-action-sm);
   font-weight: 700;
 }
 
@@ -791,7 +799,7 @@
   gap: 0.25rem;
   padding: 0.15rem 0.4rem;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: var(--dashboard-text-meta);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -819,7 +827,7 @@
 .starter-message-actions .btn {
   --bs-btn-padding-y: 0.2rem;
   --bs-btn-padding-x: 0.42rem;
-  --bs-btn-font-size: 0.76rem;
+  --bs-btn-font-size: var(--dashboard-text-action-sm);
 }
 
 .starter-message-text {
@@ -851,7 +859,7 @@
 }
 
 .starter-message-image-url {
-  font-size: 0.78rem;
+  font-size: var(--dashboard-text-action-sm);
   color: var(--text-sub, #5C6372);
   word-break: break-all;
 }

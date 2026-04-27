@@ -68,6 +68,19 @@
     --ic-max-msg-w: 768px;
     --ic-font: var(--font-family-base, 'Mali', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
     --ic-font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+
+    /* Typography roles */
+    --ic-size-icon-xs: 0.625rem;
+    --ic-size-micro: var(--font-size-ui-micro, 0.6875rem);
+    --ic-size-caption: var(--font-size-ui-caption, 0.75rem);
+    --ic-size-meta: var(--font-size-ui-caption, 0.75rem);
+    --ic-size-control: var(--font-size-ui-action, 0.8125rem);
+    --ic-size-body: var(--font-size-ui-control, 0.875rem);
+    --ic-size-title: var(--font-size-ui-card-title, 0.9375rem);
+    --ic-size-section-title: var(--heading-5-size, 1rem);
+    --ic-size-heading: var(--heading-4-size, 1.125rem);
+    --ic-size-display: var(--heading-3-size, 1.25rem);
+    --ic-size-table-body: var(--font-size-ui-table-body, 0.875rem);
 }
 
 /* ─── Reset & Base ───────────────────────────────────────────────────── */
@@ -185,13 +198,13 @@ body {
     align-items: center;
     justify-content: center;
     color: var(--ic-accent);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     flex-shrink: 0;
 }
 
 .ic-brand-text {
     font-family: var(--ic-font-mono);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-weight: 700;
     color: var(--ic-text);
     letter-spacing: -0.02em;
@@ -209,7 +222,7 @@ body {
     border: 1px solid var(--ic-border);
     background: transparent;
     color: var(--ic-text-secondary);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     cursor: pointer;
     transition: all var(--ic-transition);
     align-items: center;
@@ -231,7 +244,7 @@ body {
 
 .ic-sidebar-section-label {
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -244,7 +257,7 @@ body {
 }
 
 .ic-sidebar-section-label i {
-    font-size: 9px;
+    font-size: var(--ic-size-icon-xs);
 }
 
 /* Search */
@@ -259,7 +272,7 @@ body {
     border-radius: var(--ic-radius-xs);
     padding: 8px 12px 8px 32px;
     color: var(--ic-text);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-family: var(--ic-font-mono);
     outline: none;
     transition: all var(--ic-transition);
@@ -274,7 +287,7 @@ body {
     border-radius: var(--ic-radius-xs);
     padding: 9px 10px;
     font-family: var(--ic-font);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 700;
     cursor: pointer;
     display: inline-flex;
@@ -311,7 +324,7 @@ body {
     top: 50%;
     transform: translateY(-50%);
     color: var(--ic-text-dim);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
 }
 
 /* Instruction List */
@@ -343,7 +356,7 @@ body {
     gap: 8px;
     padding: 32px 16px;
     color: var(--ic-text-muted);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
 }
 
 .ic-spinner {
@@ -394,7 +407,7 @@ body {
 }
 
 .ic-inst-name {
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -413,7 +426,7 @@ body {
     align-items: center;
     padding: 1px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 500;
     font-family: var(--ic-font-mono);
     background: var(--ic-surface-3);
@@ -450,7 +463,7 @@ body {
     border-radius: var(--ic-radius-xs);
     color: var(--ic-text-muted);
     text-decoration: none;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-family: var(--ic-font-mono);
     transition: all var(--ic-transition);
 }
@@ -508,7 +521,7 @@ body {
     border: 1px solid var(--ic-border);
     background: transparent;
     color: var(--ic-text-secondary);
-    font-size: 16px;
+    font-size: var(--ic-size-section-title);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -530,7 +543,7 @@ body {
 
 .ic-topbar-title-text {
     display: block;
-    font-size: 15px;
+    font-size: var(--ic-size-title);
     font-weight: 600;
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
@@ -558,7 +571,7 @@ button:focus-visible,
     border: 1px solid rgba(0, 255, 170, 0.3);
     background: linear-gradient(135deg, rgba(0, 255, 170, 0.1), rgba(168, 85, 247, 0.08));
     color: var(--ic-accent);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 600;
     font-family: var(--ic-font-mono);
     cursor: pointer;
@@ -567,7 +580,7 @@ button:focus-visible,
 }
 
 .ic-new-chat-btn i {
-    font-size: 13px;
+    font-size: var(--ic-size-control);
 }
 
 .ic-new-chat-btn:hover {
@@ -598,7 +611,7 @@ button:focus-visible,
     border: 1px solid var(--ic-border);
     background: transparent;
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 500;
     font-family: var(--ic-font-mono);
     cursor: pointer;
@@ -613,7 +626,7 @@ button:focus-visible,
 }
 
 .ic-version-btn i {
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     color: var(--ic-accent2);
 }
 
@@ -624,7 +637,7 @@ button:focus-visible,
     border: 1px solid rgba(168, 85, 247, 0.3);
     background: rgba(168, 85, 247, 0.08);
     color: var(--ic-accent2);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -693,7 +706,7 @@ button:focus-visible,
 }
 
 .ic-version-modal-header h3 {
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-weight: 600;
     font-family: var(--ic-font-mono);
     color: var(--ic-text);
@@ -761,7 +774,7 @@ button:focus-visible,
 
 .ic-version-num {
     font-family: var(--ic-font-mono);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-weight: 700;
     color: var(--ic-accent2);
     min-width: 32px;
@@ -772,18 +785,18 @@ button:focus-visible,
 }
 
 .ic-version-note-text {
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     color: var(--ic-text);
 }
 
 .ic-version-date {
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
 }
 
 .ic-version-current-badge {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     padding: 2px 8px;
     border-radius: var(--ic-radius-pill);
     background: var(--ic-accent2);
@@ -795,13 +808,13 @@ button:focus-visible,
     text-align: center;
     padding: 24px;
     color: var(--ic-text-muted);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
 }
 
 /* Save Version Modal */
 .ic-version-note-label {
     display: block;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -817,7 +830,7 @@ button:focus-visible,
     border: 1px solid var(--ic-border);
     border-radius: var(--ic-radius-xs);
     color: var(--ic-text);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-family: var(--ic-font-mono);
     outline: none;
     transition: all var(--ic-transition);
@@ -840,7 +853,7 @@ button:focus-visible,
     border: 1px solid rgba(168, 85, 247, 0.4);
     background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(168, 85, 247, 0.08));
     color: var(--ic-accent2);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 600;
     font-family: var(--ic-font-mono);
     cursor: pointer;
@@ -877,7 +890,7 @@ button:focus-visible,
     border: 1px solid var(--ic-border);
     background: transparent;
     color: var(--ic-text);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 500;
     font-family: var(--ic-font-mono);
     cursor: pointer;
@@ -899,7 +912,7 @@ button:focus-visible,
 }
 
 .ic-model-chevron {
-    font-size: 9px;
+    font-size: var(--ic-size-icon-xs);
     color: var(--ic-text-muted);
     transition: transform var(--ic-transition);
 }
@@ -945,7 +958,7 @@ button:focus-visible,
 
 .ic-dropdown-header {
     padding: 8px 10px 4px;
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -995,7 +1008,7 @@ button:focus-visible,
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     flex-shrink: 0;
 }
 
@@ -1020,20 +1033,20 @@ button:focus-visible,
 }
 
 .ic-model-option-name {
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 600;
     color: var(--ic-text);
 }
 
 .ic-model-option-desc {
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-muted);
     margin-top: 1px;
     overflow-wrap: anywhere;
 }
 
 .ic-badge-recommended {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     padding: 2px 8px;
     border-radius: var(--ic-radius-pill);
     background: var(--ic-accent);
@@ -1059,7 +1072,7 @@ button:focus-visible,
     border: none;
     background: transparent;
     color: var(--ic-text-muted);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     font-weight: 500;
     font-family: var(--ic-font-mono);
     cursor: pointer;
@@ -1085,7 +1098,7 @@ button:focus-visible,
 }
 
 .ic-thinking-note {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-dim);
     padding: 2px 10px 6px;
     font-family: var(--ic-font-mono);
@@ -1157,7 +1170,7 @@ button:focus-visible,
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     flex-shrink: 0;
     margin-top: 2px;
 }
@@ -1185,7 +1198,7 @@ button:focus-visible,
 }
 
 .ic-msg-role {
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 600;
     margin-bottom: 4px;
     color: var(--ic-text-secondary);
@@ -1195,7 +1208,7 @@ button:focus-visible,
 }
 
 .ic-msg-content {
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     line-height: 1.7;
     color: var(--ic-text);
     word-wrap: break-word;
@@ -1245,7 +1258,7 @@ button:focus-visible,
     margin-bottom: 6px;
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -1261,7 +1274,7 @@ button:focus-visible,
     background: rgba(255, 255, 255, 0.025);
     color: var(--ic-text-secondary);
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     line-height: 1.35;
 }
 
@@ -1286,7 +1299,7 @@ button:focus-visible,
 .ic-run-status-done,
 .ic-run-status-error {
     display: none;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
 }
 
 .ic-run-status.done .ic-run-status-spinner,
@@ -1326,7 +1339,7 @@ button:focus-visible,
 
 .ic-run-status-time {
     color: var(--ic-text-dim);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     flex-shrink: 0;
 }
 
@@ -1418,7 +1431,7 @@ button:focus-visible,
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     background: rgba(255, 255, 255, 0.045);
     color: var(--ic-text-secondary);
 }
@@ -1468,7 +1481,7 @@ button:focus-visible,
 .ic-run-card-title {
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1478,7 +1491,7 @@ button:focus-visible,
 .ic-run-card-subtitle {
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1492,7 +1505,7 @@ button:focus-visible,
     color: var(--ic-text-muted);
     background: rgba(255, 255, 255, 0.035);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -1514,7 +1527,7 @@ button:focus-visible,
 
 .ic-run-card-chevron {
     color: var(--ic-text-dim);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     transition: transform var(--ic-transition);
     flex-shrink: 0;
 }
@@ -1586,7 +1599,7 @@ button:focus-visible,
     overflow-y: auto;
     white-space: pre-wrap;
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.55;
 }
 
@@ -1610,7 +1623,7 @@ button:focus-visible,
     margin-bottom: 5px;
     color: #7dd3fc;
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     letter-spacing: 0.02em;
 }
@@ -1622,7 +1635,7 @@ button:focus-visible,
 
 .ic-run-commentary-text {
     color: var(--ic-text);
-    font-size: 15px;
+    font-size: var(--ic-size-title);
     line-height: 1.72;
     overflow-wrap: anywhere;
 }
@@ -1654,7 +1667,7 @@ button:focus-visible,
     margin-bottom: 4px;
     color: var(--ic-text-dim);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
@@ -1671,13 +1684,13 @@ button:focus-visible,
     background: rgba(0, 0, 0, 0.24);
     color: #cbd5e1;
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     line-height: 1.45;
 }
 
 .ic-tool-card-result-text {
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
@@ -1687,7 +1700,7 @@ button:focus-visible,
     align-items: center;
     gap: 8px;
     color: var(--ic-text-muted);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-family: var(--ic-font-mono);
     padding: 4px 0;
 }
@@ -1704,7 +1717,7 @@ button:focus-visible,
 
 .ic-msg-total-time {
     margin-top: 8px;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     line-height: 1.3;
     color: rgba(255, 255, 255, 0.42);
     font-family: var(--ic-font-mono);
@@ -1732,7 +1745,7 @@ button:focus-visible,
     background: var(--ic-surface-3);
     padding: 1px 6px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-family: var(--ic-font-mono);
     color: #7dd3fc;
     border: 1px solid var(--ic-border);
@@ -1745,7 +1758,7 @@ button:focus-visible,
     padding: 12px 16px;
     overflow-x: auto;
     margin: 8px 0;
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     line-height: 1.5;
     font-family: var(--ic-font-mono);
 }
@@ -1770,15 +1783,15 @@ button:focus-visible,
 }
 
 .ic-msg-content h2.ic-heading {
-    font-size: 17px;
+    font-size: var(--ic-size-heading);
 }
 
 .ic-msg-content h3.ic-heading {
-    font-size: 15px;
+    font-size: var(--ic-size-title);
 }
 
 .ic-msg-content h4.ic-heading {
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     color: #94a3b8;
 }
 
@@ -1791,7 +1804,7 @@ button:focus-visible,
     background: #0d0f12;
     overflow: hidden;
     font-family: var(--ic-font-mono);
-    font-size: 12.5px;
+    font-size: var(--ic-size-table-body);
     position: relative;
 }
 
@@ -1799,7 +1812,7 @@ button:focus-visible,
     content: '⊞ DATA TABLE';
     display: block;
     padding: 6px 12px;
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1839,7 +1852,7 @@ button:focus-visible,
     background: #141820;
     color: #5eead4;
     font-weight: 600;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     letter-spacing: 0.05em;
     text-transform: uppercase;
     padding: 8px 12px;
@@ -1890,7 +1903,7 @@ button:focus-visible,
 /* Metadata footer */
 .ic-table-meta {
     padding: 5px 12px;
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     color: #64748b;
     background: rgba(0, 0, 0, 0.2);
     border-top: 1px solid rgba(255, 255, 255, 0.04);
@@ -1934,13 +1947,13 @@ button:focus-visible,
     }
 
     .ic-table tbody td {
-        font-size: 11px;
+        font-size: var(--ic-size-micro);
         padding: 6px 8px;
         max-width: 200px;
     }
 
     .ic-table thead th {
-        font-size: 10px;
+        font-size: var(--ic-size-micro);
         padding: 6px 8px;
     }
 }
@@ -1982,7 +1995,7 @@ button:focus-visible,
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     color: var(--ic-text-muted);
     gap: 8px;
     transition: background var(--ic-transition);
@@ -2000,16 +2013,16 @@ button:focus-visible,
 
 .ic-thinking-meta {
     opacity: 0.6;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-thinking-header .ic-thinking-icon i {
     color: var(--ic-accent2);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-thinking-header .ic-chevron {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     transition: transform var(--ic-transition);
 }
 
@@ -2019,7 +2032,7 @@ button:focus-visible,
 
 .ic-thinking-body {
     padding: 10px 14px;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     color: var(--ic-text-muted);
     line-height: 1.6;
     white-space: pre-wrap;
@@ -2043,7 +2056,7 @@ button:focus-visible,
     border: 1px solid rgba(0, 255, 170, 0.1);
     background: #0c0c0e;
     font-family: var(--ic-font-mono);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     overflow: hidden;
     transition: all var(--ic-transition);
     position: relative;
@@ -2106,7 +2119,7 @@ button:focus-visible,
 
 .ic-pipeline-label {
     color: var(--ic-text-muted);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2117,7 +2130,7 @@ button:focus-visible,
     color: #5eead4;
     padding: 1px 6px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     border: 1px solid rgba(0, 255, 170, 0.12);
 }
@@ -2136,7 +2149,7 @@ button:focus-visible,
 
 .ic-pipeline-count {
     color: #a1a1aa;
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     background: rgba(255, 255, 255, 0.06);
     padding: 2px 8px;
     border-radius: 3px;
@@ -2144,7 +2157,7 @@ button:focus-visible,
 }
 
 .ic-pipeline-chevron {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-dim);
     transition: transform var(--ic-transition);
 }
@@ -2185,7 +2198,7 @@ button:focus-visible,
 .ic-pipeline-entry::before {
     content: '>';
     color: var(--ic-text-dim);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 700;
     margin-right: 4px;
     flex-shrink: 0;
@@ -2234,7 +2247,7 @@ button:focus-visible,
 }
 
 .ic-pipeline-entry-icon {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     width: 16px;
     height: 16px;
     display: flex;
@@ -2246,7 +2259,7 @@ button:focus-visible,
 
 /* Color-coded tool names by type */
 .ic-pipeline-entry-name {
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     font-weight: 600;
     white-space: nowrap;
     letter-spacing: 0.01em;
@@ -2277,7 +2290,7 @@ button:focus-visible,
 }
 
 .ic-pipeline-entry-status {
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-dim);
     max-width: 200px;
     white-space: nowrap;
@@ -2307,18 +2320,18 @@ button:focus-visible,
 }
 
 .ic-pipeline-entry-check {
-    font-size: 9px;
+    font-size: var(--ic-size-icon-xs);
     color: var(--ic-success);
 }
 
 .ic-pipeline-entry-pending {
-    font-size: 9px;
+    font-size: var(--ic-size-icon-xs);
     color: #f59e0b;
 }
 
 .ic-tools-used {
     margin-top: 8px;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
 }
@@ -2419,7 +2432,7 @@ button:focus-visible,
 }
 
 .ic-welcome-title {
-    font-size: 22px;
+    font-size: var(--ic-size-display);
     font-weight: 700;
     margin-bottom: 8px;
     position: relative;
@@ -2433,7 +2446,7 @@ button:focus-visible,
 }
 
 .ic-welcome-desc {
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     color: var(--ic-text-muted);
     max-width: 420px;
     line-height: 1.6;
@@ -2452,7 +2465,7 @@ button:focus-visible,
     border: 1px solid rgba(0, 255, 170, 0.28);
     background: rgba(0, 255, 170, 0.08);
     color: var(--ic-accent);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 700;
     font-family: var(--ic-font);
     cursor: pointer;
@@ -2477,7 +2490,7 @@ button:focus-visible,
     border: 1px solid rgba(0, 255, 170, 0.25);
     background: linear-gradient(135deg, rgba(0, 255, 170, 0.08), rgba(168, 85, 247, 0.06));
     color: var(--ic-accent);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-weight: 600;
     font-family: var(--ic-font);
     cursor: pointer;
@@ -2489,7 +2502,7 @@ button:focus-visible,
 }
 
 .ic-quick-suggest-btn i {
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     color: var(--ic-accent2);
 }
 
@@ -2545,20 +2558,20 @@ button:focus-visible,
     align-items: center;
     justify-content: center;
     color: var(--ic-accent);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     flex-shrink: 0;
 }
 
 .ic-welcome-card-text strong {
     display: block;
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 600;
     color: var(--ic-text);
     margin-bottom: 2px;
 }
 
 .ic-welcome-card-text span {
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-muted);
     line-height: 1.4;
 }
@@ -2619,7 +2632,7 @@ button:focus-visible,
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     transition: all var(--ic-transition);
     flex-shrink: 0;
 }
@@ -2669,7 +2682,7 @@ button:focus-visible,
     border: none;
     background: rgba(0, 0, 0, 0.7);
     color: #fff;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1;
     cursor: pointer;
     display: flex;
@@ -2713,7 +2726,7 @@ button:focus-visible,
     background: none;
     border: none;
     color: var(--ic-text);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-family: var(--ic-font);
     resize: none;
     outline: none;
@@ -2747,7 +2760,7 @@ button:focus-visible,
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     font-weight: 700;
     transition: all var(--ic-transition);
     flex-shrink: 0;
@@ -2777,7 +2790,7 @@ button:focus-visible,
     align-items: center;
     justify-content: space-between;
     padding: 6px 18px 0;
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     color: var(--ic-text-dim);
     font-family: var(--ic-font-mono);
 }
@@ -2823,7 +2836,7 @@ button:focus-visible,
     border-radius: 3px;
     background: var(--ic-surface-2);
     border: 1px solid var(--ic-border);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-family: var(--ic-font-mono);
     color: var(--ic-text-muted);
 }
@@ -2909,11 +2922,11 @@ button:focus-visible,
     }
 
     .ic-welcome-title {
-        font-size: 18px;
+        font-size: var(--ic-size-heading);
     }
 
     .ic-welcome-desc {
-        font-size: 13px;
+        font-size: var(--ic-size-control);
         margin-bottom: 16px;
     }
 
@@ -2933,7 +2946,7 @@ button:focus-visible,
     }
 
     .ic-quick-suggest-btn {
-        font-size: 13px;
+        font-size: var(--ic-size-control);
         padding: 10px 18px;
         max-width: 100%;
         white-space: normal;
@@ -2986,7 +2999,7 @@ button:focus-visible,
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     transition: all var(--ic-transition);
     flex-shrink: 0;
 }
@@ -3038,7 +3051,7 @@ button:focus-visible,
 
 .ic-inventory-header h2 {
     color: var(--ic-text);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     line-height: 1.35;
     font-weight: 700;
     margin: 0;
@@ -3080,7 +3093,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -3089,7 +3102,7 @@ button:focus-visible,
 
 .ic-km-header h3 {
     color: var(--ic-text);
-    font-size: 15px;
+    font-size: var(--ic-size-title);
     line-height: 1.35;
     font-weight: 800;
     margin: 0;
@@ -3102,7 +3115,7 @@ button:focus-visible,
     border: 1px solid rgba(var(--ic-accent-rgb), 0.18);
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     font-weight: 700;
     padding: 5px 7px;
 }
@@ -3126,7 +3139,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 9px;
+    font-size: var(--ic-size-icon-xs);
     line-height: 1.2;
     text-transform: uppercase;
     white-space: nowrap;
@@ -3138,7 +3151,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
-    font-size: 14px;
+    font-size: var(--ic-size-body);
     line-height: 1.25;
     margin-top: 4px;
     overflow-wrap: anywhere;
@@ -3178,13 +3191,13 @@ button:focus-visible,
 
 .ic-km-group-head span {
     color: var(--ic-text);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     font-weight: 800;
 }
 
 .ic-km-group-head small {
     color: var(--ic-text-muted);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.3;
     text-align: right;
 }
@@ -3251,7 +3264,7 @@ button:focus-visible,
     justify-content: space-between;
     gap: 8px;
     color: var(--ic-text);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.3;
     font-weight: 800;
 }
@@ -3267,14 +3280,14 @@ button:focus-visible,
     flex: 0 0 auto;
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-km-node-meta {
     margin-top: 4px;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
@@ -3282,7 +3295,7 @@ button:focus-visible,
 .ic-km-node-preview {
     margin-top: 5px;
     color: var(--ic-text-secondary);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     line-height: 1.45;
     max-height: 34px;
     overflow: hidden;
@@ -3300,7 +3313,7 @@ button:focus-visible,
     padding: 10px 11px;
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -3319,7 +3332,7 @@ button:focus-visible,
 .ic-inv-item {
     padding: 10px 11px;
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.45;
     border-top: 1px solid rgba(255, 255, 255, 0.03);
     transition: all var(--ic-transition);
@@ -3358,7 +3371,7 @@ button:focus-visible,
     margin-top: 3px;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-inv-preview {
@@ -3445,7 +3458,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -3454,7 +3467,7 @@ button:focus-visible,
 
 .ic-batch-review-head h4 {
     color: var(--ic-text);
-    font-size: 15px;
+    font-size: var(--ic-size-title);
     line-height: 1.35;
     margin: 0;
 }
@@ -3466,7 +3479,7 @@ button:focus-visible,
     border: 1px solid rgba(245, 158, 11, 0.22);
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 800;
     padding: 6px 8px;
     white-space: nowrap;
@@ -3499,7 +3512,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 800;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -3510,7 +3523,7 @@ button:focus-visible,
 .ic-ai2-batch-context p,
 .ic-ai2-batch-reason p {
     color: var(--ic-text-secondary);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     line-height: 1.5;
     margin: 0;
 }
@@ -3539,7 +3552,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     text-transform: uppercase;
 }
 
@@ -3547,7 +3560,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
-    font-size: 18px;
+    font-size: var(--ic-size-heading);
     line-height: 1.15;
     margin-top: 4px;
 }
@@ -3587,14 +3600,14 @@ button:focus-visible,
 .ic-batch-review-change-top span {
     color: var(--ic-accent);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-weight: 800;
 }
 
 .ic-batch-review-change-top strong {
     min-width: 0;
     color: var(--ic-text);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3604,14 +3617,14 @@ button:focus-visible,
 .ic-batch-review-change-top em {
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     font-style: normal;
     white-space: nowrap;
 }
 
 .ic-batch-review-change p {
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.5;
     margin: 0;
 }
@@ -3621,7 +3634,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.45;
     margin-top: 5px;
     overflow-wrap: anywhere;
@@ -3632,7 +3645,7 @@ button:focus-visible,
     border: 1px dashed var(--ic-border);
     border-radius: var(--ic-radius-xs);
     padding: 9px 10px;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     text-align: center;
 }
 
@@ -3648,7 +3661,7 @@ button:focus-visible,
 .ic-batch-review-secondary {
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 800;
     cursor: pointer;
     transition: all var(--ic-transition);
@@ -3693,7 +3706,7 @@ button:focus-visible,
     color: var(--ic-text-secondary);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--ic-border);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
 }
 
 /* ─── AI2 Batch Preview ──────────────────────────────────────────────── */
@@ -3710,7 +3723,7 @@ button:focus-visible,
     border-radius: var(--ic-radius-sm);
     padding: 12px;
     color: var(--ic-text-secondary);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     display: grid;
     gap: 10px;
 }
@@ -3733,7 +3746,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     text-transform: uppercase;
 }
 
@@ -3741,7 +3754,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
-    font-size: 20px;
+    font-size: var(--ic-size-display);
     line-height: 1.15;
     margin-top: 4px;
 }
@@ -3753,7 +3766,7 @@ button:focus-visible,
     flex-wrap: wrap;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-ai2-batch-meta span {
@@ -3771,7 +3784,7 @@ button:focus-visible,
     border: 1px solid rgba(34, 197, 94, 0.18);
     border-radius: var(--ic-radius-xs);
     padding: 9px 10px;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
 }
 
 .ic-ai2-batch-note {
@@ -3781,7 +3794,7 @@ button:focus-visible,
 .ic-ai2-batch-alert {
     border-radius: var(--ic-radius-xs);
     padding: 9px 10px;
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.45;
 }
 
@@ -3810,7 +3823,7 @@ button:focus-visible,
     border: 1px solid var(--ic-border);
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.2;
     padding: 4px 6px;
 }
@@ -3848,7 +3861,7 @@ button:focus-visible,
     align-items: center;
     gap: 10px;
     color: var(--ic-text);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 700;
 }
 
@@ -3862,7 +3875,7 @@ button:focus-visible,
     border: 1px solid rgba(var(--ic-accent-rgb), 0.16);
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-ai2-batch-heading {
@@ -3881,7 +3894,7 @@ button:focus-visible,
     margin-top: 3px;
     color: var(--ic-warning);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
@@ -3890,7 +3903,7 @@ button:focus-visible,
     justify-self: end;
     border-radius: var(--ic-radius-xs);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     line-height: 1.2;
     padding: 6px 8px;
     white-space: nowrap;
@@ -3922,7 +3935,7 @@ button:focus-visible,
     margin-top: 10px;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
 }
 
 .ic-ai2-batch-operation code {
@@ -3948,7 +3961,7 @@ button:focus-visible,
     display: block;
     color: var(--ic-text-muted);
     font-family: var(--ic-font-mono);
-    font-size: 10px;
+    font-size: var(--ic-size-micro);
     margin-bottom: 6px;
     text-transform: uppercase;
 }
@@ -3967,7 +3980,7 @@ button:focus-visible,
     border: 1px solid var(--ic-border);
     color: var(--ic-text-secondary);
     font-family: var(--ic-font-mono);
-    font-size: 11px;
+    font-size: var(--ic-size-micro);
     line-height: 1.55;
 }
 
@@ -4045,7 +4058,7 @@ button:focus-visible,
     border-radius: var(--ic-radius-xs);
     padding: 10px 12px;
     font-family: var(--ic-font);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     line-height: 1.5;
 }
 
@@ -4065,7 +4078,7 @@ button:focus-visible,
     border-radius: var(--ic-radius-xs);
     background: rgba(56, 189, 248, 0.08);
     color: var(--ic-text-secondary);
-    font-size: 12px;
+    font-size: var(--ic-size-caption);
     line-height: 1.45;
 }
 
@@ -4086,7 +4099,7 @@ button:focus-visible,
     border-radius: var(--ic-radius-xs);
     padding: 10px 14px;
     font-family: var(--ic-font);
-    font-size: 13px;
+    font-size: var(--ic-size-control);
     font-weight: 700;
     cursor: pointer;
     transition: all var(--ic-transition);

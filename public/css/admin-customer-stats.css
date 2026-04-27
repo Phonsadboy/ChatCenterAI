@@ -4,6 +4,13 @@
    ================================================================ */
 
 /* ============ Layout ============ */
+:root {
+    --stats-text-label: var(--font-size-ui-caption, 0.75rem);
+    --stats-text-meta: var(--font-size-ui-caption, 0.75rem);
+    --stats-text-control: var(--font-size-ui-control, 0.875rem);
+    --stats-text-card-title: var(--font-size-ui-card-title, 0.9375rem);
+}
+
 .stats-summary-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -90,7 +97,7 @@
 }
 
 .stats-summary-inline-label {
-    font-size: 0.72rem;
+    font-size: var(--stats-text-label);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -105,7 +112,7 @@
 }
 
 .stats-summary-label {
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     color: var(--text-light, #5C6372);
     margin-top: 0.15rem;
 }
@@ -144,7 +151,7 @@
 }
 
 .stats-filter-title {
-    font-size: 0.7rem;
+    font-size: var(--stats-text-label);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-light, #5C6372);
@@ -156,7 +163,7 @@
 }
 
 .stats-filter-title i {
-    font-size: 0.8rem;
+    font-size: var(--stats-text-meta);
     opacity: 0.7;
 }
 
@@ -165,7 +172,7 @@
     padding: 0.55rem 0.75rem;
     border: 1px solid var(--border-color, #E1E5EF);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     color: var(--text-dark);
     background: var(--card-bg, #fff);
     cursor: pointer;
@@ -182,7 +189,7 @@
     padding: 0.55rem 0.75rem;
     border: 1px solid var(--border-color, #E1E5EF);
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     color: var(--text-dark);
     background: var(--card-bg, #fff);
 }
@@ -204,7 +211,7 @@
     border: 1px solid var(--border-color, #E1E5EF);
     border-radius: 6px;
     background: transparent;
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     color: var(--text-light);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -222,7 +229,7 @@
     padding: 0.55rem 1rem;
     border-radius: 8px;
     border: none;
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     font-weight: 500;
     cursor: pointer;
     display: inline-flex;
@@ -259,7 +266,7 @@
 }
 
 .stats-card-title {
-    font-size: 0.95rem;
+    font-size: var(--stats-text-card-title);
     font-weight: 600;
     color: var(--text-dark, #1E2430);
     margin: 0;
@@ -270,7 +277,7 @@
 
 .stats-card-title i {
     color: var(--primary, #4A6FA5);
-    font-size: 0.9rem;
+    font-size: var(--stats-text-card-title);
 }
 
 .stats-card-body {
@@ -290,7 +297,7 @@
 }
 
 .stats-chart-legend {
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     color: var(--text-light);
 }
 
@@ -314,7 +321,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     color: var(--text-light);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -340,7 +347,7 @@
 
 .legend-peak i {
     color: #4A6FA5;
-    font-size: 0.5rem;
+    font-size: var(--font-size-ui-micro, 0.6875rem);
 }
 
 .stats-hourly-chart {
@@ -411,7 +418,7 @@
     color: #fff;
     padding: 0.35rem 0.6rem;
     border-radius: 6px;
-    font-size: 0.7rem;
+    font-size: var(--stats-text-label);
     white-space: nowrap;
     opacity: 0;
     visibility: hidden;
@@ -426,7 +433,7 @@
 }
 
 .stats-close-bar-label {
-    font-size: 0.68rem;
+    font-size: var(--stats-text-label);
     color: var(--text-light);
     margin-top: 0.45rem;
     text-align: center;
@@ -494,7 +501,7 @@
     color: #fff;
     padding: 0.35rem 0.6rem;
     border-radius: 6px;
-    font-size: 0.7rem;
+    font-size: var(--stats-text-label);
     white-space: nowrap;
     opacity: 0;
     visibility: hidden;
@@ -509,7 +516,7 @@
 }
 
 .chart-bar-label {
-    font-size: 0.65rem;
+    font-size: var(--font-size-ui-micro, 0.6875rem);
     color: var(--text-light);
     margin-top: 0.5rem;
     text-align: center;
@@ -555,7 +562,7 @@
 }
 
 .stats-item-label {
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     color: var(--text-light, #5C6372);
 }
 
@@ -601,7 +608,7 @@
     display: flex;
     justify-content: space-between;
     margin-bottom: 0.35rem;
-    font-size: 0.8rem;
+    font-size: var(--stats-text-meta);
 }
 
 .stats-progress-label {
@@ -669,7 +676,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: var(--stats-text-meta);
     font-weight: 600;
     flex-shrink: 0;
 }
@@ -700,7 +707,7 @@
 }
 
 .stats-ranking-name {
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     font-weight: 500;
     color: var(--text-dark);
     white-space: nowrap;
@@ -709,12 +716,12 @@
 }
 
 .stats-ranking-sub {
-    font-size: 0.7rem;
+    font-size: var(--stats-text-label);
     color: var(--text-light);
 }
 
 .stats-ranking-value {
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     font-weight: 600;
     color: var(--primary, #4A6FA5);
     white-space: nowrap;
@@ -738,7 +745,7 @@
 }
 
 .stats-empty p {
-    font-size: 0.875rem;
+    font-size: var(--stats-text-control);
     margin: 0;
 }
 
@@ -804,6 +811,6 @@
     }
 
     .chart-bar-label {
-        font-size: 0.55rem;
+        font-size: var(--font-size-ui-micro, 0.6875rem);
     }
 }

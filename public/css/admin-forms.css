@@ -15,6 +15,13 @@
   --forms-warning: var(--color-warning, #DFA94B);
   --forms-danger: var(--color-danger, #D2555A);
   --forms-info: var(--color-info, #3D7FC1);
+  --forms-text-eyebrow: var(--font-size-ui-caption, 0.75rem);
+  --forms-text-title: var(--heading-3-size, 1.25rem);
+  --forms-text-control: var(--font-size-ui-control, 0.875rem);
+  --forms-text-action: var(--font-size-ui-action, 0.8125rem);
+  --forms-text-meta: var(--font-size-ui-caption, 0.75rem);
+  --forms-text-table-head: var(--font-size-ui-table-head, 0.75rem);
+  --forms-text-table-body: var(--font-size-ui-table-body, 0.875rem);
 }
 
 .forms-workspace {
@@ -38,7 +45,7 @@
 
 .forms-toolbar__eyebrow {
   display: block;
-  font-size: 0.72rem;
+  font-size: var(--forms-text-eyebrow);
   font-weight: 700;
   color: var(--forms-primary);
   line-height: 1.1;
@@ -47,7 +54,7 @@
 
 .forms-toolbar h1 {
   margin: 0.12rem 0 0;
-  font-size: 1.35rem;
+  font-size: var(--forms-text-title);
   font-weight: 700;
   color: var(--forms-text);
   line-height: 1.2;
@@ -71,6 +78,7 @@
   background: #fff;
   color: var(--forms-text);
   font: inherit;
+  font-size: var(--forms-text-control);
   outline: none;
 }
 
@@ -187,7 +195,7 @@
 
 .forms-summary-card span {
   display: block;
-  font-size: 0.74rem;
+  font-size: var(--forms-text-meta);
   font-weight: 700;
   color: var(--forms-muted);
   line-height: 1.25;
@@ -196,7 +204,7 @@
 .forms-summary-card strong {
   display: block;
   margin-top: 0.15rem;
-  font-size: 1.35rem;
+  font-size: var(--forms-text-title);
   font-weight: 800;
   color: var(--forms-text);
   line-height: 1.05;
@@ -213,7 +221,7 @@
   align-items: center;
   gap: 0.85rem;
   color: var(--forms-muted);
-  font-size: 0.78rem;
+  font-size: var(--forms-text-action);
   font-weight: 800;
 }
 
@@ -277,7 +285,7 @@
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.52rem;
-  font-size: 0.78rem;
+  font-size: var(--forms-text-action);
   font-weight: 800;
   color: var(--forms-muted);
 }
@@ -328,7 +336,7 @@
   justify-content: center;
   gap: 0.45rem;
   color: var(--forms-muted);
-  font-size: 0.82rem;
+  font-size: var(--forms-text-action);
   font-weight: 800;
 }
 
@@ -364,7 +372,7 @@
 
 .forms-list-btn__name strong,
 .forms-status-btn__main strong {
-  font-size: 0.88rem;
+  font-size: var(--forms-text-control);
   line-height: 1.2;
   font-weight: 800;
   overflow: hidden;
@@ -374,7 +382,7 @@
 
 .forms-list-btn__name span {
   margin-top: 0.15rem;
-  font-size: 0.72rem;
+  font-size: var(--forms-text-meta);
   color: var(--forms-soft);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -465,7 +473,7 @@
 }
 
 .forms-page-option__text strong {
-  font-size: 0.84rem;
+  font-size: var(--forms-text-control);
   font-weight: 800;
   line-height: 1.2;
 }
@@ -473,7 +481,7 @@
 .forms-page-option__text small {
   margin-top: 0.12rem;
   color: var(--forms-soft);
-  font-size: 0.72rem;
+  font-size: var(--forms-text-meta);
 }
 
 .forms-page-empty {
@@ -482,7 +490,7 @@
   gap: 0.5rem;
   padding: 0.7rem;
   color: var(--forms-muted);
-  font-size: 0.82rem;
+  font-size: var(--forms-text-action);
 }
 
 .forms-date-grid {
@@ -560,7 +568,7 @@
 .forms-current__text strong {
   display: block;
   color: var(--forms-text);
-  font-size: 0.98rem;
+  font-size: var(--forms-text-control);
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -570,7 +578,7 @@
 .forms-current__text span {
   display: block;
   color: var(--forms-muted);
-  font-size: 0.76rem;
+  font-size: var(--forms-text-meta);
   margin-top: 0.18rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -588,7 +596,7 @@
   position: absolute;
   left: 0.75rem;
   color: var(--forms-soft);
-  font-size: 0.85rem;
+  font-size: var(--forms-text-control);
 }
 
 .forms-search input {
@@ -622,7 +630,7 @@
   padding: 0.72rem 0.8rem;
   border-bottom: 1px solid var(--forms-border);
   vertical-align: middle;
-  font-size: 0.86rem;
+  font-size: var(--forms-text-table-body);
 }
 
 .forms-table th {
@@ -631,7 +639,7 @@
   z-index: 2;
   background: #FAFBFD;
   color: var(--forms-muted);
-  font-size: 0.75rem;
+  font-size: var(--forms-text-table-head);
   font-weight: 800;
   text-align: left;
   white-space: nowrap;
@@ -801,7 +809,7 @@
   justify-content: space-between;
   gap: 0.75rem;
   color: var(--forms-muted);
-  font-size: 0.82rem;
+  font-size: var(--forms-text-action);
 }
 
 .forms-pagination__controls {
@@ -878,14 +886,14 @@
 
 .forms-detail-head span {
   display: block;
-  font-size: 0.72rem;
+  font-size: var(--forms-text-meta);
   font-weight: 800;
   color: var(--forms-primary);
 }
 
 .forms-detail-head h2 {
   margin: 0.15rem 0 0;
-  font-size: 1.12rem;
+  font-size: var(--heading-4-size, 1.125rem);
   font-weight: 800;
   color: var(--forms-text);
   line-height: 1.25;
@@ -905,7 +913,7 @@
 
 .forms-detail-section h3 {
   margin: 0 0 0.65rem;
-  font-size: 0.86rem;
+  font-size: var(--forms-text-control);
   font-weight: 800;
   color: var(--forms-text);
 }
@@ -923,7 +931,7 @@
 .forms-detail-item span {
   display: block;
   color: var(--forms-muted);
-  font-size: 0.72rem;
+  font-size: var(--forms-text-meta);
   font-weight: 700;
   margin-bottom: 0.16rem;
 }
@@ -932,7 +940,7 @@
 .forms-detail-value {
   display: block;
   color: var(--forms-text);
-  font-size: 0.88rem;
+  font-size: var(--forms-text-control);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -956,7 +964,7 @@
 
 .forms-detail-value-row span {
   color: var(--forms-muted);
-  font-size: 0.78rem;
+  font-size: var(--forms-text-action);
   font-weight: 800;
 }
 
@@ -971,7 +979,7 @@
   justify-content: space-between;
   gap: 0.75rem;
   color: var(--forms-muted);
-  font-size: 0.78rem;
+  font-size: var(--forms-text-action);
 }
 
 .forms-loading {

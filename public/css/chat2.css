@@ -20,6 +20,16 @@
   --cc2-radius: var(--radius-md, 8px);
   --cc2-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
   --cc2-top: var(--layout-topbar-height, 56px);
+  --cc2-text-kicker: var(--font-size-ui-micro, 0.6875rem);
+  --cc2-text-title: var(--font-size-ui-card-title, 0.9375rem);
+  --cc2-text-section: var(--font-size-ui-label, 0.8125rem);
+  --cc2-text-action: var(--font-size-ui-action-sm, 0.75rem);
+  --cc2-text-control: var(--font-size-ui-control, 0.875rem);
+  --cc2-text-list-title: var(--font-size-chat-list-title, 0.875rem);
+  --cc2-text-list-meta: var(--font-size-chat-list-meta, 0.75rem);
+  --cc2-text-chat-body: var(--font-size-chat-body, 0.9375rem);
+  --cc2-text-chat-meta: var(--font-size-chat-meta, 0.6875rem);
+  --cc2-text-table-body: var(--font-size-ui-table-body, 0.875rem);
   --chat-tag-palette-1: var(--color-primary, #315f8f);
   --chat-tag-palette-2: var(--color-success, #23775f);
   --chat-tag-palette-3: var(--color-warning, #a76918);
@@ -125,7 +135,7 @@ body.page-chat2 .app-content {
 }
 
 .cc2-kicker {
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-kicker);
   font-weight: 700;
   letter-spacing: 0;
   color: var(--cc2-blue);
@@ -135,7 +145,7 @@ body.page-chat2 .app-content {
 .cc2-title {
   margin: 0;
   color: var(--cc2-ink);
-  font-size: 0.98rem;
+  font-size: var(--cc2-text-title);
   font-weight: 700;
   line-height: 1.25;
 }
@@ -169,7 +179,7 @@ body.page-chat2 .app-content {
   border-radius: var(--cc2-radius);
   background: #fff;
   color: var(--cc2-ink);
-  font-size: 0.82rem;
+  font-size: var(--cc2-text-control);
   padding: 7px 8px;
   outline: none;
 }
@@ -233,7 +243,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 .cc2-filter-toggle strong {
   display: block;
   color: var(--cc2-ink);
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-section);
   line-height: 1.15;
 }
 
@@ -242,7 +252,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   max-width: 210px;
   overflow: hidden;
   color: var(--cc2-muted);
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-list-meta);
   font-weight: 700;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -252,7 +262,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 .cc2-filter-chevron {
   flex: 0 0 auto;
   color: var(--cc2-muted);
-  font-size: 0.7rem;
+  font-size: var(--cc2-text-action);
   transition: transform 0.16s ease;
 }
 
@@ -277,7 +287,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 
 .cc2-filter-label {
   color: var(--cc2-sub);
-  font-size: 0.7rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
   line-height: 1.15;
 }
@@ -307,7 +317,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: #fff;
   color: var(--cc2-sub);
   padding: 3px 7px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
   cursor: pointer;
 }
@@ -336,7 +346,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: var(--cc2-panel-alt);
   color: var(--cc2-muted);
   padding: 0 6px;
-  font-size: 0.66rem;
+  font-size: var(--cc2-text-chat-meta);
 }
 
 .cc2-inbox-option.is-active {
@@ -382,7 +392,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   color: var(--cc2-sub);
   border-radius: 6px;
   padding: 6px 4px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
@@ -403,7 +413,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   justify-content: space-between;
   gap: 8px;
   color: var(--cc2-sub);
-  font-size: 0.82rem;
+  font-size: var(--cc2-text-section);
   font-weight: 700;
 }
 
@@ -418,7 +428,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: #fff;
   color: var(--cc2-sub);
   padding: 4px 7px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 700;
   cursor: pointer;
 }
@@ -493,7 +503,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 }
 
 .cc2-tag-toggle i {
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-chat-meta);
   transition: transform 0.16s ease;
 }
 
@@ -529,7 +539,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: #fff;
   color: var(--cc2-sub);
   padding: 3px 8px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 700;
 }
 
@@ -556,7 +566,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   padding: 2px 6px;
   background: var(--cc2-panel-alt);
   color: var(--cc2-sub);
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-chat-meta);
   line-height: 1.25;
 }
 
@@ -639,7 +649,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.85rem;
+  font-size: var(--cc2-text-control);
 }
 
 .cc2-color-field {
@@ -648,7 +658,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   justify-content: space-between;
   gap: 10px;
   color: var(--cc2-sub);
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -672,7 +682,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   display: grid;
   gap: 4px;
   color: var(--cc2-sub);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -683,7 +693,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   border-radius: 8px;
   padding: 5px 6px;
   color: var(--cc2-ink);
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-action);
 }
 
 .cc2-user-list,
@@ -767,7 +777,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 }
 
 .cc2-user-name {
-  font-size: 0.84rem;
+  font-size: var(--cc2-text-list-title);
 }
 
 .cc2-user-meta,
@@ -775,7 +785,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 .cc2-current-meta,
 .cc2-muted {
   color: var(--cc2-muted);
-  font-size: 0.74rem;
+  font-size: var(--cc2-text-list-meta);
 }
 
 .cc2-user-meta,
@@ -798,7 +808,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 
 .cc2-user-time {
   color: var(--cc2-muted);
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-chat-meta);
   white-space: nowrap;
 }
 
@@ -810,7 +820,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   border-radius: 999px;
   background: var(--cc2-blue);
   color: #fff;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -886,7 +896,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   flex: 0 0 auto;
   height: 30px;
   padding: 0 8px;
-  font-size: 0.74rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -961,7 +971,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.86);
   color: var(--cc2-muted);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-chat-meta);
   font-weight: 700;
 }
 
@@ -1015,14 +1025,14 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   margin-bottom: 4px;
   color: inherit;
   opacity: 0.72;
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-chat-meta);
   font-weight: 800;
 }
 
 .cc2-message-text {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.86rem;
+  font-size: var(--cc2-text-chat-body);
   line-height: 1.5;
 }
 
@@ -1077,7 +1087,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.76rem;
+  font-size: var(--cc2-text-list-meta);
   font-weight: 800;
 }
 
@@ -1116,7 +1126,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   opacity: 0.7;
   width: 28px;
   height: 24px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
 }
 
 .cc2-message-actions button.is-active,
@@ -1198,7 +1208,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: var(--cc2-blue-soft);
   color: var(--cc2-blue);
   padding: 1px 7px;
-  font-size: 0.7rem;
+  font-size: var(--cc2-text-action);
 }
 
 .cc2-metric-grid {
@@ -1217,7 +1227,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 .cc2-metric span {
   display: block;
   color: var(--cc2-muted);
-  font-size: 0.68rem;
+  font-size: var(--cc2-text-chat-meta);
   font-weight: 700;
 }
 
@@ -1225,7 +1235,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   display: block;
   margin-top: 2px;
   color: var(--cc2-ink);
-  font-size: 0.96rem;
+  font-size: var(--cc2-text-title);
 }
 
 .cc2-info-list {
@@ -1246,7 +1256,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr);
   gap: 6px;
-  font-size: 0.76rem;
+  font-size: var(--cc2-text-table-body);
 }
 
 .cc2-info-row strong,
@@ -1299,7 +1309,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 
 .cc2-form-builder label {
   color: var(--cc2-sub);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -1308,7 +1318,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   gap: 4px;
   margin: 0;
   color: var(--cc2-sub);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -1345,7 +1355,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   min-height: 32px;
   border-radius: var(--cc2-radius);
   padding: 6px 9px;
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
   cursor: pointer;
 }
@@ -1377,13 +1387,13 @@ summary.cc2-filter-toggle::-webkit-details-marker {
 .cc2-card-meta {
   margin-top: 2px;
   color: var(--cc2-muted);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
 }
 
 .cc2-card-body {
   margin-top: 6px;
   color: var(--cc2-sub);
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-action);
   line-height: 1.45;
 }
 
@@ -1400,7 +1410,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   background: #fff;
   color: var(--cc2-sub);
   padding: 4px 7px;
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -1420,7 +1430,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   padding: 3px 8px;
   background: var(--cc2-blue-soft);
   color: var(--cc2-blue);
-  font-size: 0.72rem;
+  font-size: var(--cc2-text-action);
   font-weight: 800;
 }
 
@@ -1447,7 +1457,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   grid-template-columns: minmax(68px, auto) minmax(0, 1fr);
   gap: 5px 7px;
   margin-top: 6px;
-  font-size: 0.76rem;
+  font-size: var(--cc2-text-list-meta);
 }
 
 .cc2-kv span {
@@ -1471,7 +1481,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   border: 1px solid var(--cc2-line);
   border-radius: 6px;
   background: #fff;
-  font-size: 0.78rem;
+  font-size: var(--cc2-text-action);
 }
 
 .cc2-debug {
@@ -1547,7 +1557,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   box-shadow: var(--cc2-shadow);
   padding: 10px;
   color: var(--cc2-ink);
-  font-size: 0.84rem;
+  font-size: var(--cc2-text-list-title);
 }
 
 .cc2-toast.success {
@@ -1654,7 +1664,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
     border-radius: var(--cc2-radius);
     background: var(--cc2-panel-alt);
     color: var(--cc2-sub);
-    font-size: 0.82rem;
+    font-size: var(--cc2-text-action);
     font-weight: 800;
   }
 
@@ -1673,7 +1683,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
     background: #fff;
     color: inherit;
     padding: 0 7px;
-    font-size: 0.72rem;
+    font-size: var(--cc2-text-chat-meta);
   }
 
   .cc2-chat-head {
@@ -1709,11 +1719,11 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   }
 
   .cc2-current-name {
-    font-size: 0.95rem;
+    font-size: var(--cc2-text-title);
   }
 
   .cc2-current-meta {
-    font-size: 0.72rem;
+    font-size: var(--cc2-text-action);
   }
 
   .cc2-head-actions:not([hidden]) {
@@ -1847,7 +1857,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
     flex: 0 0 auto;
     min-height: 34px;
     padding: 5px 9px;
-    font-size: 0.78rem;
+    font-size: var(--cc2-text-action);
   }
 
   .cc2-segment {
@@ -1934,7 +1944,7 @@ summary.cc2-filter-toggle::-webkit-details-marker {
   }
 
   .cc2-message-text {
-    font-size: 0.95rem;
+    font-size: var(--cc2-text-title);
     line-height: 1.55;
   }
 

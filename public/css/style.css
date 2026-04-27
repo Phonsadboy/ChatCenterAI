@@ -77,6 +77,34 @@
   --heading-6-size: 0.9375rem;
   /* 15px */
 
+  /* Semantic UI Type Scale */
+  --font-size-ui-micro: 0.6875rem;
+  /* 11px - tiny counters, timestamps, dense labels */
+  --font-size-ui-caption: var(--font-size-xs);
+  /* 12px - captions, secondary labels */
+  --font-size-ui-label: var(--font-size-sm);
+  /* 13px - labels, compact tabs */
+  --font-size-ui-action: var(--font-size-sm);
+  /* 13px - default compact buttons/actions */
+  --font-size-ui-action-sm: var(--font-size-xs);
+  /* 12px - small buttons/chips */
+  --font-size-ui-control: 0.875rem;
+  /* 14px - form controls */
+  --font-size-ui-table-head: var(--font-size-xs);
+  /* 12px - table headers */
+  --font-size-ui-table-body: 0.875rem;
+  /* 14px - table body cells */
+  --font-size-ui-card-title: var(--font-size-base);
+  /* 15px - card/list titles */
+  --font-size-chat-list-title: 0.875rem;
+  /* 14px */
+  --font-size-chat-list-meta: var(--font-size-xs);
+  /* 12px */
+  --font-size-chat-body: var(--font-size-base);
+  /* 15px */
+  --font-size-chat-meta: var(--font-size-ui-micro);
+  /* 11px */
+
   /* Line Heights */
   --line-height-base: 1.5;
   --line-height-heading: 1.25;
@@ -102,6 +130,28 @@ textarea,
 .form-control,
 .form-select {
   font-family: inherit;
+}
+
+.btn {
+  font-size: var(--font-size-ui-action);
+}
+
+.btn-sm,
+.btn-group-sm > .btn {
+  font-size: var(--font-size-ui-action-sm);
+}
+
+.form-control,
+.form-select {
+  font-size: var(--font-size-ui-control);
+}
+
+.table {
+  font-size: var(--font-size-ui-table-body);
+}
+
+.table thead th {
+  font-size: var(--font-size-ui-table-head);
 }
 
 p {

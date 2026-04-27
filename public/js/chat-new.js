@@ -515,9 +515,9 @@ class ChatManager {
                 }
             }
 
-            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-1" style="font-size: 0.65rem;">AI</span>` : '';
+            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-1" style="font-size: var(--font-size-ui-micro, 0.6875rem);">AI</span>` : '';
             const followUpBadge = (showFollowUp && user.hasFollowUp)
-                ? `<span class="badge followup-badge ms-1" style="font-size: 0.65rem;" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
+                ? `<span class="badge followup-badge ms-1" style="font-size: var(--font-size-ui-micro, 0.6875rem);" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
                 : '';
 
             const purchasedIcon = user.hasPurchased
@@ -534,10 +534,10 @@ class ChatManager {
                 const displayTags = user.tags.slice(0, 2);
                 tagsHtml = displayTags.map(tag => {
                     const colorClass = this.getTagColorClass(tag);
-                    return `<span class="badge ${colorClass} ms-1" style="font-size: 0.6rem;">${this.escapeHtml(tag)}</span>`;
+                    return `<span class="badge ${colorClass} ms-1" style="font-size: var(--font-size-ui-micro, 0.6875rem);">${this.escapeHtml(tag)}</span>`;
                 }).join('');
                 if (user.tags.length > 2) {
-                    tagsHtml += `<span class="badge bg-secondary ms-1" style="font-size: 0.6rem;">+${user.tags.length - 2}</span>`;
+                    tagsHtml += `<span class="badge bg-secondary ms-1" style="font-size: var(--font-size-ui-micro, 0.6875rem);">+${user.tags.length - 2}</span>`;
                 }
             }
 
@@ -987,10 +987,10 @@ class ChatManager {
             tagsHtml = `<div class="user-tags mt-1">`;
             user.tags.slice(0, 5).forEach(tag => {
                 const colorClass = this.getTagColorClass(tag);
-                tagsHtml += `<span class="badge ${colorClass} me-1" style="font-size: 0.7rem;">${this.escapeHtml(tag)}</span>`;
+                tagsHtml += `<span class="badge ${colorClass} me-1" style="font-size: var(--font-size-ui-caption, 0.75rem);">${this.escapeHtml(tag)}</span>`;
             });
             if (user.tags.length > 5) {
-                tagsHtml += `<span class="badge bg-secondary me-1" style="font-size: 0.7rem;">+${user.tags.length - 5}</span>`;
+                tagsHtml += `<span class="badge bg-secondary me-1" style="font-size: var(--font-size-ui-caption, 0.75rem);">+${user.tags.length - 5}</span>`;
             }
             tagsHtml += `</div>`;
         }

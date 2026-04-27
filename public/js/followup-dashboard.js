@@ -502,7 +502,7 @@
                         <a href="${full}" target="_blank" rel="noopener" class="flex-shrink-0">
                             <img src="${preview}" alt="${caption || 'รูปภาพ'}" class="followup-item-thumb">
                         </a>
-                        ${caption ? `<small class="text-muted flex-grow-1" style="font-size:0.8rem">${caption}</small>` : '<span class="flex-grow-1"></span>'}
+                        ${caption ? `<small class="text-muted flex-grow-1" style="font-size:var(--font-size-ui-caption, 0.75rem)">${caption}</small>` : '<span class="flex-grow-1"></span>'}
                         <div class="followup-item-actions">
                             <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรูปนี้">
                                 <i class="fas fa-times" style="font-size:0.65rem"></i>
