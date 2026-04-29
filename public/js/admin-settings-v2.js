@@ -39,16 +39,20 @@ const BOT_REASONING_EFFORT_LABELS = {
     high: 'high',
     xhigh: 'xhigh'
 };
-const DEFAULT_OPENROUTER_TEST_MODEL = 'qwen/qwen3.6-plus';
+const DEFAULT_OPENROUTER_TEST_MODEL = 'deepseek/deepseek-v4-flash';
 const OPENROUTER_TEST_MODELS = [
+    { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
     { value: 'qwen/qwen3.6-plus', label: 'Qwen 3.6 Plus' },
     { value: 'qwen/qwen3.6-flash', label: 'Qwen 3.6 Flash' },
-    { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-    { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
     { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
     { value: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1' }
 ];
 const OPENROUTER_REASONING_EFFORTS = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const OPENROUTER_DEEPSEEK_V4_REASONING_MODELS = new Set([
+    'deepseek/deepseek-v4-flash',
+    'deepseek/deepseek-v4-pro'
+]);
 const CHAT_API_MODE_LABEL = 'Chat Completions API (compatibility: custom tools ได้, ไม่มี previous_response_id)';
 const CHAT_API_MODE_DISABLED_LABEL = 'Chat Completions API (รุ่นนี้รองรับผ่าน Responses เท่านั้น)';
 
@@ -1580,7 +1584,7 @@ const defaultAiConfig = {
     testModeEnabled: false,
     testProvider: 'openrouter',
     testModel: DEFAULT_OPENROUTER_TEST_MODEL,
-    testReasoningEffort: '',
+    testReasoningEffort: 'high',
     testReasoningExclude: true
 };
 
@@ -1721,13 +1725,39 @@ function normalizeOpenRouterTestModelValue(value) {
         : DEFAULT_OPENROUTER_TEST_MODEL;
 }
 
-function buildOpenRouterReasoningOptions(selectedEffort) {
+function getOpenRouterReasoningEffortsForModel(modelValue) {
+    const model = normalizeOpenRouterTestModelValue(modelValue);
+    if (OPENROUTER_DEEPSEEK_V4_REASONING_MODELS.has(model)) {
+        return {
+            efforts: ['high', 'xhigh'],
+            defaultEffort: 'high',
+            defaultLabel: 'default - DeepSeek high'
+        };
+    }
+    return {
+        efforts: OPENROUTER_REASONING_EFFORTS,
+        defaultEffort: '',
+        defaultLabel: 'default - OpenRouter medium'
+    };
+}
+
+function normalizeOpenRouterReasoningEffortValue(modelValue, effortValue) {
+    const support = getOpenRouterReasoningEffortsForModel(modelValue);
+    const effort = typeof effortValue === 'string' ? effortValue.trim().toLowerCase() : '';
+    return support.efforts.includes(effort) ? effort : support.defaultEffort;
+}
+
+function buildOpenRouterReasoningOptions(selectedEffort, modelValue = DEFAULT_OPENROUTER_TEST_MODEL) {
+    const support = getOpenRouterReasoningEffortsForModel(modelValue);
     const normalized = typeof selectedEffort === 'string' ? selectedEffort.trim().toLowerCase() : '';
-    return OPENROUTER_REASONING_EFFORTS.map((effort) => {
-        const selected = effort === normalized ? ' selected' : '';
+    const selectedEffortValue = support.efforts.includes(normalized)
+        ? normalized
+        : support.defaultEffort;
+    return support.efforts.map((effort) => {
+        const selected = effort === selectedEffortValue ? ' selected' : '';
         const label = effort
             ? (BOT_REASONING_EFFORT_LABELS[effort] || effort)
-            : 'default - OpenRouter medium';
+            : support.defaultLabel;
         return `<option value="${escapeHtml(effort)}"${selected}>${escapeHtml(label)}</option>`;
     }).join('');
 }
@@ -1744,26 +1774,33 @@ function setOpenRouterTestConfigUI(prefix, config = {}) {
     const reasoningSelect = document.getElementById(`${prefix}BotOpenRouterReasoningEffort`);
 
     setCheckboxValue(`${prefix}BotOpenRouterTestEnabled`, cfg.testModeEnabled === true);
+    const selectedTestModel = normalizeOpenRouterTestModelValue(cfg.testModel);
+    const selectedReasoning = normalizeOpenRouterReasoningEffortValue(
+        selectedTestModel,
+        cfg.testReasoningEffort
+    );
     if (modelSelect) {
         modelSelect.innerHTML = buildOpenRouterTestModelOptions(cfg.testModel);
-        modelSelect.value = cfg.testModel || DEFAULT_OPENROUTER_TEST_MODEL;
+        modelSelect.value = selectedTestModel;
     }
     if (reasoningSelect) {
-        reasoningSelect.innerHTML = buildOpenRouterReasoningOptions(cfg.testReasoningEffort);
-        reasoningSelect.value = typeof cfg.testReasoningEffort === 'string'
-            ? cfg.testReasoningEffort
-            : '';
+        reasoningSelect.innerHTML = buildOpenRouterReasoningOptions(selectedReasoning, selectedTestModel);
+        reasoningSelect.value = selectedReasoning;
     }
     setCheckboxValue(`${prefix}BotOpenRouterReasoningExclude`, cfg.testReasoningExclude !== false);
     applyOpenRouterTestVisibility(prefix);
 }
 
 function readOpenRouterTestConfigFromUI(prefix) {
+    const testModel = normalizeOpenRouterTestModelValue(getInputValue(`${prefix}BotOpenRouterTestModel`));
     return {
         testModeEnabled: getCheckboxValue(`${prefix}BotOpenRouterTestEnabled`),
         testProvider: 'openrouter',
-        testModel: normalizeOpenRouterTestModelValue(getInputValue(`${prefix}BotOpenRouterTestModel`)),
-        testReasoningEffort: getInputValue(`${prefix}BotOpenRouterReasoningEffort`),
+        testModel,
+        testReasoningEffort: normalizeOpenRouterReasoningEffortValue(
+            testModel,
+            getInputValue(`${prefix}BotOpenRouterReasoningEffort`)
+        ),
         testReasoningExclude: getCheckboxValue(`${prefix}BotOpenRouterReasoningExclude`) !== false
     };
 }
@@ -1945,6 +1982,19 @@ function initAiModeListeners() {
         if (openRouterEnabled) {
             openRouterEnabled.addEventListener('change', () => applyOpenRouterTestVisibility(prefix));
         }
+        const openRouterModel = document.getElementById(`${prefix}BotOpenRouterTestModel`);
+        const openRouterReasoning = document.getElementById(`${prefix}BotOpenRouterReasoningEffort`);
+        if (openRouterModel && openRouterReasoning) {
+            openRouterModel.addEventListener('change', () => {
+                const modelValue = normalizeOpenRouterTestModelValue(openRouterModel.value);
+                const effortValue = normalizeOpenRouterReasoningEffortValue(
+                    modelValue,
+                    openRouterReasoning.value
+                );
+                openRouterReasoning.innerHTML = buildOpenRouterReasoningOptions(effortValue, modelValue);
+                openRouterReasoning.value = effortValue;
+            });
+        }
     });
 }
 
@@ -2065,9 +2115,10 @@ function formatBotOpenRouterTestSummary(bot) {
     const cfg = bot?.aiConfig || {};
     if (cfg.testModeEnabled !== true) return '';
     const model = normalizeOpenRouterTestModelValue(cfg.testModel);
-    const reasoning = typeof cfg.testReasoningEffort === 'string' && cfg.testReasoningEffort.trim()
-        ? cfg.testReasoningEffort.trim()
-        : 'default';
+    const reasoning = normalizeOpenRouterReasoningEffortValue(
+        model,
+        cfg.testReasoningEffort
+    ) || 'default';
     return `• Test: OpenRouter ${escapeHtml(model)} (${escapeHtml(reasoning)})`;
 }
 

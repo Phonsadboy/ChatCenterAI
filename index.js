@@ -166,14 +166,23 @@ const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
 const DEFAULT_ORDER_EXTRACTION_MODEL = "gpt-5.4-nano";
-const DEFAULT_OPENROUTER_TEST_MODEL = "qwen/qwen3.6-plus";
+const DEFAULT_OPENROUTER_TEST_MODEL = "deepseek/deepseek-v4-flash";
+const OPENROUTER_TEST_IMAGE_ANALYSIS_MODEL = "qwen/qwen3.6-flash";
 const OPENROUTER_TOOL_CAPABLE_TEST_MODELS = new Set([
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4-pro",
   "qwen/qwen3.6-plus",
   "qwen/qwen3.6-flash",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash",
   "deepseek/deepseek-v3.2",
   "deepseek/deepseek-chat-v3.1",
+]);
+const OPENROUTER_IMAGE_CAPABLE_TEST_MODELS = new Set([
+  "qwen/qwen3.6-plus",
+  "qwen/qwen3.6-flash",
+]);
+const OPENROUTER_DEEPSEEK_V4_REASONING_MODELS = new Set([
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4-pro",
 ]);
 const runtimeConfig = getRuntimeConfig();
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
@@ -6022,6 +6031,12 @@ function normalizeAiConfig(raw = {}) {
     const effort = val.trim().toLowerCase();
     return allowedOpenRouterReasoningEfforts.includes(effort) ? effort : "";
   };
+  const normalizeOpenRouterReasoningEffortValue = (model, val) => {
+    const effort = normalizeReasoningEffortValue(val);
+    const support = getOpenRouterReasoningSupport(model);
+    if (!support) return effort;
+    return support.allowed.includes(effort) ? effort : support.defaultEffort;
+  };
   const normalizeOpenRouterTestModel = (val) => {
     if (typeof val !== "string") return DEFAULT_OPENROUTER_TEST_MODEL;
     const model = val.trim();
@@ -6032,6 +6047,7 @@ function normalizeAiConfig(raw = {}) {
 
   const apiMode = allowedModes.includes(raw.apiMode) ? raw.apiMode : "responses";
   const rawOpenRouterTestModel = raw.testModel ?? raw.openRouterTestModel;
+  const openRouterTestModel = normalizeOpenRouterTestModel(rawOpenRouterTestModel);
   const cfg = {
     apiMode,
     reasoningEffort: "",
@@ -6044,8 +6060,9 @@ function normalizeAiConfig(raw = {}) {
       false,
     ),
     testProvider: LLM_PROVIDER_OPENROUTER,
-    testModel: normalizeOpenRouterTestModel(rawOpenRouterTestModel),
-    testReasoningEffort: normalizeReasoningEffortValue(
+    testModel: openRouterTestModel,
+    testReasoningEffort: normalizeOpenRouterReasoningEffortValue(
+      openRouterTestModel,
       raw.testReasoningEffort ?? raw.openRouterReasoningEffort,
     ),
     testReasoningExclude: parseEnvBoolean(
@@ -13604,6 +13621,27 @@ function normalizeModelIdentifier(modelId) {
   return normalized.toLowerCase();
 }
 
+function normalizeProviderModelIdentifier(modelId) {
+  return typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
+}
+
+function modelSupportsOpenRouterImageInput(modelId) {
+  return OPENROUTER_IMAGE_CAPABLE_TEST_MODELS.has(
+    normalizeProviderModelIdentifier(modelId),
+  );
+}
+
+function getOpenRouterReasoningSupport(modelId) {
+  if (
+    OPENROUTER_DEEPSEEK_V4_REASONING_MODELS.has(
+      normalizeProviderModelIdentifier(modelId),
+    )
+  ) {
+    return { allowed: ["high", "xhigh"], defaultEffort: "high" };
+  }
+  return null;
+}
+
 function modelSupportsResponsesApi(modelId) {
   const normalized = normalizeModelIdentifier(modelId);
   if (!normalized || normalized.includes("chat-latest")) return false;
@@ -13699,13 +13737,18 @@ function resolveResponsesReasoningConfig(modelId, requestedEffort) {
   return { effort: support.defaultEffort };
 }
 
-function resolveOpenRouterReasoningConfig(aiConfig = {}) {
+function resolveOpenRouterReasoningConfig(aiConfig = {}, modelId = "") {
   const effort =
     typeof aiConfig.testReasoningEffort === "string"
       ? aiConfig.testReasoningEffort.trim().toLowerCase()
       : "";
+  const support = getOpenRouterReasoningSupport(modelId);
   const reasoning = {};
-  if (effort) {
+  if (support) {
+    reasoning.effort = support.allowed.includes(effort)
+      ? effort
+      : support.defaultEffort;
+  } else if (effort) {
     reasoning.effort = effort;
   } else {
     reasoning.enabled = true;
@@ -13754,7 +13797,7 @@ function applyChatSamplingConfig(payload, aiConfig, modelId) {
 
 function applyOpenRouterReasoningConfig(payload, aiConfig) {
   if (!payload || !aiConfig) return payload;
-  payload.reasoning = resolveOpenRouterReasoningConfig(aiConfig);
+  payload.reasoning = resolveOpenRouterReasoningConfig(aiConfig, payload.model);
   return payload;
 }
 
@@ -13854,6 +13897,47 @@ function stripHistoryImagesFromContent(content, role = "user") {
     return text || null;
   }
   return text ? `${text}\n\n[เคยมีรูปมาก่อน]` : "[เคยมีรูปมาก่อน]";
+}
+
+function stripImagesFromCurrentMessageContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content) || content.length === 0) {
+    return "ผู้ใช้ส่งเนื้อหามา โปรดตอบกลับอย่างเหมาะสม";
+  }
+
+  const textParts = [];
+  let hasImage = false;
+
+  content.forEach((part) => {
+    if (!part || typeof part !== "object") return;
+    if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+      textParts.push(part.text.trim());
+      return;
+    }
+    if (
+      (part.type === "input_text" && typeof part.text === "string" && part.text.trim())
+    ) {
+      textParts.push(part.text.trim());
+      return;
+    }
+    if (
+      (part.type === "input_image" &&
+        typeof part.image_url === "string" &&
+        part.image_url.trim()) ||
+      (part.type === "image_url" &&
+        part.image_url &&
+        typeof part.image_url.url === "string" &&
+        part.image_url.url.trim())
+    ) {
+      hasImage = true;
+    }
+  });
+
+  const text = textParts.join("\n\n").trim();
+  if (!hasImage) return text || "ผู้ใช้ส่งเนื้อหามา โปรดตอบกลับอย่างเหมาะสม";
+  return text
+    ? `${text}\n\n[มีรูปภาพในข้อความล่าสุด แต่โมเดลนี้รับเฉพาะข้อความ]`
+    : "[มีรูปภาพในข้อความล่าสุด แต่โมเดลนี้รับเฉพาะข้อความ]";
 }
 
 function historyHasImageParts(history) {
@@ -14541,6 +14625,120 @@ function buildMultimodalPayloads(contentSequence, maxImages, modelId) {
   return { chatContent, responsesContent, imageCount };
 }
 
+function buildOpenRouterVisionBridgePrompt(contentSequence, visionSummary) {
+  const textParts = [];
+  const imageNotes = [];
+  let imageIndex = 0;
+
+  for (const item of Array.isArray(contentSequence) ? contentSequence : []) {
+    if (item?.type === "text" && typeof item.content === "string" && item.content.trim()) {
+      textParts.push(item.content.trim());
+      continue;
+    }
+    if (item?.type === "image") {
+      imageIndex += 1;
+      const description =
+        typeof item.description === "string" && item.description.trim()
+          ? item.description.trim()
+          : "";
+      imageNotes.push(
+        description
+          ? `รูปที่ ${imageIndex}: ${description}`
+          : `รูปที่ ${imageIndex}: ไม่มีคำอธิบายจากระบบ`,
+      );
+    }
+  }
+
+  const customerText = textParts.join("\n\n").trim() || "(ลูกค้าส่งรูปภาพโดยไม่มีข้อความ)";
+  const imageNoteText = imageNotes.length > 0
+    ? imageNotes.join("\n")
+    : "ไม่มีรูปภาพ";
+  const safeVisionSummary =
+    typeof visionSummary === "string" && visionSummary.trim()
+      ? visionSummary.trim()
+      : "ระบบอ่านรูปภาพไม่ได้ข้อมูลเพิ่มเติม";
+
+  return [
+    "ข้อความลูกค้าปัจจุบัน:",
+    customerText,
+    "",
+    "ข้อมูลรูปภาพจากระบบ vision ภายใน:",
+    safeVisionSummary,
+    "",
+    "บันทึกรูปภาพจากระบบ:",
+    imageNoteText,
+    "",
+    "ให้ใช้ข้อมูลรูปภาพข้างบนเป็นบริบทภายในเท่านั้น ห้ามบอกลูกค้าว่าระบบใช้ vision bridge หรือสรุปรูปภาพจากระบบอื่น ตอบลูกค้าเป็นคำตอบจริงตามปกติ และเรียก tools เมื่อต้องจัดการสินค้า/ออเดอร์",
+  ].join("\n");
+}
+
+async function summarizeOpenRouterImagesForTextModel({
+  chatContent,
+  botId,
+  platform,
+} = {}) {
+  const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform, {
+    preferredProvider: LLM_PROVIDER_OPENROUTER,
+  });
+  if (!apiKeyToUse.apiKey) {
+    return { summary: "", usage: createUsageAccumulator(), model: "" };
+  }
+
+  const openai = buildLLMClientFromKey(apiKeyToUse);
+  if (!openai) {
+    return { summary: "", usage: createUsageAccumulator(), model: "" };
+  }
+
+  const response = await openai.chat.completions.create({
+    model: OPENROUTER_TEST_IMAGE_ANALYSIS_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "คุณคือระบบอ่านรูปภาพภายในสำหรับแชทขายสินค้า",
+          "หน้าที่คือ OCR และสรุปสิ่งที่เห็นในรูปเป็นภาษาไทยแบบกระชับ",
+          "ห้ามตอบลูกค้า ห้ามเรียก tools และห้ามแต่งข้อมูลที่ไม่เห็น",
+          "ให้ระบุสินค้า/จำนวน/ราคา/ชื่อ/ที่อยู่/เบอร์โทร/ข้อความในรูปเท่าที่อ่านได้ พร้อม confidence สั้น ๆ",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: Array.isArray(chatContent) && chatContent.length > 0
+          ? chatContent
+          : [{ type: "text", text: "โปรดสรุปรูปภาพล่าสุด" }],
+      },
+    ],
+  });
+
+  const actualModel =
+    typeof response?.model === "string" && response.model.trim()
+      ? response.model.trim()
+      : OPENROUTER_TEST_IMAGE_ANALYSIS_MODEL;
+  const usage = mapChatUsage(response?.usage);
+  if (usage.total_tokens > 0) {
+    await logOpenAIUsage({
+      apiKeyId: apiKeyToUse.keyId,
+      botId,
+      platform,
+      provider: apiKeyToUse.provider,
+      model: actualModel,
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      cachedPromptTokens: usage.cached_prompt_tokens,
+      reasoningTokens: usage.reasoning_tokens,
+      functionName: "summarizeOpenRouterImagesForTextModel",
+    });
+  }
+
+  const summary =
+    typeof response?.choices?.[0]?.message?.content === "string"
+      ? trimAssistantReplyArtifacts(response.choices[0].message.content).trim()
+      : "";
+
+  return { summary, usage, model: actualModel };
+}
+
 function shouldRetryConversationWithoutHistoryImages(err, history) {
   if (!historyHasImageParts(history)) {
     return false;
@@ -14715,6 +14913,18 @@ async function runCommerceAssistantConversation(options = {}) {
     const candidateLabel = candidate.isOpenRouterTest
       ? "OpenRouter Test"
       : logLabel;
+    const shouldStripImagesForCandidate =
+      candidate.isOpenRouterTest &&
+      !modelSupportsOpenRouterImageInput(candidate.resolvedModel.model);
+    const candidateHistory = shouldStripImagesForCandidate
+      ? stripImagesFromHistoryMessages(history)
+      : history;
+    const candidateChatUserContent = shouldStripImagesForCandidate
+      ? stripImagesFromCurrentMessageContent(chatUserContent)
+      : chatUserContent;
+    const candidateResponsesUserContent = shouldStripImagesForCandidate
+      ? stripImagesFromCurrentMessageContent(responsesUserContent)
+      : responsesUserContent;
     console.log(
       `[LOG] ${candidateLabel}: ใช้ ${candidate.runtimeMode} กับโมเดล ${candidate.resolvedModel.model}`,
     );
@@ -14723,8 +14933,11 @@ async function runCommerceAssistantConversation(options = {}) {
       if (candidate.runtimeMode === "responses") {
         const mappedTools = mapChatToolsToResponses(enabledTools);
         const statelessInput = [
-          ...mapStoredHistoryToResponsesInput(history, candidate.resolvedModel.model),
-          { role: "user", content: responsesUserContent },
+          ...mapStoredHistoryToResponsesInput(
+            candidateHistory,
+            candidate.resolvedModel.model,
+          ),
+          { role: "user", content: candidateResponsesUserContent },
         ];
         let nextInput = [...statelessInput];
         let previousResponseId = null;
@@ -14820,8 +15033,8 @@ async function runCommerceAssistantConversation(options = {}) {
       } else {
         const messages = [
           buildChatInstructionMessage(candidate.resolvedModel.model, toolSystemInstructions),
-          ...(Array.isArray(history) ? history : []),
-          { role: "user", content: chatUserContent },
+          ...(Array.isArray(candidateHistory) ? candidateHistory : []),
+          { role: "user", content: candidateChatUserContent },
         ];
         let toolLoopCount = 0;
 
@@ -15084,19 +15297,69 @@ async function getAssistantResponseMultimodal(
   try {
     const selectedVisionModel =
       aiModel || (await getSettingValue("visionModel", DEFAULT_ASSISTANT_MODEL));
+    const botAiConfig = await fetchBotAiConfig(botId, platform);
+    const openRouterTestModel = botAiConfig.testModeEnabled
+      ? botAiConfig.testModel || DEFAULT_OPENROUTER_TEST_MODEL
+      : "";
+    const shouldPrepareOpenRouterVisionBridge =
+      botAiConfig.testModeEnabled &&
+      openRouterTestModel &&
+      !modelSupportsOpenRouterImageInput(openRouterTestModel);
     const maxImages = await getSettingValue("maxImagesPerMessage", 3);
     const { chatContent, responsesContent, imageCount } = buildMultimodalPayloads(
       contentSequence,
       maxImages,
-      selectedVisionModel,
+      shouldPrepareOpenRouterVisionBridge
+        ? OPENROUTER_TEST_IMAGE_ANALYSIS_MODEL
+        : selectedVisionModel,
     );
 
     const startedAt = Date.now();
+    let finalChatContent = chatContent;
+    let finalResponsesContent = responsesContent;
+    let finalHistory = history;
+    const visionBridgeUsage = createUsageAccumulator();
+
+    if (shouldPrepareOpenRouterVisionBridge && imageCount > 0) {
+      try {
+        const visionBridge = await summarizeOpenRouterImagesForTextModel({
+          chatContent,
+          botId,
+          platform,
+        });
+        addUsage(visionBridgeUsage, visionBridge.usage);
+        if (visionBridge.summary) {
+          finalChatContent = buildOpenRouterVisionBridgePrompt(
+            contentSequence,
+            visionBridge.summary,
+          );
+          finalResponsesContent = finalChatContent;
+          finalHistory = stripImagesFromHistoryMessages(history);
+          console.log(
+            `[LOG] OpenRouter Vision Bridge: อ่านรูปด้วย ${visionBridge.model || OPENROUTER_TEST_IMAGE_ANALYSIS_MODEL} ก่อนส่งต่อ ${openRouterTestModel}`,
+          );
+        } else {
+          finalChatContent = stripImagesFromCurrentMessageContent(chatContent);
+          finalResponsesContent = finalChatContent;
+          finalHistory = stripImagesFromHistoryMessages(history);
+          console.warn("[OpenRouter Vision Bridge] อ่านรูปไม่ได้ ใช้ข้อความที่มีแทน");
+        }
+      } catch (bridgeError) {
+        finalChatContent = stripImagesFromCurrentMessageContent(chatContent);
+        finalResponsesContent = finalChatContent;
+        finalHistory = stripImagesFromHistoryMessages(history);
+        console.warn(
+          "[OpenRouter Vision Bridge] อ่านรูปไม่สำเร็จ ใช้ข้อความที่มีแทน:",
+          bridgeError?.message || bridgeError,
+        );
+      }
+    }
+
     const result = await runCommerceAssistantConversationWithHistoryImageFallback({
       systemInstructions,
-      history,
-      chatUserContent: chatContent,
-      responsesUserContent: responsesContent,
+      history: finalHistory,
+      chatUserContent: finalChatContent,
+      responsesUserContent: finalResponsesContent,
       aiModel: selectedVisionModel,
       defaultSettingKey: "visionModel",
       defaultModel: DEFAULT_ASSISTANT_MODEL,
@@ -15107,6 +15370,9 @@ async function getAssistantResponseMultimodal(
       logLabel: "OpenAI Multimodal",
     });
     const latencyMs = Date.now() - startedAt;
+    if (visionBridgeUsage.total_tokens > 0 && result.usage) {
+      addUsage(result.usage, visionBridgeUsage);
+    }
 
     let finalReply = result.reply || "";
     if (result.usage?.total_tokens > 0) {
