@@ -40,3 +40,5 @@
 [194567842ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vlfwja13:0
 [194573150ms] [ERROR] Failed to load resource: net::ERR_ADDRESS_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vllqz273:0
 [194573203ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vll8ouro:0
+[196074280ms] [ERROR] Failed to load resource: net::ERR_INTERNET_DISCONNECTED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=whs8yisy:0
+[196075839ms] [ERROR] Failed to load resource: net::ERR_INTERNET_DISCONNECTED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=whtgnlyj:0
