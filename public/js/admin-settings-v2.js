@@ -43,7 +43,6 @@ const DEFAULT_OPENROUTER_TEST_MODEL = 'qwen/qwen3.6-plus';
 const OPENROUTER_TEST_MODELS = [
     { value: 'qwen/qwen3.6-plus', label: 'Qwen 3.6 Plus' },
     { value: 'qwen/qwen3.6-flash', label: 'Qwen 3.6 Flash' },
-    { value: 'qwen/qwen3.6-35b-a3b', label: 'Qwen 3.6 35B A3B' },
     { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
     { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
     { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
@@ -1702,15 +1701,8 @@ function buildReasoningEffortOptions(support, selectedEffort) {
 }
 
 function buildOpenRouterTestModelOptions(selectedValue) {
-    const selectedModel = typeof selectedValue === 'string' && selectedValue.trim()
-        ? selectedValue.trim()
-        : DEFAULT_OPENROUTER_TEST_MODEL;
-    const hasSelectedInPreset = OPENROUTER_TEST_MODELS.some(model => model.value === selectedModel);
+    const selectedModel = normalizeOpenRouterTestModelValue(selectedValue);
     const options = [];
-
-    if (!hasSelectedInPreset && selectedModel) {
-        options.push(`<option value="${escapeHtml(selectedModel)}" selected>${escapeHtml(selectedModel)} (กำหนดเอง)</option>`);
-    }
 
     OPENROUTER_TEST_MODELS.forEach((model) => {
         const selected = model.value === selectedModel ? ' selected' : '';
@@ -1718,6 +1710,15 @@ function buildOpenRouterTestModelOptions(selectedValue) {
     });
 
     return options.join('');
+}
+
+function normalizeOpenRouterTestModelValue(value) {
+    const model = typeof value === 'string' && value.trim()
+        ? value.trim()
+        : DEFAULT_OPENROUTER_TEST_MODEL;
+    return OPENROUTER_TEST_MODELS.some(option => option.value === model)
+        ? model
+        : DEFAULT_OPENROUTER_TEST_MODEL;
 }
 
 function buildOpenRouterReasoningOptions(selectedEffort) {
@@ -1761,7 +1762,7 @@ function readOpenRouterTestConfigFromUI(prefix) {
     return {
         testModeEnabled: getCheckboxValue(`${prefix}BotOpenRouterTestEnabled`),
         testProvider: 'openrouter',
-        testModel: getInputValue(`${prefix}BotOpenRouterTestModel`) || DEFAULT_OPENROUTER_TEST_MODEL,
+        testModel: normalizeOpenRouterTestModelValue(getInputValue(`${prefix}BotOpenRouterTestModel`)),
         testReasoningEffort: getInputValue(`${prefix}BotOpenRouterReasoningEffort`),
         testReasoningExclude: getCheckboxValue(`${prefix}BotOpenRouterReasoningExclude`) !== false
     };
@@ -2063,9 +2064,7 @@ function formatBotUpdatedAt(value) {
 function formatBotOpenRouterTestSummary(bot) {
     const cfg = bot?.aiConfig || {};
     if (cfg.testModeEnabled !== true) return '';
-    const model = typeof cfg.testModel === 'string' && cfg.testModel.trim()
-        ? cfg.testModel.trim()
-        : DEFAULT_OPENROUTER_TEST_MODEL;
+    const model = normalizeOpenRouterTestModelValue(cfg.testModel);
     const reasoning = typeof cfg.testReasoningEffort === 'string' && cfg.testReasoningEffort.trim()
         ? cfg.testReasoningEffort.trim()
         : 'default';

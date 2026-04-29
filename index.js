@@ -167,6 +167,14 @@ const LLM_PROVIDER_OPENROUTER = "openrouter";
 const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
 const DEFAULT_ORDER_EXTRACTION_MODEL = "gpt-5.4-nano";
 const DEFAULT_OPENROUTER_TEST_MODEL = "qwen/qwen3.6-plus";
+const OPENROUTER_TOOL_CAPABLE_TEST_MODELS = new Set([
+  "qwen/qwen3.6-plus",
+  "qwen/qwen3.6-flash",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v3.2",
+  "deepseek/deepseek-chat-v3.1",
+]);
 const runtimeConfig = getRuntimeConfig();
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
   process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
@@ -6009,8 +6017,16 @@ function normalizeAiConfig(raw = {}) {
     const effort = val.trim().toLowerCase();
     return allowedOpenRouterReasoningEfforts.includes(effort) ? effort : "";
   };
+  const normalizeOpenRouterTestModel = (val) => {
+    if (typeof val !== "string") return DEFAULT_OPENROUTER_TEST_MODEL;
+    const model = val.trim();
+    return OPENROUTER_TOOL_CAPABLE_TEST_MODELS.has(model)
+      ? model
+      : DEFAULT_OPENROUTER_TEST_MODEL;
+  };
 
   const apiMode = allowedModes.includes(raw.apiMode) ? raw.apiMode : "responses";
+  const rawOpenRouterTestModel = raw.testModel ?? raw.openRouterTestModel;
   const cfg = {
     apiMode,
     reasoningEffort: "",
@@ -6023,11 +6039,7 @@ function normalizeAiConfig(raw = {}) {
       false,
     ),
     testProvider: LLM_PROVIDER_OPENROUTER,
-    testModel:
-      typeof (raw.testModel ?? raw.openRouterTestModel) === "string" &&
-        (raw.testModel ?? raw.openRouterTestModel).trim()
-        ? (raw.testModel ?? raw.openRouterTestModel).trim()
-        : DEFAULT_OPENROUTER_TEST_MODEL,
+    testModel: normalizeOpenRouterTestModel(rawOpenRouterTestModel),
     testReasoningEffort: normalizeReasoningEffortValue(
       raw.testReasoningEffort ?? raw.openRouterReasoningEffort,
     ),
@@ -14640,9 +14652,18 @@ async function runCommerceAssistantConversation(options = {}) {
       };
     }
 
-    const candidateModel = isOpenRouterTest
+    let candidateModel = isOpenRouterTest
       ? botAiConfig.testModel || DEFAULT_OPENROUTER_TEST_MODEL
       : selectedModel;
+    if (
+      isOpenRouterTest &&
+      !OPENROUTER_TOOL_CAPABLE_TEST_MODELS.has(candidateModel)
+    ) {
+      console.warn(
+        `[OpenRouter Test] โมเดล ${candidateModel} ไม่รองรับ tools; ใช้ ${DEFAULT_OPENROUTER_TEST_MODEL} แทน`,
+      );
+      candidateModel = DEFAULT_OPENROUTER_TEST_MODEL;
+    }
     const resolvedModel = resolveModelForProvider(
       candidateModel,
       apiKeyToUse.provider,
@@ -23872,7 +23893,9 @@ app.get("/admin/settings", async (req, res) => {
 // Admin settings2 page (new modern design)
 app.get("/admin/settings2", async (req, res) => {
   try {
-    res.render("admin-settings-v2");
+    res.render("admin-settings-v2", {
+      assetVersion: Date.now().toString(36),
+    });
   } catch (err) {
     console.error("Error rendering admin settings2:", err);
     res.status(500).send("Internal Server Error");
