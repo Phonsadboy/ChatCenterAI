@@ -13666,6 +13666,43 @@ function buildChatInstructionMessage(modelId, content) {
   };
 }
 
+function buildCompactChatToolFollowupMessages({
+  modelId,
+  instructions,
+  currentUserContent,
+  toolTurnMessages,
+} = {}) {
+  const messages = [buildChatInstructionMessage(modelId, instructions)];
+  messages.push({
+    role: "user",
+    content: currentUserContent || "โปรดตอบลูกค้าจากผลลัพธ์ tool ล่าสุด",
+  });
+  if (Array.isArray(toolTurnMessages) && toolTurnMessages.length > 0) {
+    messages.push(...toolTurnMessages);
+  }
+  return messages;
+}
+
+function isTerminalCommerceToolResultMessage(message) {
+  if (!message || message.role !== "tool") return false;
+  if (!["create_order", "update_order"].includes(message.name)) return false;
+
+  try {
+    const result =
+      typeof message.content === "string"
+        ? JSON.parse(message.content)
+        : message.content;
+    return result?.success === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function shouldForceFinalTextAfterToolResult(toolTurnMessages) {
+  return Array.isArray(toolTurnMessages) &&
+    toolTurnMessages.some(isTerminalCommerceToolResultMessage);
+}
+
 function getResponsesReasoningSupport(modelId) {
   const normalized = normalizeModelIdentifier(modelId);
   if (
@@ -14281,7 +14318,7 @@ function getCommerceToolDefinitions() {
       function: {
         name: "get_orders",
         description:
-          "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
+          "Get existing orders for the current customer. Use ONLY when the customer asks about an existing order, wants to modify a previous order, or explicitly references an old/recent order. Do not call this before create_order for a clearly new order; create_order already checks duplicates.",
         parameters: {
           type: "object",
           properties: {
@@ -15036,14 +15073,27 @@ async function runCommerceAssistantConversation(options = {}) {
           ...(Array.isArray(candidateHistory) ? candidateHistory : []),
           { role: "user", content: candidateChatUserContent },
         ];
+        const compactToolTurnMessages = [];
         let toolLoopCount = 0;
 
         while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
+          const payloadMessages =
+            candidate.isOpenRouterTest && compactToolTurnMessages.length > 0
+              ? buildCompactChatToolFollowupMessages({
+                modelId: candidate.resolvedModel.model,
+                instructions: toolSystemInstructions,
+                currentUserContent: candidateChatUserContent,
+                toolTurnMessages: compactToolTurnMessages,
+              })
+              : messages;
+          const forceFinalText =
+            candidate.isOpenRouterTest &&
+            shouldForceFinalTextAfterToolResult(compactToolTurnMessages);
           const payload = {
             model: candidate.resolvedModel.model,
-            messages,
+            messages: payloadMessages,
             tools: enabledTools,
-            tool_choice: "auto",
+            tool_choice: forceFinalText ? "none" : "auto",
           };
 
           if (candidate.isOpenRouterTest) {
@@ -15072,6 +15122,7 @@ async function runCommerceAssistantConversation(options = {}) {
           }
 
           messages.push(responseMessage);
+          compactToolTurnMessages.push(responseMessage);
           console.log(
             `[LOG] ${candidateLabel}: AI ต้องการใช้ Tool ${responseMessage.tool_calls.length} calls`,
           );
@@ -15098,6 +15149,7 @@ async function runCommerceAssistantConversation(options = {}) {
               toolResult,
             );
             messages.push(toolResultMessage);
+            compactToolTurnMessages.push(toolResultMessage);
 
             await saveToolInteraction(
               userId,
