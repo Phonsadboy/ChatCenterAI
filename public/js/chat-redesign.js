@@ -1490,7 +1490,7 @@ class ChatManager {
         this.updateDebugPanel();
 
         // Mark as read
-        this.markAsRead(userId);
+        await this.markAsRead(userId);
     }
 
     updateChatHeader() {
@@ -2998,11 +2998,34 @@ class ChatManager {
 
     async markAsRead(userId) {
         try {
-            await fetch(`/admin/chat/mark-read/${userId}`, {
+            this.clearLocalUnreadState(userId);
+            const response = await fetch(`/admin/chat/mark-read/${encodeURIComponent(userId)}`, {
                 method: 'POST'
             });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || 'ไม่สามารถอัปเดตสถานะอ่านแล้วได้');
+            }
+            await this.loadUsers();
         } catch (error) {
             console.error('Error marking as read:', error);
+        }
+    }
+
+    clearLocalUnreadState(userId) {
+        let changed = false;
+        [this.allUsers, this.users].forEach((list) => {
+            if (!Array.isArray(list)) return;
+            list.forEach((user) => {
+                if (!user || user.userId !== userId) return;
+                if (Number(user.unreadCount || 0) > 0) {
+                    user.unreadCount = 0;
+                    changed = true;
+                }
+            });
+        });
+        if (changed) {
+            this.applyFilters();
         }
     }
 

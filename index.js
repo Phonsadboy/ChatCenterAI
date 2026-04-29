@@ -365,6 +365,11 @@ function getCachedAdminChatUsers(cacheKey) {
   return Array.isArray(cacheEntry.users) ? cacheEntry.users : null;
 }
 
+function invalidateAdminChatUsersCache() {
+  adminChatUsersCache.clear();
+  adminChatUsersInflight.clear();
+}
+
 function normalizeProvider(provider) {
   if (typeof provider !== "string") return LLM_PROVIDER_OPENAI;
   const normalized = provider.trim().toLowerCase();
@@ -26620,6 +26625,7 @@ app.get("/admin/chat", async (req, res) => {
         analysisEnabled,
         showInChat,
       },
+      assetVersion: Date.now().toString(36),
     });
   } catch (error) {
     console.error("[FollowUp] ไม่สามารถโหลดหน้าจัดการแชทได้:", error);
@@ -26628,6 +26634,7 @@ app.get("/admin/chat", async (req, res) => {
         analysisEnabled: false,
         showInChat: false,
       },
+      assetVersion: Date.now().toString(36),
     });
   }
 });
@@ -32772,7 +32779,7 @@ const OPENAI_MODEL_PRICING = {
   "gpt-5": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.1": { input: 1.25, cachedInput: 0.125, output: 10.0 },
   "gpt-5.4": { input: 2.5, cachedInput: 0.25, output: 15.0 },
-  "gpt-5.4-mini": { input: 0.75, cachedInput: 0.075, output: 4.5 },
+  "gpt-5.4-mini": { input: 1.0, cachedInput: 0.075, output: 6.0 },
   "gpt-5.4-nano": { input: 0.2, cachedInput: 0.02, output: 1.25 },
   "gpt-5.2": { input: 1.75, cachedInput: 0.175, output: 14.0 },
   "gpt-5.2-codex": { input: 1.75, cachedInput: 0.175, output: 14.0 },
@@ -35966,6 +35973,7 @@ async function notifyAdminsNewMessage(userId, message) {
       `,
       [userId],
     );
+    invalidateAdminChatUsersCache();
   } catch (error) {
     console.error("ไม่สามารถอัปเดต unread count ได้:", error);
   }
@@ -36007,6 +36015,7 @@ async function resetUserUnreadCount(userId) {
       `,
       [userId],
     );
+    invalidateAdminChatUsersCache();
   } catch (error) {
     console.error("ไม่สามารถรีเซ็ต unread count ได้:", error);
   }

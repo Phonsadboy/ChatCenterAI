@@ -32,3 +32,11 @@
 [177844690ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=ln26qduz&sid=DFCGw1ygtZ3pydsTAAUQ:0
 [177844692ms] [WARNING] WebSocket connection to 'wss://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=websocket&sid=DFCGw1ygtZ3pydsTAAUQ' failed: WebSocket is closed before the connection is established. @ https://web-production-8bd2f.up.railway.app/socket.io/socket.io.js:1435
 [177844692ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=ln26tbk4&sid=DFCGw1ygtZ3pydsTAAUQ:0
+[194554918ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vl6vbsiv:0
+[194555983ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vl705due:0
+[194561537ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vla22ajj:0
+[194562484ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vlaqb516:0
+[194567180ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vleqk9ga:0
+[194567842ms] [ERROR] Failed to load resource: net::ERR_CERT_AUTHORITY_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vlfwja13:0
+[194573150ms] [ERROR] Failed to load resource: net::ERR_ADDRESS_INVALID @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vllqz273:0
+[194573203ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ https://web-production-8bd2f.up.railway.app/socket.io/?EIO=4&transport=polling&t=vll8ouro:0
