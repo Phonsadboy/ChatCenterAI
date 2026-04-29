@@ -313,6 +313,13 @@ function createChatRepository({
   }
 
   async function insertPgMessage(client, context, messageDoc) {
+    const messageMetadata =
+      messageDoc?.metadata &&
+      typeof messageDoc.metadata === "object" &&
+      !Array.isArray(messageDoc.metadata)
+        ? { ...messageDoc.metadata }
+        : {};
+
     await client.query(
       `
         INSERT INTO messages (
@@ -347,6 +354,7 @@ function createChatRepository({
         JSON.stringify(normalizeJson(messageDoc?.instructionRefs, [])),
         JSON.stringify(normalizeJson(messageDoc?.instructionMeta, [])),
         JSON.stringify({
+          ...messageMetadata,
           botName: messageDoc?.botName || null,
           platform: normalizePlatform(messageDoc?.platform),
           senderId: toLegacyId(messageDoc?.senderId),

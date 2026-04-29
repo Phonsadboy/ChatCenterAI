@@ -1,0 +1,43 @@
+<% const botPrefix = typeof prefix === 'string' ? prefix : 'line'; %>
+<div class="mt-3 pt-3 border-top" id="<%= botPrefix %>BotOpenRouterTestConfig">
+    <div class="form-check form-switch mb-2">
+        <input class="form-check-input" type="checkbox"
+            id="<%= botPrefix %>BotOpenRouterTestEnabled">
+        <label class="form-check-label fw-semibold"
+            for="<%= botPrefix %>BotOpenRouterTestEnabled">
+            โหมดทดสอบ OpenRouter
+        </label>
+    </div>
+    <div class="form-text mb-2">
+        เปิดเฉพาะบอท/เพจนี้ ถ้าปิดจะใช้โมเดลหลักตามปกติ
+    </div>
+    <div id="<%= botPrefix %>BotOpenRouterTestBody" class="d-none">
+        <div class="row g-2">
+            <div class="col-md-7">
+                <label class="form-label mb-1"
+                    for="<%= botPrefix %>BotOpenRouterTestModel">OpenRouter model</label>
+                <select class="form-select form-select-sm"
+                    id="<%= botPrefix %>BotOpenRouterTestModel"></select>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label mb-1"
+                    for="<%= botPrefix %>BotOpenRouterReasoningEffort">reasoning</label>
+                <select class="form-select form-select-sm"
+                    id="<%= botPrefix %>BotOpenRouterReasoningEffort"></select>
+            </div>
+            <div class="col-12">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox"
+                        id="<%= botPrefix %>BotOpenRouterReasoningExclude" checked>
+                    <label class="form-check-label small"
+                        for="<%= botPrefix %>BotOpenRouterReasoningExclude">
+                        ไม่รับ thinking/reasoning กลับมาใน response
+                    </label>
+                </div>
+                <div class="form-text">
+                    ระบบจะส่ง tools ผ่าน Chat Completions ตาม schema OpenRouter และใช้เฉพาะ content จริงเป็นข้อความลูกค้า
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

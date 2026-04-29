@@ -126,6 +126,7 @@ const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 const OPENROUTER_HTTP_REFERER =
@@ -165,6 +166,7 @@ const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
 const DEFAULT_ORDER_EXTRACTION_MODEL = "gpt-5.4-nano";
+const DEFAULT_OPENROUTER_TEST_MODEL = "qwen/qwen3.6-plus";
 const runtimeConfig = getRuntimeConfig();
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
   process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
@@ -834,6 +836,15 @@ function buildBotRuntimeCacheKey(platform, botId = null) {
   return `${normalizedPlatform}:${normalizedBotId}`;
 }
 
+function buildApiKeyRuntimeCacheKey(platform, botId = null, provider = null) {
+  const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+  const providerKey =
+    typeof provider === "string" && provider.trim()
+      ? normalizeProvider(provider)
+      : "auto";
+  return `${runtimeKey}::key:${providerKey}`;
+}
+
 function normalizeInstructionSelectionCacheValue(selectedInstructions = []) {
   const normalizedSelections = normalizeLatestOnlyInstructionSelections(
     Array.isArray(selectedInstructions) ? selectedInstructions : [],
@@ -903,6 +914,7 @@ function invalidateBotRuntimeCaches(platform = null, botId = null) {
   runtimeBotSnapshotCache.delete(runtimeKey);
   runtimeBotAiConfigCache.delete(runtimeKey);
   runtimeOpenAIKeyCache.delete(runtimeKey);
+  clearCacheMapEntriesByPrefix(runtimeOpenAIKeyCache, `${runtimeKey}::`);
   clearCacheMapEntriesByPrefix(runtimePromptBaseCache, `${runtimeKey}::`);
 }
 
@@ -3003,6 +3015,9 @@ async function saveChatHistory(
       normalizedOptions.assistantSource.trim()
       ? normalizedOptions.assistantSource.trim()
       : "ai";
+  const assistantRuntime = normalizeAssistantRuntimeMetadata(
+    normalizedOptions.assistantRuntime,
+  );
   let userMsgToSave = typeof userMsg === "string" ? userMsg : userMsg;
 
   // Insert user message and emit to admin chat in realtime
@@ -3132,6 +3147,13 @@ async function saveChatHistory(
         ? { instructionMeta: normalizedInstructionMeta }
         : {}),
       ...(botName ? { botName } : {}),
+      ...(assistantRuntime
+        ? {
+          metadata: {
+            assistantRuntime,
+          },
+        }
+        : {}),
     };
     const savedAssistantMessage = await chatRepo.insertMessage(assistantMessageDoc);
     if (savedAssistantMessage?._id) {
@@ -5920,10 +5942,24 @@ const ORDER_BUFFER_COLLECTION = "order_extraction_buffers";
 
 function normalizeAiConfig(raw = {}) {
   const allowedModes = ["responses", "chat"];
+  const allowedOpenRouterReasoningEfforts = [
+    "",
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ];
   const parseNum = (val) => {
     if (val === undefined || val === null || val === "") return null;
     const num = Number(val);
     return Number.isFinite(num) ? num : null;
+  };
+  const normalizeReasoningEffortValue = (val) => {
+    if (typeof val !== "string") return "";
+    const effort = val.trim().toLowerCase();
+    return allowedOpenRouterReasoningEfforts.includes(effort) ? effort : "";
   };
 
   const apiMode = allowedModes.includes(raw.apiMode) ? raw.apiMode : "responses";
@@ -5934,6 +5970,23 @@ function normalizeAiConfig(raw = {}) {
     topP: null,
     presencePenalty: null,
     frequencyPenalty: null,
+    testModeEnabled: parseEnvBoolean(
+      raw.testModeEnabled ?? raw.openRouterTestModeEnabled,
+      false,
+    ),
+    testProvider: LLM_PROVIDER_OPENROUTER,
+    testModel:
+      typeof (raw.testModel ?? raw.openRouterTestModel) === "string" &&
+        (raw.testModel ?? raw.openRouterTestModel).trim()
+        ? (raw.testModel ?? raw.openRouterTestModel).trim()
+        : DEFAULT_OPENROUTER_TEST_MODEL,
+    testReasoningEffort: normalizeReasoningEffortValue(
+      raw.testReasoningEffort ?? raw.openRouterReasoningEffort,
+    ),
+    testReasoningExclude: parseEnvBoolean(
+      raw.testReasoningExclude ?? raw.openRouterReasoningExclude,
+      true,
+    ),
   };
 
   if (apiMode === "responses") {
@@ -5954,6 +6007,65 @@ function normalizeAiConfig(raw = {}) {
   }
 
   return cfg;
+}
+
+function normalizeAssistantRuntimeMetadata(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+
+  const metadata = {};
+  const stringFields = [
+    "type",
+    "provider",
+    "model",
+    "runtimeMode",
+    "apiMode",
+    "fallbackFromProvider",
+    "fallbackFromModel",
+    "fallbackReason",
+  ];
+
+  stringFields.forEach((field) => {
+    if (typeof raw[field] === "string" && raw[field].trim()) {
+      metadata[field] = raw[field].trim();
+    }
+  });
+
+  if (typeof raw.testModeEnabled === "boolean") {
+    metadata.testModeEnabled = raw.testModeEnabled;
+  }
+  if (typeof raw.reasoningExcluded === "boolean") {
+    metadata.reasoningExcluded = raw.reasoningExcluded;
+  }
+
+  const latencyMs = Number(raw.latencyMs ?? raw.responseMs ?? raw.durationMs);
+  if (Number.isFinite(latencyMs) && latencyMs >= 0) {
+    metadata.latencyMs = Math.round(latencyMs);
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : null;
+}
+
+function buildAssistantRuntimeMetadataForResult(result = {}, extra = {}) {
+  return normalizeAssistantRuntimeMetadata({
+    type: "ai",
+    provider: result.provider,
+    model: result.model,
+    runtimeMode: result.runtimeMode,
+    apiMode: result.runtimeMode,
+    testModeEnabled: result.testModeEnabled === true,
+    reasoningExcluded: result.reasoningExcluded === true,
+    fallbackFromProvider: result.fallbackFromProvider,
+    fallbackFromModel: result.fallbackFromModel,
+    fallbackReason: result.fallbackReason,
+    ...extra,
+  });
+}
+
+function buildStarterRuntimeMetadata(extra = {}) {
+  return normalizeAssistantRuntimeMetadata({
+    type: "starter",
+    ...extra,
+  });
 }
 
 function normalizeOrderPlatform(platform) {
@@ -9409,7 +9521,10 @@ async function processFlushedMessages(
             botIdForHistory,
             runtimeInstructionRefs,
             queueContext.botName,
-            buildHistoryOptions({ assistantSource: "instruction_starter" }),
+            buildHistoryOptions({
+              assistantSource: "instruction_starter",
+              assistantRuntime: buildStarterRuntimeMetadata(),
+            }),
           );
           return;
         }
@@ -9455,6 +9570,7 @@ async function processFlushedMessages(
   analyzeQueueContent(normalizedMergedContent);
 
   let assistantMsg = "";
+  let assistantRuntimeMetadata = null;
   const recoveryStrategies = [
     { key: "original", label: "ข้อมูลเดิมทั้งหมด" },
     { key: "drop_invalid_images", label: "ลบรูปภาพที่อาจมีปัญหา" },
@@ -9532,29 +9648,35 @@ async function processFlushedMessages(
       logHotPathDebug(
         `[LOG] ประมวลผลแบบ multimodal (กลยุทธ์ ${strategy.label}): ข้อความ ${textSegmentCount} ส่วน, รูปภาพ ${imageCount} รูป`,
       );
-      assistantMsg = await getAssistantResponseMultimodal(
+      const assistantResult = await getAssistantResponseMultimodal(
         systemInstructions,
         history,
         contentSequence,
         aiModelOverride,
         queueContext.botId,
         platform,
-        userId
+        userId,
+        { includeMetadata: true },
       );
+      assistantMsg = assistantResult?.reply || "";
+      assistantRuntimeMetadata = assistantResult?.metadata || null;
     } else {
       const preview = combinedText.substring(0, 100);
       logHotPathDebug(
         `[LOG] ประมวลผลข้อความอย่างเดียว (กลยุทธ์ ${strategy.label}): ${preview}${combinedText.length > 100 ? "..." : ""}`,
       );
-      assistantMsg = await getAssistantResponseTextOnly(
+      const assistantResult = await getAssistantResponseTextOnly(
         systemInstructions,
         history,
         combinedText,
         aiModelOverride,
         queueContext.botId,
         platform,
-        userId
+        userId,
+        { includeMetadata: true },
       );
+      assistantMsg = assistantResult?.reply || "";
+      assistantRuntimeMetadata = assistantResult?.metadata || null;
     }
 
     if (!assistantMsg) {
@@ -9583,7 +9705,7 @@ async function processFlushedMessages(
     botIdForHistory,
     runtimeInstructionRefs,
     queueContext.botName,
-    buildHistoryOptions(),
+    buildHistoryOptions({ assistantRuntime: assistantRuntimeMetadata }),
   );
 
   if (replyToken && isLinePlatform) {
@@ -13508,6 +13630,21 @@ function resolveResponsesReasoningConfig(modelId, requestedEffort) {
   return { effort: support.defaultEffort };
 }
 
+function resolveOpenRouterReasoningConfig(aiConfig = {}) {
+  const effort =
+    typeof aiConfig.testReasoningEffort === "string"
+      ? aiConfig.testReasoningEffort.trim().toLowerCase()
+      : "";
+  const reasoning = {};
+  if (effort) {
+    reasoning.effort = effort;
+  } else {
+    reasoning.enabled = true;
+  }
+  reasoning.exclude = aiConfig.testReasoningExclude !== false;
+  return reasoning;
+}
+
 function modelRequiresResponsesApi(modelId) {
   const normalized = normalizeModelIdentifier(modelId);
   return (
@@ -13543,6 +13680,12 @@ function applyChatSamplingConfig(payload, aiConfig, modelId) {
     payload.frequency_penalty = aiConfig.frequencyPenalty;
   }
 
+  return payload;
+}
+
+function applyOpenRouterReasoningConfig(payload, aiConfig) {
+  if (!payload || !aiConfig) return payload;
+  payload.reasoning = resolveOpenRouterReasoningConfig(aiConfig);
   return payload;
 }
 
@@ -13907,6 +14050,8 @@ function buildUsageSummaryText(usage, options = {}) {
 function trimAssistantReplyArtifacts(text) {
   let assistantReply =
     typeof text === "string" ? text : JSON.stringify(text || "");
+  assistantReply = assistantReply.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  assistantReply = assistantReply.replace(/^\s*<\/think>\s*/i, "");
   assistantReply = assistantReply.replace(/\[cut\]{2,}/g, "[cut]");
   const cutList = assistantReply.split("[cut]");
   if (cutList.length > 10) {
@@ -14411,251 +14556,376 @@ async function runCommerceAssistantConversation(options = {}) {
     logLabel = "OpenAI",
   } = options || {};
 
-  const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-  if (!apiKeyToUse.apiKey) {
+  const selectedModel =
+    aiModel || (await getSettingValue(defaultSettingKey, defaultModel));
+  const botAiConfig = await fetchBotAiConfig(botId, platform);
+  const toolSystemInstructions =
+    await appendOrderToolInstructions(systemInstructions);
+  const toolContext = { userId, platform, botId };
+
+  const resolveRuntimeCandidate = async (candidateType) => {
+    const isOpenRouterTest = candidateType === "openrouter_test";
+    const apiKeyToUse = await getOpenAIApiKeyForBot(
+      botId,
+      platform,
+      isOpenRouterTest
+        ? { preferredProvider: LLM_PROVIDER_OPENROUTER }
+        : {},
+    );
+
+    if (!apiKeyToUse.apiKey) {
+      return {
+        ok: false,
+        reason: isOpenRouterTest ? "missing_openrouter_key" : "missing_api_key",
+      };
+    }
+
+    const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      return {
+        ok: false,
+        reason: "client_unavailable",
+      };
+    }
+
+    const candidateModel = isOpenRouterTest
+      ? botAiConfig.testModel || DEFAULT_OPENROUTER_TEST_MODEL
+      : selectedModel;
+    const resolvedModel = resolveModelForProvider(
+      candidateModel,
+      apiKeyToUse.provider,
+    );
+    if (!resolvedModel.ok) {
+      return {
+        ok: false,
+        reason: "model_provider_mismatch",
+        error: resolvedModel.error,
+      };
+    }
+
+    const runtimeMode = isOpenRouterTest
+      ? "chat"
+      : shouldUseResponsesRuntime(
+        apiKeyToUse.provider,
+        botAiConfig.apiMode,
+        resolvedModel.model,
+      )
+        ? "responses"
+        : "chat";
+
+    return {
+      ok: true,
+      candidateType,
+      isOpenRouterTest,
+      apiKeyToUse,
+      openai,
+      resolvedModel,
+      runtimeMode,
+      reasoningExcluded:
+        isOpenRouterTest && botAiConfig.testReasoningExclude !== false,
+    };
+  };
+
+  const executeRuntimeCandidate = async (candidate) => {
+    const enabledTools = getEnabledCommerceTools();
+    const totalUsage = createUsageAccumulator();
+    let finalReplyText = "";
+    let actualModel = candidate.resolvedModel.model;
+    let responseModel = "";
+    let toolExecuted = false;
+
+    const candidateLabel = candidate.isOpenRouterTest
+      ? "OpenRouter Test"
+      : logLabel;
+    console.log(
+      `[LOG] ${candidateLabel}: ใช้ ${candidate.runtimeMode} กับโมเดล ${candidate.resolvedModel.model}`,
+    );
+
+    try {
+      if (candidate.runtimeMode === "responses") {
+        const mappedTools = mapChatToolsToResponses(enabledTools);
+        const statelessInput = [
+          ...mapStoredHistoryToResponsesInput(history, candidate.resolvedModel.model),
+          { role: "user", content: responsesUserContent },
+        ];
+        let nextInput = [...statelessInput];
+        let previousResponseId = null;
+        let toolLoopCount = 0;
+
+        while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
+          const payload = {
+            model: candidate.resolvedModel.model,
+            instructions: toolSystemInstructions,
+            input: previousResponseId ? nextInput : statelessInput,
+            tools: mappedTools,
+            tool_choice: "auto",
+          };
+          const reasoning = resolveResponsesReasoningConfig(
+            candidate.resolvedModel.model,
+            botAiConfig.reasoningEffort,
+          );
+          if (reasoning) {
+            payload.reasoning = reasoning;
+          }
+          if (previousResponseId) {
+            payload.previous_response_id = previousResponseId;
+          }
+
+          const response = await candidate.openai.responses.create(payload);
+          if (typeof response?.model === "string" && response.model.trim()) {
+            actualModel = response.model.trim();
+            responseModel = actualModel;
+          }
+          previousResponseId = response?.id || previousResponseId;
+          addUsage(totalUsage, mapResponsesUsage(response?.usage));
+
+          const toolCalls = extractResponsesFunctionCalls(response);
+          if (toolCalls.length === 0) {
+            finalReplyText = extractResponsesText(response);
+            break;
+          }
+
+          console.log(
+            `[LOG] ${candidateLabel}: AI ต้องการใช้ Tool ${toolCalls.length} calls`,
+          );
+
+          const assistantToolCallMessage = {
+            role: "assistant",
+            content: extractResponsesText(response),
+            tool_calls: toolCalls.map(mapResponseFunctionCallToChatToolCall),
+          };
+          const toolOutputs = [];
+          let isFirstToolCall = true;
+
+          for (const toolCall of toolCalls) {
+            const functionArgs = parseToolArguments(
+              toolCall.arguments,
+              toolCall.name,
+              candidateLabel,
+            );
+            console.log(
+              `[LOG] ${candidateLabel}: Executing Tool ${toolCall.name}`,
+              functionArgs,
+            );
+
+            toolExecuted = true;
+            const toolResult = await executeCommerceTool(
+              toolCall.name,
+              functionArgs,
+              toolContext,
+            );
+            const toolResultMessage = buildToolResultMessage(
+              toolCall.call_id,
+              toolCall.name,
+              toolResult,
+            );
+
+            toolOutputs.push({
+              type: "function_call_output",
+              call_id: toolCall.call_id,
+              output: toolResultMessage.content,
+            });
+
+            await saveToolInteraction(
+              userId,
+              isFirstToolCall ? assistantToolCallMessage : null,
+              toolResultMessage,
+              platform,
+              botId,
+            );
+            isFirstToolCall = false;
+          }
+
+          nextInput = toolOutputs;
+          toolLoopCount += 1;
+        }
+      } else {
+        const messages = [
+          buildChatInstructionMessage(candidate.resolvedModel.model, toolSystemInstructions),
+          ...(Array.isArray(history) ? history : []),
+          { role: "user", content: chatUserContent },
+        ];
+        let toolLoopCount = 0;
+
+        while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
+          const payload = {
+            model: candidate.resolvedModel.model,
+            messages,
+            tools: enabledTools,
+            tool_choice: "auto",
+          };
+
+          if (candidate.isOpenRouterTest) {
+            applyOpenRouterReasoningConfig(payload, botAiConfig);
+          } else {
+            applyChatSamplingConfig(payload, botAiConfig, candidate.resolvedModel.model);
+          }
+
+          const response = await candidate.openai.chat.completions.create(payload);
+          if (typeof response?.model === "string" && response.model.trim()) {
+            actualModel = response.model.trim();
+            responseModel = actualModel;
+          }
+          addUsage(totalUsage, mapChatUsage(response?.usage));
+          const responseMessage = response?.choices?.[0]?.message || {};
+
+          if (
+            !Array.isArray(responseMessage.tool_calls) ||
+            responseMessage.tool_calls.length === 0
+          ) {
+            finalReplyText =
+              typeof responseMessage.content === "string"
+                ? responseMessage.content
+                : JSON.stringify(responseMessage.content || "");
+            break;
+          }
+
+          messages.push(responseMessage);
+          console.log(
+            `[LOG] ${candidateLabel}: AI ต้องการใช้ Tool ${responseMessage.tool_calls.length} calls`,
+          );
+
+          let isFirstToolCall = true;
+          for (const toolCall of responseMessage.tool_calls) {
+            const functionArgs = parseToolArguments(
+              toolCall.function?.arguments,
+              toolCall.function?.name,
+              candidateLabel,
+            );
+            const toolName = toolCall.function?.name || "unknown_tool";
+            console.log(`[LOG] ${candidateLabel}: Executing Tool ${toolName}`, functionArgs);
+
+            toolExecuted = true;
+            const toolResult = await executeCommerceTool(
+              toolName,
+              functionArgs,
+              toolContext,
+            );
+            const toolResultMessage = buildToolResultMessage(
+              toolCall.id,
+              toolName,
+              toolResult,
+            );
+            messages.push(toolResultMessage);
+
+            await saveToolInteraction(
+              userId,
+              isFirstToolCall ? responseMessage : null,
+              toolResultMessage,
+              platform,
+              botId,
+            );
+            isFirstToolCall = false;
+          }
+
+          toolLoopCount += 1;
+        }
+      }
+    } catch (error) {
+      error.commerceToolExecuted = toolExecuted;
+      throw error;
+    }
+
+    if (!finalReplyText && totalUsage.total_tokens > 0) {
+      console.warn(`[${candidateLabel}] Tool loop limit reached`);
+      finalReplyText =
+        "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
+
+    const finalReply = extractThaiReply(
+      trimAssistantReplyArtifacts(finalReplyText),
+    ).trim();
+
+    if (totalUsage.total_tokens > 0) {
+      await logOpenAIUsage({
+        apiKeyId: candidate.apiKeyToUse.keyId,
+        botId,
+        platform,
+        provider: candidate.apiKeyToUse.provider,
+        model: actualModel || candidate.resolvedModel.model,
+        promptTokens: totalUsage.prompt_tokens,
+        completionTokens: totalUsage.completion_tokens,
+        totalTokens: totalUsage.total_tokens,
+        cachedPromptTokens: totalUsage.cached_prompt_tokens,
+        reasoningTokens: totalUsage.reasoning_tokens,
+        functionName,
+      });
+    }
+
+    return {
+      reply: finalReply,
+      usage: totalUsage,
+      model: responseModel,
+      provider: candidate.apiKeyToUse.provider,
+      runtimeMode: candidate.runtimeMode,
+      testModeEnabled: candidate.isOpenRouterTest,
+      reasoningExcluded: candidate.reasoningExcluded,
+    };
+  };
+
+  const candidates = [];
+  if (botAiConfig.testModeEnabled) {
+    const testCandidate = await resolveRuntimeCandidate("openrouter_test");
+    if (testCandidate.ok) {
+      candidates.push(testCandidate);
+    } else {
+      console.warn(
+        `[OpenRouter Test] ข้ามโหมดทดสอบ: ${testCandidate.error || testCandidate.reason}`,
+      );
+    }
+  }
+
+  const normalCandidate = await resolveRuntimeCandidate("normal");
+  if (normalCandidate.ok) {
+    candidates.push(normalCandidate);
+  } else if (!candidates.length) {
+    if (normalCandidate.reason === "model_provider_mismatch") {
+      console.warn(`[${logLabel}] ${normalCandidate.error}`);
+      return {
+        reply: "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน",
+        usage: createUsageAccumulator(),
+        model: "",
+        provider: "",
+        runtimeMode: "",
+      };
+    }
     console.warn(`[${logLabel}] No API key available`);
     return { reply: "", usage: createUsageAccumulator(), model: "" };
   }
 
-  const openai = buildLLMClientFromKey(apiKeyToUse);
-  if (!openai) {
-    console.warn(`[${logLabel}] Cannot create client for selected provider`);
-    return { reply: "", usage: createUsageAccumulator(), model: "" };
-  }
-
-  const selectedModel =
-    aiModel || (await getSettingValue(defaultSettingKey, defaultModel));
-  const resolvedModel = resolveModelForProvider(
-    selectedModel,
-    apiKeyToUse.provider,
-  );
-  if (!resolvedModel.ok) {
-    console.warn(`[${logLabel}] ${resolvedModel.error}`);
-    return {
-      reply: "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน",
-      usage: createUsageAccumulator(),
-      model: "",
-    };
-  }
-
-  const botAiConfig = await fetchBotAiConfig(botId, platform);
-  const runtimeMode = shouldUseResponsesRuntime(
-    apiKeyToUse.provider,
-    botAiConfig.apiMode,
-    resolvedModel.model,
-  )
-    ? "responses"
-    : "chat";
-  const enabledTools = getEnabledCommerceTools();
-  const totalUsage = createUsageAccumulator();
-  const toolSystemInstructions =
-    await appendOrderToolInstructions(systemInstructions);
-  const toolContext = { userId, platform, botId };
-  let finalReplyText = "";
-
-  console.log(`[LOG] ${logLabel}: ใช้ ${runtimeMode} กับโมเดล ${resolvedModel.model}`);
-
-  if (runtimeMode === "responses") {
-    const mappedTools = mapChatToolsToResponses(enabledTools);
-    const statelessInput = [
-      ...mapStoredHistoryToResponsesInput(history, resolvedModel.model),
-      { role: "user", content: responsesUserContent },
-    ];
-    let nextInput = [...statelessInput];
-    let previousResponseId = null;
-    let toolLoopCount = 0;
-
-    while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
-      const payload = {
-        model: resolvedModel.model,
-        instructions: toolSystemInstructions,
-        input: previousResponseId ? nextInput : statelessInput,
-        tools: mappedTools,
-        tool_choice: "auto",
+  let fallbackMeta = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    try {
+      const result = await executeRuntimeCandidate(candidate);
+      if (fallbackMeta && !candidate.isOpenRouterTest) {
+        return {
+          ...result,
+          ...fallbackMeta,
+          testModeEnabled: false,
+        };
+      }
+      return result;
+    } catch (error) {
+      const canFallback =
+        candidate.isOpenRouterTest &&
+        !error.commerceToolExecuted &&
+        index < candidates.length - 1;
+      if (!canFallback) {
+        throw error;
+      }
+      fallbackMeta = {
+        fallbackFromProvider: candidate.apiKeyToUse.provider,
+        fallbackFromModel: candidate.resolvedModel.model,
+        fallbackReason: error?.message || "openrouter_test_error",
       };
-      const reasoning = resolveResponsesReasoningConfig(
-        resolvedModel.model,
-        botAiConfig.reasoningEffort,
+      console.warn(
+        `[OpenRouter Test] ล้มเหลวก่อนเรียก tool, fallback ไปโหมดปกติ: ${fallbackMeta.fallbackReason}`,
       );
-      if (reasoning) {
-        payload.reasoning = reasoning;
-      }
-      if (previousResponseId) {
-        payload.previous_response_id = previousResponseId;
-      }
-
-      const response = await openai.responses.create(payload);
-      previousResponseId = response?.id || previousResponseId;
-      addUsage(totalUsage, mapResponsesUsage(response?.usage));
-
-      const toolCalls = extractResponsesFunctionCalls(response);
-      if (toolCalls.length === 0) {
-        finalReplyText = extractResponsesText(response);
-        break;
-      }
-
-      console.log(
-        `[LOG] ${logLabel}: AI ต้องการใช้ Tool ${toolCalls.length} calls`,
-      );
-
-      const assistantToolCallMessage = {
-        role: "assistant",
-        content: extractResponsesText(response),
-        tool_calls: toolCalls.map(mapResponseFunctionCallToChatToolCall),
-      };
-      const toolOutputs = [];
-      let isFirstToolCall = true;
-
-      for (const toolCall of toolCalls) {
-        const functionArgs = parseToolArguments(
-          toolCall.arguments,
-          toolCall.name,
-          logLabel,
-        );
-        console.log(
-          `[LOG] ${logLabel}: Executing Tool ${toolCall.name}`,
-          functionArgs,
-        );
-
-        const toolResult = await executeCommerceTool(
-          toolCall.name,
-          functionArgs,
-          toolContext,
-        );
-        const toolResultMessage = buildToolResultMessage(
-          toolCall.call_id,
-          toolCall.name,
-          toolResult,
-        );
-
-        toolOutputs.push({
-          type: "function_call_output",
-          call_id: toolCall.call_id,
-          output: toolResultMessage.content,
-        });
-
-        await saveToolInteraction(
-          userId,
-          isFirstToolCall ? assistantToolCallMessage : null,
-          toolResultMessage,
-          platform,
-          botId,
-        );
-        isFirstToolCall = false;
-      }
-
-      nextInput = toolOutputs;
-      toolLoopCount += 1;
-    }
-
-    if (!finalReplyText && totalUsage.total_tokens > 0) {
-      console.warn(`[${logLabel}] Tool loop limit reached`);
-      finalReplyText =
-        "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
-    }
-  } else {
-    const messages = [
-      buildChatInstructionMessage(resolvedModel.model, toolSystemInstructions),
-      ...(Array.isArray(history) ? history : []),
-      { role: "user", content: chatUserContent },
-    ];
-    let toolLoopCount = 0;
-
-    while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
-      const payload = {
-        model: resolvedModel.model,
-        messages,
-        tools: enabledTools,
-        tool_choice: "auto",
-      };
-
-      applyChatSamplingConfig(payload, botAiConfig, resolvedModel.model);
-
-      const response = await openai.chat.completions.create(payload);
-      addUsage(totalUsage, mapChatUsage(response?.usage));
-      const responseMessage = response?.choices?.[0]?.message || {};
-
-      if (
-        !Array.isArray(responseMessage.tool_calls) ||
-        responseMessage.tool_calls.length === 0
-      ) {
-        finalReplyText =
-          typeof responseMessage.content === "string"
-            ? responseMessage.content
-            : JSON.stringify(responseMessage.content || "");
-        break;
-      }
-
-      messages.push(responseMessage);
-      console.log(
-        `[LOG] ${logLabel}: AI ต้องการใช้ Tool ${responseMessage.tool_calls.length} calls`,
-      );
-
-      let isFirstToolCall = true;
-      for (const toolCall of responseMessage.tool_calls) {
-        const functionArgs = parseToolArguments(
-          toolCall.function?.arguments,
-          toolCall.function?.name,
-          logLabel,
-        );
-        const functionName = toolCall.function?.name || "unknown_tool";
-        console.log(`[LOG] ${logLabel}: Executing Tool ${functionName}`, functionArgs);
-
-        const toolResult = await executeCommerceTool(
-          functionName,
-          functionArgs,
-          toolContext,
-        );
-        const toolResultMessage = buildToolResultMessage(
-          toolCall.id,
-          functionName,
-          toolResult,
-        );
-        messages.push(toolResultMessage);
-
-        await saveToolInteraction(
-          userId,
-          isFirstToolCall ? responseMessage : null,
-          toolResultMessage,
-          platform,
-          botId,
-        );
-        isFirstToolCall = false;
-      }
-
-      toolLoopCount += 1;
-    }
-
-    if (!finalReplyText && totalUsage.total_tokens > 0) {
-      console.warn(`[${logLabel}] Tool loop limit reached`);
-      finalReplyText =
-        "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
     }
   }
 
-  const finalReply = extractThaiReply(trimAssistantReplyArtifacts(finalReplyText)).trim();
-
-  if (totalUsage.total_tokens > 0) {
-    await logOpenAIUsage({
-      apiKeyId: apiKeyToUse.keyId,
-      botId,
-      platform,
-      provider: apiKeyToUse.provider,
-      model: resolvedModel.model,
-      promptTokens: totalUsage.prompt_tokens,
-      completionTokens: totalUsage.completion_tokens,
-      totalTokens: totalUsage.total_tokens,
-      cachedPromptTokens: totalUsage.cached_prompt_tokens,
-      reasoningTokens: totalUsage.reasoning_tokens,
-      functionName,
-    });
-  }
-
-  return {
-    reply: finalReply,
-    usage: totalUsage,
-    model: resolvedModel.model,
-  };
+  return { reply: "", usage: createUsageAccumulator(), model: "" };
 }
 
 // ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
@@ -14666,10 +14936,12 @@ async function getAssistantResponseTextOnly(
   aiModel = null,
   botId = null,
   platform = null,
-  userId = null
+  userId = null,
+  options = {},
 ) {
   try {
     const safeUserText = sanitizeTextValue(userText, { maxLength: 8000 });
+    const startedAt = Date.now();
     const result = await runCommerceAssistantConversationWithHistoryImageFallback({
       systemInstructions,
       history,
@@ -14684,6 +14956,7 @@ async function getAssistantResponseTextOnly(
       functionName: "getAssistantResponseTextOnly",
       logLabel: "OpenAI Text",
     });
+    const latencyMs = Date.now() - startedAt;
 
     let finalReply = result.reply || "";
     if (result.usage?.total_tokens > 0) {
@@ -14696,9 +14969,25 @@ async function getAssistantResponseTextOnly(
       );
     }
 
-    return finalReply.trim();
+    const reply = finalReply.trim();
+    if (options?.includeMetadata === true) {
+      return {
+        reply,
+        usage: result.usage,
+        metadata: buildAssistantRuntimeMetadataForResult(result, { latencyMs }),
+      };
+    }
+
+    return reply;
   } catch (err) {
     console.error("OpenAI text error:", err);
+    if (options?.includeMetadata === true) {
+      return {
+        reply: "",
+        usage: createUsageAccumulator(),
+        metadata: null,
+      };
+    }
     return "";
   }
 }
@@ -14711,7 +15000,8 @@ async function getAssistantResponseMultimodal(
   aiModel = null,
   botId = null,
   platform = null,
-  userId = null
+  userId = null,
+  options = {},
 ) {
   try {
     const selectedVisionModel =
@@ -14723,6 +15013,7 @@ async function getAssistantResponseMultimodal(
       selectedVisionModel,
     );
 
+    const startedAt = Date.now();
     const result = await runCommerceAssistantConversationWithHistoryImageFallback({
       systemInstructions,
       history,
@@ -14737,6 +15028,7 @@ async function getAssistantResponseMultimodal(
       functionName: "getAssistantResponseMultimodal",
       logLabel: "OpenAI Multimodal",
     });
+    const latencyMs = Date.now() - startedAt;
 
     let finalReply = result.reply || "";
     if (result.usage?.total_tokens > 0) {
@@ -14749,9 +15041,25 @@ async function getAssistantResponseMultimodal(
       );
     }
 
-    return finalReply.trim();
+    const reply = finalReply.trim();
+    if (options?.includeMetadata === true) {
+      return {
+        reply,
+        usage: result.usage,
+        metadata: buildAssistantRuntimeMetadataForResult(result, { latencyMs }),
+      };
+    }
+
+    return reply;
   } catch (err) {
     console.error("OpenAI multimodal error:", err);
+    if (options?.includeMetadata === true) {
+      return {
+        reply: "",
+        usage: createUsageAccumulator(),
+        metadata: null,
+      };
+    }
     return "";
   }
 }
@@ -20391,6 +20699,7 @@ async function processFacebookMessageWithAI(
       : [];
 
     let assistantReply = "";
+    let assistantRuntimeMetadata = null;
 
     for (
       let attemptIndex = 0;
@@ -20447,29 +20756,35 @@ async function processFacebookMessageWithAI(
         console.log(
           `[Facebook AI] ประมวลผลแบบ multimodal (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length}) ภาพ ${imageCount} รูป`,
         );
-        assistantReply = await getAssistantResponseMultimodal(
+        const assistantResult = await getAssistantResponseMultimodal(
           systemPrompt,
           history,
           sanitizedSequence,
           aiModel,
           facebookBot._id.toString(),
           "facebook",
-          userId
+          userId,
+          { includeMetadata: true },
         );
+        assistantReply = assistantResult?.reply || "";
+        assistantRuntimeMetadata = assistantResult?.metadata || null;
       } else {
         const preview = combinedText.substring(0, 100);
         console.log(
           `[Facebook AI] ประมวลผลข้อความ (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length}): ${preview}${combinedText.length > 100 ? "..." : ""}`,
         );
-        assistantReply = await getAssistantResponseTextOnly(
+        const assistantResult = await getAssistantResponseTextOnly(
           systemPrompt,
           history,
           combinedText,
           aiModel,
           facebookBot._id.toString(),
           "facebook",
-          userId
+          userId,
+          { includeMetadata: true },
         );
+        assistantReply = assistantResult?.reply || "";
+        assistantRuntimeMetadata = assistantResult?.metadata || null;
       }
 
       if (!assistantReply) {
@@ -20492,7 +20807,10 @@ async function processFacebookMessageWithAI(
       facebookBot._id ? facebookBot._id.toString() : null,
       fbRuntimeInstructionContext.instructionRefs,
       facebookBot.name || null,
-      { instructionMeta: fbRuntimeInstructionContext.instructionMeta },
+      {
+        instructionMeta: fbRuntimeInstructionContext.instructionMeta,
+        assistantRuntime: assistantRuntimeMetadata,
+      },
     );
 
     return finalReply.trim();
@@ -32451,7 +32769,14 @@ function maskApiKey(apiKey) {
 }
 
 // Helper: Get API key for a bot (with fallback to default key or env var)
-async function getOpenAIApiKeyForBot(botId, platform) {
+async function getOpenAIApiKeyForBot(botId, platform, options = {}) {
+  const requestedProvider =
+    options &&
+    typeof options === "object" &&
+    typeof options.preferredProvider === "string" &&
+    options.preferredProvider.trim()
+      ? normalizeProvider(options.preferredProvider)
+      : null;
   const normalizeKeyPayload = (
     apiKey,
     keyId = null,
@@ -32496,9 +32821,38 @@ async function getOpenAIApiKeyForBot(botId, platform) {
       row?.provider || metadata?.provider || LLM_PROVIDER_OPENAI,
     );
   };
+  const rowMatchesRequestedProvider = (row = {}) => {
+    if (!requestedProvider) return true;
+    const metadata =
+      row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    return (
+      normalizeProvider(row?.provider || metadata?.provider) ===
+      requestedProvider
+    );
+  };
+  const buildEnvPayload = () => {
+    if (requestedProvider === LLM_PROVIDER_OPENROUTER) {
+      return normalizeKeyPayload(
+        OPENROUTER_API_KEY || null,
+        null,
+        OPENROUTER_API_KEY ? "OpenRouter Environment Variable" : null,
+        LLM_PROVIDER_OPENROUTER,
+      );
+    }
+    return normalizeKeyPayload(
+      OPENAI_API_KEY || null,
+      null,
+      OPENAI_API_KEY ? "Environment Variable" : null,
+      LLM_PROVIDER_OPENAI,
+    );
+  };
 
   try {
-    const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+    const runtimeKey = buildApiKeyRuntimeCacheKey(
+      platform,
+      botId,
+      requestedProvider,
+    );
     if (runtimeOpenAIKeyCache.has(runtimeKey)) {
       return runtimeOpenAIKeyCache.get(runtimeKey);
     }
@@ -32520,13 +32874,18 @@ async function getOpenAIApiKeyForBot(botId, platform) {
             FROM api_keys
             WHERE is_active = TRUE
               AND (id::text = $1 OR legacy_key_id = $1)
+              ${
+                requestedProvider
+                  ? "AND COALESCE(NULLIF(provider, ''), NULLIF(metadata->>'provider', ''), 'openai') = $2"
+                  : ""
+              }
             ORDER BY
               CASE WHEN id::text = $1 THEN 0 ELSE 1 END,
               is_default DESC,
               updated_at DESC
             LIMIT 1
           `,
-          [normalized],
+          requestedProvider ? [normalized, requestedProvider] : [normalized],
         );
         return result.rows[0] || null;
       };
@@ -32543,9 +32902,15 @@ async function getOpenAIApiKeyForBot(botId, platform) {
               metadata
             FROM api_keys
             WHERE is_active = TRUE
+              ${
+                requestedProvider
+                  ? "AND COALESCE(NULLIF(provider, ''), NULLIF(metadata->>'provider', ''), 'openai') = $1"
+                  : ""
+              }
             ORDER BY is_default DESC, updated_at DESC, created_at DESC
             LIMIT 1
           `,
+          requestedProvider ? [requestedProvider] : [],
         );
         return result.rows[0] || null;
       };
@@ -32568,19 +32933,14 @@ async function getOpenAIApiKeyForBot(botId, platform) {
 
       if (pgKeyRow) {
         const payload = buildPayloadFromPgRow(pgKeyRow);
-        if (payload.apiKey) {
+        if (payload.apiKey && rowMatchesRequestedProvider(pgKeyRow)) {
           runtimeOpenAIKeyCache.set(runtimeKey, payload);
           return payload;
         }
       }
 
-      if (OPENAI_API_KEY) {
-        const payload = normalizeKeyPayload(
-          OPENAI_API_KEY,
-          null,
-          "Environment Variable",
-          LLM_PROVIDER_OPENAI,
-        );
+      const payload = buildEnvPayload();
+      if (payload.apiKey) {
         runtimeOpenAIKeyCache.set(runtimeKey, payload);
         return payload;
       }
@@ -32591,13 +32951,8 @@ async function getOpenAIApiKeyForBot(botId, platform) {
     }
 
     // Final fallback to environment variable when PostgreSQL runtime is unavailable
-    if (OPENAI_API_KEY) {
-      const payload = normalizeKeyPayload(
-        OPENAI_API_KEY,
-        null,
-        "Environment Variable",
-        LLM_PROVIDER_OPENAI,
-      );
+    const payload = buildEnvPayload();
+    if (payload.apiKey) {
       runtimeOpenAIKeyCache.set(runtimeKey, payload);
       return payload;
     }
@@ -32607,12 +32962,14 @@ async function getOpenAIApiKeyForBot(botId, platform) {
     return emptyPayload;
   } catch (err) {
     console.error("[OpenAI Keys] Error getting API key for bot:", err);
-    return normalizeKeyPayload(
-      OPENAI_API_KEY || null,
-      null,
-      OPENAI_API_KEY ? "Environment Variable (fallback)" : null,
-      LLM_PROVIDER_OPENAI,
-    );
+    const payload = buildEnvPayload();
+    return {
+      ...payload,
+      keyName: payload.keyName
+        ? `${payload.keyName} (fallback)`
+        : payload.keyName,
+      name: payload.name ? `${payload.name} (fallback)` : payload.name,
+    };
   }
 }
 
@@ -35867,7 +36224,7 @@ function deriveFrontendMessageSemantics(message, options = {}) {
   ) {
     messageType = "admin-outbound";
     customerVisible = true;
-  } else if (source === "ai") {
+  } else if (source === "ai" || source === "instruction_starter") {
     messageType = "ai-outbound";
     customerVisible = true;
   }
@@ -36008,6 +36365,19 @@ function normalizeMessageForFrontend(message) {
       isToolResult,
     } = deriveFrontendMessageSemantics(message, { content });
 
+    const normalizedMetadata =
+      typeof message.metadata === "string" && message.metadata.trim()
+        ? message.metadata.trim()
+        : typeof message.metadata === "undefined"
+          ? null
+          : message.metadata;
+    const assistantRuntime =
+      normalizedMetadata &&
+      typeof normalizedMetadata === "object" &&
+      !Array.isArray(normalizedMetadata)
+        ? normalizeAssistantRuntimeMetadata(normalizedMetadata.assistantRuntime)
+        : null;
+
     return {
       content,
       role: message.role || "user",
@@ -36016,12 +36386,8 @@ function normalizeMessageForFrontend(message) {
         typeof message.source === "string" && message.source.trim()
           ? message.source.trim()
           : null,
-      metadata:
-        typeof message.metadata === "string" && message.metadata.trim()
-          ? message.metadata.trim()
-          : typeof message.metadata === "undefined"
-            ? null
-            : message.metadata,
+      metadata: normalizedMetadata,
+      ...(assistantRuntime ? { assistantRuntime } : {}),
       displayContent,
       richDisplayContent,
       contentType,

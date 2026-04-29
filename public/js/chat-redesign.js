@@ -1819,6 +1819,7 @@ class ChatManager {
         const contentHtml = hasTextContent
             ? `<div class="message-content">${this.escapeHtml(displayText)}</div>`
             : '';
+        const aiRuntimeMetaHtml = this.renderAiRuntimeMeta(message, semantics);
 
         let imagesHtml = '';
         if (message.images && message.images.length > 0) {
@@ -1854,6 +1855,7 @@ class ChatManager {
                             ${isSending ? '<i class="fas fa-spinner fa-spin me-1"></i>' : ''}
                             ${time}
                         </div>
+                        ${aiRuntimeMetaHtml}
                         ${showDeliveryStatus ? `<div class="message-meta">${this.renderDeliveryStatus(deliveryStatus)}</div>` : ''}
                     </div>
                 </div>
@@ -1868,6 +1870,57 @@ class ChatManager {
             read: 'ผู้ใช้เห็นข้อความแล้ว',
         };
         return map[status] || status;
+    }
+
+    getAssistantRuntimeMeta(message) {
+        if (!message || typeof message !== 'object') return null;
+        if (message.assistantRuntime && typeof message.assistantRuntime === 'object') {
+            return message.assistantRuntime;
+        }
+        const metadata = message.metadata;
+        if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+            const runtime = metadata.assistantRuntime;
+            if (runtime && typeof runtime === 'object' && !Array.isArray(runtime)) {
+                return runtime;
+            }
+        }
+        return null;
+    }
+
+    formatAiLatency(ms) {
+        const value = Number(ms);
+        if (!Number.isFinite(value) || value < 0) return '';
+        if (value < 1000) return `${Math.round(value)}ms`;
+        const seconds = value / 1000;
+        return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+    }
+
+    renderAiRuntimeMeta(message, semantics) {
+        const runtime = this.getAssistantRuntimeMeta(message);
+        const source = typeof message?.source === 'string' ? message.source.trim().toLowerCase() : '';
+        const isStarter = runtime?.type === 'starter' || source === 'instruction_starter';
+        const isAiMessage = semantics?.messageType === 'ai-outbound' || isStarter;
+        if (!isAiMessage) return '';
+
+        const chips = [];
+        if (isStarter) {
+            chips.push('<span class="message-runtime-chip">ข้อความเริ่มต้น</span>');
+        } else {
+            const model = typeof runtime?.model === 'string' ? runtime.model.trim() : '';
+            if (!model) return '';
+            const provider = typeof runtime?.provider === 'string' ? runtime.provider.trim().toUpperCase() : '';
+            const providerText = provider ? `[${provider}] ` : '';
+            chips.push(`<span class="message-runtime-chip">${this.escapeHtml(providerText + model)}</span>`);
+        }
+
+        const latencyText = this.formatAiLatency(runtime?.latencyMs);
+        if (latencyText) {
+            chips.push(`<span class="message-runtime-chip"><i class="fas fa-clock"></i> รอ ${this.escapeHtml(latencyText)}</span>`);
+        }
+
+        return chips.length > 0
+            ? `<div class="message-ai-runtime">${chips.join('')}</div>`
+            : '';
     }
 
     showTypingIndicator(platformLabel = '') {
@@ -3386,7 +3439,7 @@ class ChatManager {
                 messageType = 'followup';
             } else if ((source === 'admin_chat' || source === 'admin_page') && !isControlMessage) {
                 messageType = 'admin-outbound';
-            } else if (source === 'ai') {
+            } else if (source === 'ai' || source === 'instruction_starter') {
                 messageType = 'ai-outbound';
             } else {
                 messageType = 'system';

@@ -39,6 +39,15 @@ const BOT_REASONING_EFFORT_LABELS = {
     high: 'high',
     xhigh: 'xhigh'
 };
+const DEFAULT_OPENROUTER_TEST_MODEL = 'qwen/qwen3.6-plus';
+const OPENROUTER_TEST_MODELS = [
+    { value: 'qwen/qwen3.6-plus', label: 'Qwen 3.6 Plus' },
+    { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
+    { value: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1' }
+];
+const OPENROUTER_REASONING_EFFORTS = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 const CHAT_API_MODE_LABEL = 'Chat Completions API (compatibility: custom tools ได้, ไม่มี previous_response_id)';
 const CHAT_API_MODE_DISABLED_LABEL = 'Chat Completions API (รุ่นนี้รองรับผ่าน Responses เท่านั้น)';
 
@@ -302,6 +311,7 @@ function renderLineBots(bots) {
                 <div class="bot-subtext">
                     Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    ${formatBotOpenRouterTestSummary(bot)}
                     • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}
                 </div>
                 ${buildBotInlineControls(bot, 'line')}
@@ -355,6 +365,7 @@ function renderFacebookBots(bots) {
                 <div class="bot-subtext">
                     Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    ${formatBotOpenRouterTestSummary(bot)}
                     • Page: ${escapeHtml(bot.pageId || 'N/A')}
                 </div>
                 ${buildBotInlineControls(bot, 'facebook')}
@@ -395,6 +406,7 @@ function renderInstagramBots(bots) {
                 <div class="bot-subtext">
                     Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    ${formatBotOpenRouterTestSummary(bot)}
                     • IG ID: ${escapeHtml(bot.instagramUserId || bot.igUserId || bot.instagramBusinessAccountId || 'N/A')}
                 </div>
                 ${buildBotInlineControls(bot, 'instagram')}
@@ -435,6 +447,7 @@ function renderWhatsAppBots(bots) {
                 <div class="bot-subtext">
                     Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    ${formatBotOpenRouterTestSummary(bot)}
                     • Phone ID: ${escapeHtml(bot.phoneNumberId || bot.whatsappPhoneNumberId || 'N/A')}
                 </div>
                 ${buildBotInlineControls(bot, 'whatsapp')}
@@ -1562,7 +1575,12 @@ const defaultAiConfig = {
     temperature: '',
     topP: '',
     presencePenalty: '',
-    frequencyPenalty: ''
+    frequencyPenalty: '',
+    testModeEnabled: false,
+    testProvider: 'openrouter',
+    testModel: DEFAULT_OPENROUTER_TEST_MODEL,
+    testReasoningEffort: '',
+    testReasoningExclude: true
 };
 
 function normalizeRuntimeModelId(modelId) {
@@ -1681,6 +1699,72 @@ function buildReasoningEffortOptions(support, selectedEffort) {
     }).join('');
 }
 
+function buildOpenRouterTestModelOptions(selectedValue) {
+    const selectedModel = typeof selectedValue === 'string' && selectedValue.trim()
+        ? selectedValue.trim()
+        : DEFAULT_OPENROUTER_TEST_MODEL;
+    const hasSelectedInPreset = OPENROUTER_TEST_MODELS.some(model => model.value === selectedModel);
+    const options = [];
+
+    if (!hasSelectedInPreset && selectedModel) {
+        options.push(`<option value="${escapeHtml(selectedModel)}" selected>${escapeHtml(selectedModel)} (กำหนดเอง)</option>`);
+    }
+
+    OPENROUTER_TEST_MODELS.forEach((model) => {
+        const selected = model.value === selectedModel ? ' selected' : '';
+        options.push(`<option value="${escapeHtml(model.value)}"${selected}>${escapeHtml(model.label)} - ${escapeHtml(model.value)}</option>`);
+    });
+
+    return options.join('');
+}
+
+function buildOpenRouterReasoningOptions(selectedEffort) {
+    const normalized = typeof selectedEffort === 'string' ? selectedEffort.trim().toLowerCase() : '';
+    return OPENROUTER_REASONING_EFFORTS.map((effort) => {
+        const selected = effort === normalized ? ' selected' : '';
+        const label = effort
+            ? (BOT_REASONING_EFFORT_LABELS[effort] || effort)
+            : 'default - medium';
+        return `<option value="${escapeHtml(effort)}"${selected}>${escapeHtml(label)}</option>`;
+    }).join('');
+}
+
+function applyOpenRouterTestVisibility(prefix) {
+    const enabled = getCheckboxValue(`${prefix}BotOpenRouterTestEnabled`);
+    const body = document.getElementById(`${prefix}BotOpenRouterTestBody`);
+    if (body) body.classList.toggle('d-none', !enabled);
+}
+
+function setOpenRouterTestConfigUI(prefix, config = {}) {
+    const cfg = { ...defaultAiConfig, ...(config || {}) };
+    const modelSelect = document.getElementById(`${prefix}BotOpenRouterTestModel`);
+    const reasoningSelect = document.getElementById(`${prefix}BotOpenRouterReasoningEffort`);
+
+    setCheckboxValue(`${prefix}BotOpenRouterTestEnabled`, cfg.testModeEnabled === true);
+    if (modelSelect) {
+        modelSelect.innerHTML = buildOpenRouterTestModelOptions(cfg.testModel);
+        modelSelect.value = cfg.testModel || DEFAULT_OPENROUTER_TEST_MODEL;
+    }
+    if (reasoningSelect) {
+        reasoningSelect.innerHTML = buildOpenRouterReasoningOptions(cfg.testReasoningEffort);
+        reasoningSelect.value = typeof cfg.testReasoningEffort === 'string'
+            ? cfg.testReasoningEffort
+            : '';
+    }
+    setCheckboxValue(`${prefix}BotOpenRouterReasoningExclude`, cfg.testReasoningExclude !== false);
+    applyOpenRouterTestVisibility(prefix);
+}
+
+function readOpenRouterTestConfigFromUI(prefix) {
+    return {
+        testModeEnabled: getCheckboxValue(`${prefix}BotOpenRouterTestEnabled`),
+        testProvider: 'openrouter',
+        testModel: getInputValue(`${prefix}BotOpenRouterTestModel`) || DEFAULT_OPENROUTER_TEST_MODEL,
+        testReasoningEffort: getInputValue(`${prefix}BotOpenRouterReasoningEffort`),
+        testReasoningExclude: getCheckboxValue(`${prefix}BotOpenRouterReasoningExclude`) !== false
+    };
+}
+
 function getReasoningHelpText(support) {
     if (!support) {
         return 'ใช้เฉพาะ Responses';
@@ -1792,6 +1876,7 @@ function setAiConfigUI(prefix, config) {
     syncReasoningEffortSelect(prefix, cfg.reasoningEffort ?? '');
     applyAiModeVisibility(prefix, apiMode);
     updateReasoningVisibility(prefix);
+    setOpenRouterTestConfigUI(prefix, cfg);
 }
 
 function readAiConfigFromUI(prefix) {
@@ -1828,7 +1913,10 @@ function readAiConfigFromUI(prefix) {
         }
     }
 
-    return config;
+    return {
+        ...config,
+        ...readOpenRouterTestConfigFromUI(prefix)
+    };
 }
 
 function initAiModeListeners() {
@@ -1849,6 +1937,10 @@ function initAiModeListeners() {
                 updateReasoningVisibility(prefix);
                 updateChatSamplingVisibility(prefix);
             });
+        }
+        const openRouterEnabled = document.getElementById(`${prefix}BotOpenRouterTestEnabled`);
+        if (openRouterEnabled) {
+            openRouterEnabled.addEventListener('change', () => applyOpenRouterTestVisibility(prefix));
         }
     });
 }
@@ -1964,6 +2056,18 @@ function formatBotUpdatedAt(value) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+
+function formatBotOpenRouterTestSummary(bot) {
+    const cfg = bot?.aiConfig || {};
+    if (cfg.testModeEnabled !== true) return '';
+    const model = typeof cfg.testModel === 'string' && cfg.testModel.trim()
+        ? cfg.testModel.trim()
+        : DEFAULT_OPENROUTER_TEST_MODEL;
+    const reasoning = typeof cfg.testReasoningEffort === 'string' && cfg.testReasoningEffort.trim()
+        ? cfg.testReasoningEffort.trim()
+        : 'default';
+    return `• Test: OpenRouter ${escapeHtml(model)} (${escapeHtml(reasoning)})`;
 }
 
 // --- Instruction selection helpers ---
