@@ -43,6 +43,7 @@ const DEFAULT_OPENROUTER_TEST_MODEL = 'qwen/qwen3.6-plus';
 const OPENROUTER_TEST_MODELS = [
     { value: 'qwen/qwen3.6-plus', label: 'Qwen 3.6 Plus' },
     { value: 'qwen/qwen3.6-flash', label: 'Qwen 3.6 Flash' },
+    { value: 'qwen/qwen3.6-35b-a3b', label: 'Qwen 3.6 35B A3B' },
     { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
     { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
     { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
