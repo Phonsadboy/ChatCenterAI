@@ -13681,23 +13681,6 @@ function buildChatInstructionMessage(modelId, content) {
   };
 }
 
-function buildCompactChatToolFollowupMessages({
-  modelId,
-  instructions,
-  currentUserContent,
-  toolTurnMessages,
-} = {}) {
-  const messages = [buildChatInstructionMessage(modelId, instructions)];
-  messages.push({
-    role: "user",
-    content: currentUserContent || "โปรดตอบลูกค้าจากผลลัพธ์ tool ล่าสุด",
-  });
-  if (Array.isArray(toolTurnMessages) && toolTurnMessages.length > 0) {
-    messages.push(...toolTurnMessages);
-  }
-  return messages;
-}
-
 function isTerminalCommerceToolResultMessage(message) {
   if (!message || message.role !== "tool") return false;
   if (!["create_order", "update_order"].includes(message.name)) return false;
@@ -15090,25 +15073,16 @@ async function runCommerceAssistantConversation(options = {}) {
           ...(Array.isArray(candidateHistory) ? candidateHistory : []),
           { role: "user", content: candidateChatUserContent },
         ];
-        const compactToolTurnMessages = [];
+        const currentToolTurnMessages = [];
         let toolLoopCount = 0;
 
         while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
-          const payloadMessages =
-            candidate.isOpenRouterTest && compactToolTurnMessages.length > 0
-              ? buildCompactChatToolFollowupMessages({
-                modelId: candidate.resolvedModel.model,
-                instructions: toolSystemInstructions,
-                currentUserContent: candidateChatUserContent,
-                toolTurnMessages: compactToolTurnMessages,
-              })
-              : messages;
           const forceFinalText =
             candidate.isOpenRouterTest &&
-            shouldForceFinalTextAfterToolResult(compactToolTurnMessages);
+            shouldForceFinalTextAfterToolResult(currentToolTurnMessages);
           const payload = {
             model: candidate.resolvedModel.model,
-            messages: payloadMessages,
+            messages,
             tools: enabledTools,
             tool_choice: forceFinalText ? "none" : "auto",
           };
@@ -15139,7 +15113,7 @@ async function runCommerceAssistantConversation(options = {}) {
           }
 
           messages.push(responseMessage);
-          compactToolTurnMessages.push(responseMessage);
+          currentToolTurnMessages.push(responseMessage);
           console.log(
             `[LOG] ${candidateLabel}: AI ต้องการใช้ Tool ${responseMessage.tool_calls.length} calls`,
           );
@@ -15166,7 +15140,7 @@ async function runCommerceAssistantConversation(options = {}) {
               toolResult,
             );
             messages.push(toolResultMessage);
-            compactToolTurnMessages.push(toolResultMessage);
+            currentToolTurnMessages.push(toolResultMessage);
 
             await saveToolInteraction(
               userId,
