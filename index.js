@@ -877,6 +877,50 @@ const runtimeAssetsTextCache = new Map();
 const runtimeAssetsMapCache = new Map();
 const runtimeOpenAIKeyCache = new Map();
 const runtimeBotAiConfigCache = new Map();
+const RUNTIME_BOT_CACHE_TTL_MS = Math.max(
+  1000,
+  Number(process.env.CCAI_RUNTIME_BOT_CACHE_TTL_MS || 15000),
+);
+
+function getTimedRuntimeCacheValue(cacheMap, key) {
+  if (!cacheMap || !cacheMap.has(key)) {
+    return { hit: false, value: null };
+  }
+
+  const entry = cacheMap.get(key);
+  if (
+    !entry ||
+    typeof entry !== "object" ||
+    !Object.prototype.hasOwnProperty.call(entry, "expiresAt")
+  ) {
+    cacheMap.delete(key);
+    return { hit: false, value: null };
+  }
+
+  if (Number(entry.expiresAt) <= Date.now()) {
+    cacheMap.delete(key);
+    return { hit: false, value: null };
+  }
+
+  return { hit: true, value: entry.value };
+}
+
+function setTimedRuntimeCacheValue(
+  cacheMap,
+  key,
+  value,
+  ttlMs = RUNTIME_BOT_CACHE_TTL_MS,
+) {
+  if (!cacheMap || !key) return;
+  const normalizedTtlMs = Math.max(
+    1000,
+    Number(ttlMs) || RUNTIME_BOT_CACHE_TTL_MS,
+  );
+  cacheMap.set(key, {
+    value,
+    expiresAt: Date.now() + normalizedTtlMs,
+  });
+}
 
 function clearCacheMapEntriesByPrefix(cacheMap, prefix) {
   if (!cacheMap || !prefix) return;
@@ -933,8 +977,12 @@ async function getBotRuntimeSnapshot(botId, platform) {
   if (!botId) return null;
 
   const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
-  if (runtimeBotSnapshotCache.has(runtimeKey)) {
-    return runtimeBotSnapshotCache.get(runtimeKey);
+  const cachedSnapshot = getTimedRuntimeCacheValue(
+    runtimeBotSnapshotCache,
+    runtimeKey,
+  );
+  if (cachedSnapshot.hit) {
+    return cachedSnapshot.value;
   }
 
   try {
@@ -953,7 +1001,7 @@ async function getBotRuntimeSnapshot(botId, platform) {
       }
       : null;
 
-    runtimeBotSnapshotCache.set(runtimeKey, snapshot);
+    setTimedRuntimeCacheValue(runtimeBotSnapshotCache, runtimeKey, snapshot);
     return snapshot;
   } catch (error) {
     console.error("[RuntimeCache] ไม่สามารถดึง bot runtime snapshot ได้:", error);
@@ -13508,14 +13556,18 @@ async function fetchBotAiConfig(botId, platform) {
   try {
     if (!botId) return normalizeAiConfig({});
     const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
-    if (runtimeBotAiConfigCache.has(runtimeKey)) {
-      return runtimeBotAiConfigCache.get(runtimeKey);
+    const cachedConfig = getTimedRuntimeCacheValue(
+      runtimeBotAiConfigCache,
+      runtimeKey,
+    );
+    if (cachedConfig.hit) {
+      return cachedConfig.value;
     }
     const snapshot = await getBotRuntimeSnapshot(botId, platform);
     const config = snapshot?.aiConfig
       ? normalizeAiConfig(snapshot.aiConfig)
       : normalizeAiConfig({});
-    runtimeBotAiConfigCache.set(runtimeKey, config);
+    setTimedRuntimeCacheValue(runtimeBotAiConfigCache, runtimeKey, config);
     return config;
   } catch (err) {
     console.error("fetchBotAiConfig error:", err);
@@ -32725,6 +32777,7 @@ const OPENAI_MODEL_PRICING = {
   // Default fallback
   default: { input: 1.0, cachedInput: null, output: 4.0 },
 };
+const OPENROUTER_USAGE_PRICING_MODEL = "gpt-5.4-mini";
 
 function resolveOpenAIPricingKey(model) {
   const normalizedModel = normalizeModelIdentifier(model);
@@ -32760,6 +32813,33 @@ function calculateOpenAICost(
   const cachedInputCost = (cachedTokens / 1000000) * cachedInputRate;
   const outputCost = (completionTokens / 1000000) * pricing.output;
   return inputCost + cachedInputCost + outputCost;
+}
+
+function resolveUsagePricingModel(model, provider) {
+  const normalizedProvider = normalizeProvider(provider);
+  if (normalizedProvider === LLM_PROVIDER_OPENROUTER) {
+    return OPENROUTER_USAGE_PRICING_MODEL;
+  }
+  return model;
+}
+
+function resolveBillableCompletionTokens({
+  promptTokens,
+  completionTokens,
+  totalTokens,
+  reasoningTokens,
+}) {
+  const promptCount = Math.max(0, Number(promptTokens) || 0);
+  const completionCount = Math.max(0, Number(completionTokens) || 0);
+  const totalCount = Math.max(0, Number(totalTokens) || 0);
+  const reasoningCount = Math.max(0, Number(reasoningTokens) || 0);
+  const inferredOutputTokens = Math.max(0, totalCount - promptCount);
+  const outputWithReasoning =
+    reasoningCount > completionCount
+      ? completionCount + reasoningCount
+      : completionCount;
+
+  return Math.max(completionCount, inferredOutputTokens, outputWithReasoning);
 }
 
 // Helper: Mask API key for display
@@ -32853,8 +32933,12 @@ async function getOpenAIApiKeyForBot(botId, platform, options = {}) {
       botId,
       requestedProvider,
     );
-    if (runtimeOpenAIKeyCache.has(runtimeKey)) {
-      return runtimeOpenAIKeyCache.get(runtimeKey);
+    const cachedKeyPayload = getTimedRuntimeCacheValue(
+      runtimeOpenAIKeyCache,
+      runtimeKey,
+    );
+    if (cachedKeyPayload.hit) {
+      return cachedKeyPayload.value;
     }
 
     if (isPostgresConfigured()) {
@@ -32934,31 +33018,31 @@ async function getOpenAIApiKeyForBot(botId, platform, options = {}) {
       if (pgKeyRow) {
         const payload = buildPayloadFromPgRow(pgKeyRow);
         if (payload.apiKey && rowMatchesRequestedProvider(pgKeyRow)) {
-          runtimeOpenAIKeyCache.set(runtimeKey, payload);
+          setTimedRuntimeCacheValue(runtimeOpenAIKeyCache, runtimeKey, payload);
           return payload;
         }
       }
 
       const payload = buildEnvPayload();
       if (payload.apiKey) {
-        runtimeOpenAIKeyCache.set(runtimeKey, payload);
+        setTimedRuntimeCacheValue(runtimeOpenAIKeyCache, runtimeKey, payload);
         return payload;
       }
 
       const emptyPayload = normalizeKeyPayload(null, null, null);
-      runtimeOpenAIKeyCache.set(runtimeKey, emptyPayload);
+      setTimedRuntimeCacheValue(runtimeOpenAIKeyCache, runtimeKey, emptyPayload);
       return emptyPayload;
     }
 
     // Final fallback to environment variable when PostgreSQL runtime is unavailable
     const payload = buildEnvPayload();
     if (payload.apiKey) {
-      runtimeOpenAIKeyCache.set(runtimeKey, payload);
+      setTimedRuntimeCacheValue(runtimeOpenAIKeyCache, runtimeKey, payload);
       return payload;
     }
 
     const emptyPayload = normalizeKeyPayload(null, null, null);
-    runtimeOpenAIKeyCache.set(runtimeKey, emptyPayload);
+    setTimedRuntimeCacheValue(runtimeOpenAIKeyCache, runtimeKey, emptyPayload);
     return emptyPayload;
   } catch (err) {
     console.error("[OpenAI Keys] Error getting API key for bot:", err);
@@ -32989,16 +33073,20 @@ async function logOpenAIUsage(data) {
     const reasoningCount = Number(reasoningTokens) || 0;
     const totalCount =
       Number(totalTokens) || (promptCount + completionCount);
-    const pricingKey = resolveOpenAIPricingKey(model);
-    const estimatedCost =
-      normalizedProvider === LLM_PROVIDER_OPENROUTER
-        ? null
-        : calculateOpenAICost(
-          model,
-          promptCount,
-          completionCount,
-          cachedPromptCount,
-        );
+    const pricingModel = resolveUsagePricingModel(model, normalizedProvider);
+    const pricingKey = resolveOpenAIPricingKey(pricingModel);
+    const billableCompletionCount = resolveBillableCompletionTokens({
+      promptTokens: promptCount,
+      completionTokens: completionCount,
+      totalTokens: totalCount,
+      reasoningTokens: reasoningCount,
+    });
+    const estimatedCost = calculateOpenAICost(
+      pricingModel,
+      promptCount,
+      billableCompletionCount,
+      cachedPromptCount,
+    );
 
     if (isPostgresConfigured()) {
       let resolvedPgApiKeyId = null;
@@ -33078,6 +33166,8 @@ async function logOpenAIUsage(data) {
             functionName: functionName || null,
             estimatedCost,
             pricingModel: pricingKey,
+            actualModel: model || null,
+            billableCompletionTokens: billableCompletionCount,
             cachedPromptTokens: cachedPromptCount,
             reasoningTokens: reasoningCount,
             legacyApiKeyId: normalizedApiKeyId || null,
