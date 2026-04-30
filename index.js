@@ -27264,6 +27264,8 @@ ${dataItemsSummary}
 - **update_followup_round** — แก้ข้อความหรือ delay ของแต่ละ round
 - **manage_followup_images** — เพิ่ม/ลบรูปใน round (ต้อง list_followup_assets ก่อนเพื่อดู assetId)
 - **list_followup_assets** — ดูรูปภาพที่อัปโหลดไว้
+- สำหรับ write tools ของ Follow-Up ถ้าผู้ใช้ไม่ได้ระบุชัดว่าแก้ global/ทุกเพจ/ทั้งหมด ให้ถือว่าเป็นงานเฉพาะเพจ: เรียก list_followup_pages หรือถามหาเพจก่อน และส่ง pageKeys เสมอเมื่อแก้เฉพาะเพจ
+- ห้ามปล่อย pageKeys ว่างในการแก้ Follow-Up จากคำสั่งกำกวม เพราะจะกลายเป็นการแก้ config กลาง
 
 # วิเคราะห์ประวัติสนทนา (Conversation Analytics)
 เมื่อผู้ใช้ถามเรื่อง performance ของ instruction, conversion, ลูกค้าซื้อ/ไม่ซื้อ, ขอเคสตัวอย่าง, หรืออยากดูบทสนทนาจริง:
