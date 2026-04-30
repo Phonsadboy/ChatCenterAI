@@ -434,6 +434,7 @@ function normalizeIdList(values = []) {
 }
 
 function parseNonNegativeInteger(value, fallback = null) {
+  if (value === null || value === undefined || value === "") return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   const normalized = Math.floor(parsed);
