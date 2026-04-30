@@ -308,8 +308,8 @@ async function run() {
     },
   );
   const missingImagePreflight = await service.preflightBatch({ changes: [missingImageProposal] });
-  assert.strictEqual(missingImagePreflight.ok, false);
-  assert.ok(missingImagePreflight.errors.some((error) => error.error === "invalid_image_references"));
+  assert.strictEqual(missingImagePreflight.ok, true);
+  assert.ok(missingImagePreflight.warnings.some((warning) => warning.type === "invalid_image_references"));
 
   service.proposals = [await service.createProposalBase(
     "507f1f77bcf86cd799439011",

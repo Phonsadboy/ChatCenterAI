@@ -2878,10 +2878,10 @@ class InstructionAI2Service {
       });
       const imageIssues = await this.findImageReferenceIssuesForDataItems(simulatedItems);
       if (imageIssues.missing.length || imageIssues.duplicates.length) {
-        errors.push({
+        warnings.push({
           changeId: changes[changes.length - 1]?.changeId,
-          error: "invalid_image_references",
-          message: "มี image token/ชื่อรูปใน instruction ที่ resolve ไม่ได้หรือชื่อซ้ำ ต้องแก้ก่อน commit",
+          type: "invalid_image_references",
+          message: "มี image token/ชื่อรูปใน instruction ที่ resolve ไม่ได้หรือชื่อซ้ำ ระบบจะยังอนุมัติได้ แต่ควรตรวจรูปก่อนใช้งานจริง",
           instructionObjectId,
           missing: imageIssues.missing,
           duplicates: imageIssues.duplicates,
@@ -2912,7 +2912,13 @@ class InstructionAI2Service {
         if (normalizeImageLabel(label)) {
           const assets = await this.listImageAssets();
           const matches = assets.filter((asset) => asset.normalizedLabel === normalizeImageLabel(label));
-          if (matches.length !== 1) errors.push({ changeId: change.changeId, error: "image_label_not_unique", label });
+          if (matches.length !== 1) warnings.push({
+            changeId: change.changeId,
+            type: "image_label_not_unique",
+            label,
+            matchCount: matches.length,
+            message: "ชื่อรูปใน catalog ยัง resolve เป็น asset เดียวไม่ได้ ระบบจะบันทึก token ได้ แต่ image usage อาจยังไม่ถูกผูกจนกว่าจะแก้ชื่อรูป",
+          });
         }
       }
       if (change.operation === "asset.delete") {
