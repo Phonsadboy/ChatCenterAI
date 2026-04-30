@@ -133,6 +133,12 @@ async function run() {
     assistantName: "น้องทิพย์",
     pageName: "น้ำมันทิพยมนต์",
   });
+  template[1].data.rows = Array.from({ length: 120 }, (_, index) => [
+    `โปร ${index + 1}`,
+    `รายละเอียดโปร ${index + 1}`,
+    `${index + 1}00`,
+    "",
+  ]);
   assert.strictEqual(template.length, 3);
   assert.strictEqual(template[0].type, "text");
   assert.strictEqual(template[1].type, "table");
@@ -233,6 +239,18 @@ async function run() {
   assert.strictEqual(dataSnapshot.dataItems.length, 1);
   assert.strictEqual(dataSnapshot.dataItems[0].returnedRows, template[1].data.rows.length);
   assert.ok(service.readTrace.some((entry) => entry.type === "instruction_data_snapshot"));
+
+  const rangedRows = await service.executeTool("507f1f77bcf86cd799439011", "get_rows", {
+    itemId: template[1].itemId,
+    rowNumberStart: 50,
+    rowNumberEnd: 100,
+  });
+  assert.strictEqual(rangedRows.success, true);
+  assert.strictEqual(rangedRows.totalRows, 120);
+  assert.strictEqual(rangedRows.returnedRows, 51);
+  assert.strictEqual(rangedRows.rows[0].rowNumber, 50);
+  assert.strictEqual(rangedRows.rows[0].rowIndex, 49);
+  assert.strictEqual(rangedRows.rows.at(-1).rowNumber, 100);
 
   const guardedService = new InstructionAI2Service(fakeDb);
   await guardedService.buildInventory("507f1f77bcf86cd799439011");

@@ -9,7 +9,6 @@ const {
 
 const DEFAULT_AI2_MODEL = "gpt-5.5";
 const DEFAULT_AI2_THINKING = "medium";
-const MAX_AI2_TOOL_ITERATIONS = 16;
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024, files: 10 },
@@ -452,6 +451,9 @@ function createInstructionAI2Router(deps = {}) {
     res.setHeader("Content-Encoding", "identity");
     res.setHeader("X-Instruction-AI2-Request-Id", requestId);
     if (typeof res.flushHeaders === "function") res.flushHeaders();
+    if (typeof req.setTimeout === "function") req.setTimeout(0);
+    if (typeof res.setTimeout === "function") res.setTimeout(0);
+    if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
     if (!state) {
       try {
         const client = await connectDB();
@@ -517,6 +519,9 @@ function createInstructionAI2Router(deps = {}) {
     res.setHeader("Content-Encoding", "identity");
     res.setHeader("X-Instruction-AI2-Request-Id", requestId);
     if (typeof res.flushHeaders === "function") res.flushHeaders();
+    if (typeof req.setTimeout === "function") req.setTimeout(0);
+    if (typeof res.setTimeout === "function") res.setTimeout(0);
+    if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
 
     const requestState = {
       requestId,
@@ -1004,8 +1009,8 @@ function createInstructionAI2Router(deps = {}) {
         };
       };
 
-      for (let i = 0; i < MAX_AI2_TOOL_ITERATIONS; i += 1) {
-        iterations = i + 1;
+      while (true) {
+        iterations += 1;
         updateState({ phase: "thinking", iteration: iterations, tool: null });
         const streamResult = await streamResponseIteration(iterations);
         updateState({ usage: totalUsage });
@@ -1016,7 +1021,7 @@ function createInstructionAI2Router(deps = {}) {
           finalText = iterationText || finalText || "ประมวลผลเสร็จแล้ว";
           if (finalText && !streamResult.streamedText) {
             requestState.answerContent += finalText;
-            sendEvent("answer_delta", { text: finalText, iteration: i + 1 });
+            sendEvent("answer_delta", { text: finalText, iteration: iterations });
           }
           break;
         }
@@ -1026,9 +1031,9 @@ function createInstructionAI2Router(deps = {}) {
           removeTrailingAnswerContent(textToReclassify);
           requestState.commentaryText += iterationText;
           if (streamResult.streamedText) {
-            sendEvent("answer_to_commentary", { text: textToReclassify, iteration: i + 1 });
+            sendEvent("answer_to_commentary", { text: textToReclassify, iteration: iterations });
           } else {
-            sendEvent("commentary_delta", { text: iterationText, iteration: i + 1 });
+            sendEvent("commentary_delta", { text: iterationText, iteration: iterations });
           }
         }
 
@@ -1060,8 +1065,8 @@ function createInstructionAI2Router(deps = {}) {
             toolState.status = "running";
             toolState.updatedAt = Date.now();
           }
-          updateState({ phase: "tool", iteration: i + 1, tool: call.name });
-          sendEvent("tool_start", { tool: call.name, args, callId: call.call_id, argumentsText: call.arguments || "", iteration: i + 1 });
+          updateState({ phase: "tool", iteration: iterations, tool: call.name });
+          sendEvent("tool_start", { tool: call.name, args, callId: call.call_id, argumentsText: call.arguments || "", iteration: iterations });
           const result = await service.executeTool(instructionId, call.name, args);
           const resultSummary = result?.error || result?.message || result?.title || "ok";
           toolsUsed.push({ tool: call.name, args, resultSummary });
