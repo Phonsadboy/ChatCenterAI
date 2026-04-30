@@ -1537,6 +1537,7 @@ Implementation implication:
 
 - `get_instruction_inventory` ต้องถูกเรียกก่อนเริ่ม tool loop เพื่อให้ AI เห็น data item roles, runtime conventions, image/page/model/starter/follow-up/version/eval signals
 - `get_instruction_data_snapshot` ต้องใช้เมื่อ inventory preview ไม่พอ โดยเฉพาะก่อนแก้หลายจุดหรือแก้ด้วย rowIndex เพื่อให้ AI อ่านข้อมูลจริงครบหรืออ่านทุก chunk ก่อนเสนอ batch และต้องรองรับช่วงแถวที่ AI เลือกเองโดยไม่มี cap แถวระดับ tool
+- InstructionAI2 stream ต้องไม่ตัดด้วย app-level timeout หรือจำนวน tool-loop คงที่ เพื่อรองรับงานที่ AI คิดนานและเรียก read tools ซ้ำหลายรอบ
 - `get_tool_registry` แสดง tool metadata: risk, required permission, confirmation policy, idempotency และย้ำว่า write tools เป็น proposal-only
 - `run_regression_eval_suite` เป็น retail eval warning-only อย่างน้อย 15 เคส ครอบคลุมราคา, COD, order fields, `[cut]`, image policy, FAQ/scenario, no-guess และ token รูป
 - `get_readiness_dashboard` แสดง checklist ก่อนใช้งานจริง เช่น semantic mapping, catalog, scenario, page binding, image readiness, model, follow-up และ eval
