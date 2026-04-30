@@ -5701,6 +5701,8 @@ const ORDER_STATUS_VALUES = new Set([
   "cancelled",
 ]);
 
+const AI_ORDER_TOOL_STATUS = "pending";
+
 function normalizeOrderStatus(value) {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
@@ -5971,6 +5973,35 @@ function buildOrderDataPatch(rawData = {}) {
   }
 
   return { ok: true, patch, hasChanges: Object.keys(patch).length > 0 };
+}
+
+function normalizeOrderComparableValue(value) {
+  if (value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeOrderComparableValue(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = normalizeOrderComparableValue(value[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+function areOrderComparableValuesEqual(left, right) {
+  return JSON.stringify(normalizeOrderComparableValue(left)) ===
+    JSON.stringify(normalizeOrderComparableValue(right));
+}
+
+function hasOrderDataPatchChanged(existingOrderData = {}, patch = {}) {
+  if (!patch || typeof patch !== "object") return false;
+  return Object.keys(patch).some(
+    (key) => !areOrderComparableValuesEqual(existingOrderData?.[key], patch[key]),
+  );
 }
 
 // ============================ Order Buffer & Cutoff Helpers ============================
@@ -6586,15 +6617,8 @@ async function createOrderFromTool(args = {}, context = {}) {
 
   const platform = normalizeOrderPlatform(context.platform);
   const botId = normalizeOrderBotId(context.botId);
-  let status = "pending";
-  if (Object.prototype.hasOwnProperty.call(args, "status")) {
-    const normalizedStatus = normalizeOrderStatus(args.status);
-    if (!normalizedStatus) {
-      return { success: false, error: "สถานะไม่ถูกต้อง" };
-    }
-    status = normalizedStatus;
-  }
   const notes = sanitizeOrderNotes(args.notes);
+  const requestedStatusIgnored = Object.prototype.hasOwnProperty.call(args, "status");
 
   const orderId = await saveOrderToDatabase(
     userId,
@@ -6603,7 +6627,7 @@ async function createOrderFromTool(args = {}, context = {}) {
     normalized.orderData,
     "ai_tool",
     false,
-    { status, notes },
+    { status: AI_ORDER_TOOL_STATUS, notes },
   );
 
   if (!orderId) {
@@ -6660,7 +6684,8 @@ async function createOrderFromTool(args = {}, context = {}) {
     success: true,
     orderId: orderIdString,
     orderData: normalized.orderData,
-    status,
+    status: AI_ORDER_TOOL_STATUS,
+    statusChangeIgnored: requestedStatusIgnored,
   };
 }
 
@@ -6723,16 +6748,17 @@ async function updateOrderFromTool(args = {}, context = {}) {
     return { success: false, error: patchResult.error };
   }
 
-  let status = null;
-  if (Object.prototype.hasOwnProperty.call(args, "status")) {
-    status = normalizeOrderStatus(args.status);
-    if (!status) {
-      return { success: false, error: "สถานะไม่ถูกต้อง" };
-    }
-  }
+  const requestedStatusIgnored = Object.prototype.hasOwnProperty.call(args, "status");
 
   const notesProvided = Object.prototype.hasOwnProperty.call(args, "notes");
   const notes = notesProvided ? sanitizeOrderNotes(args.notes) : null;
+  const shouldNotifyOrderUpdate =
+    hasOrderDataPatchChanged(order.orderData || {}, patchResult.patch) ||
+    (notesProvided &&
+      !areOrderComparableValuesEqual(
+        typeof order.notes === "string" ? order.notes : "",
+        notes,
+      ));
 
   const updateDoc = {
     updatedAt: new Date(),
@@ -6758,14 +6784,19 @@ async function updateOrderFromTool(args = {}, context = {}) {
     }
     updateDoc.orderData = mergedOrderData;
   }
-  if (status) {
-    updateDoc.status = status;
-  }
   if (notesProvided) {
     updateDoc.notes = notes;
   }
 
   if (Object.keys(updateDoc).length === 1) {
+    if (requestedStatusIgnored) {
+      return {
+        success: false,
+        error: "AI ไม่สามารถแก้ไขสถานะออเดอร์ได้ สถานะต้องจัดการจากหน้าจัดการออเดอร์โดยแอดมินเท่านั้น",
+        status: order.status || AI_ORDER_TOOL_STATUS,
+        statusChangeIgnored: true,
+      };
+    }
     return { success: false, error: "ไม่มีข้อมูลสำหรับอัปเดต" };
   }
 
@@ -6773,7 +6804,9 @@ async function updateOrderFromTool(args = {}, context = {}) {
   const updatedOrder = await coll.findOne({ _id: order._id });
   await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
   await invalidateOrdersAdminCache("tool-update");
-  triggerOrderUpdateNotification(orderIdString, { source: "ai_tool" });
+  if (shouldNotifyOrderUpdate) {
+    triggerOrderUpdateNotification(orderIdString, { source: "ai_tool" });
+  }
 
   try {
     if (io) {
@@ -6781,7 +6814,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
         orderId: orderIdString,
         userId,
         orderData: updatedOrder?.orderData || null,
-        status: updatedOrder?.status || status || null,
+        status: updatedOrder?.status || null,
         notes: updatedOrder?.notes || null,
         updatedAt: updatedOrder?.updatedAt || updateDoc.updatedAt,
       });
@@ -6796,6 +6829,8 @@ async function updateOrderFromTool(args = {}, context = {}) {
     success: true,
     orderId: orderIdString,
     order: updatedOrder || null,
+    status: updatedOrder?.status || order.status || AI_ORDER_TOOL_STATUS,
+    statusChangeIgnored: requestedStatusIgnored,
   };
 }
 
@@ -12647,6 +12682,11 @@ const ORDER_TOOL_INSTRUCTIONS = `🚨 สำคัญ! คุณต้องใ�
 2. create_order - สร้างออเดอร์ใหม่ (ต้องมี items และ totalAmount)
 3. update_order - แก้ไขออเดอร์ที่มีอยู่ (ใช้เมื่อลูกค้าต้องการเปลี่ยนข้อมูลออเดอร์เดิม)
 
+🔒 สถานะออเดอร์:
+- ออเดอร์ที่ AI สร้างต้องเป็นสถานะ pending/รอดำเนินการเท่านั้น
+- ห้ามส่ง status ใน create_order หรือ update_order
+- AI ไม่มีสิทธิ์ยืนยันออเดอร์, เปลี่ยนเป็นจัดส่งแล้ว, สำเร็จแล้ว, หรือยกเลิกแล้ว ให้แจ้งว่าทีมงาน/แอดมินจะจัดการสถานะต่อ
+
 💰 วิธีใส่ข้อมูลสินค้าที่ถูกต้อง:
 
 กรณี 1: สินค้าปกติ (รู้ราคาต่อชิ้น)
@@ -12686,6 +12726,7 @@ const ORDER_TOOL_INSTRUCTIONS = `🚨 สำคัญ! คุณต้องใ�
 2. ห้ามคาดเดาข้อมูลออเดอร์ - ถามให้ครบก่อน
 3. ห้ามถามลูกค้าว่าจะรวมกับออเดอร์เก่าหรือไม่ (ถ้าลูกค้าไม่ได้พูดถึง)
 4. ถ้าไม่รู้ราคาแยกต่อชิ้น ให้ใส่ price: 0 แล้วใช้ totalAmount เป็นราคาโปร
+5. ห้ามแก้ไขสถานะออเดอร์ผ่าน AI tool ทุกกรณี
 
 💡 ตัวอย่าง:
 - "สั่งสินค้า A 2 ชิ้น ชิ้นละ 500" → items: [{product: "สินค้า A", quantity: 2, price: 500}], totalAmount: 1000
@@ -13336,6 +13377,8 @@ function getCommerceToolDefinitions() {
         name: "create_order",
         description: `Create a new order. PRICING RULES:
 
+Order status is admin-only. This tool always creates orders as pending; do not send status.
+
 สินค้าปกติ (รู้ราคาต่อชิ้น):
 - quantity = จำนวนหน่วย เช่น 3 ลัง → quantity: 3
 - price = ราคาต่อหน่วย เช่น ลังละ 2,350 → price: 2350
@@ -13409,10 +13452,6 @@ function getCommerceToolDefinitions() {
               },
               required: ["items"],
             },
-            status: {
-              type: "string",
-              enum: ["pending", "confirmed", "shipped", "completed", "cancelled"],
-            },
             notes: { type: "string" },
           },
           required: ["orderData"],
@@ -13424,7 +13463,7 @@ function getCommerceToolDefinitions() {
       function: {
         name: "update_order",
         description:
-          "Update an existing order. ALWAYS provide the orderId. Send ONLY fields that need to change (partial update).",
+          "Update an existing order. ALWAYS provide the orderId. Send ONLY fields that need to change (partial update). Do not send status; order status is admin-only and cannot be changed by AI.",
         parameters: {
           type: "object",
           properties: {
@@ -13467,10 +13506,6 @@ function getCommerceToolDefinitions() {
                 paymentReceiver: { type: "string" },
                 notes: { type: "string" },
               },
-            },
-            status: {
-              type: "string",
-              enum: ["pending", "confirmed", "shipped", "completed", "cancelled"],
             },
             notes: { type: "string" },
           },
@@ -28080,6 +28115,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const updateDoc = {
       updatedAt: new Date(),
     };
+    let shouldNotifyOrderUpdate = false;
 
     const hasOrderData = Object.prototype.hasOwnProperty.call(
       req.body,
@@ -28112,12 +28148,24 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
         });
       }
       updateDoc.orderData = normalizedOrderData;
+      shouldNotifyOrderUpdate =
+        shouldNotifyOrderUpdate ||
+        !areOrderComparableValuesEqual(
+          existingOrder.orderData || {},
+          normalizedOrderData,
+        );
     }
     if (status) {
       updateDoc.status = status;
     }
     if (notes !== undefined) {
       updateDoc.notes = notes;
+      shouldNotifyOrderUpdate =
+        shouldNotifyOrderUpdate ||
+        !areOrderComparableValuesEqual(
+          typeof existingOrder.notes === "string" ? existingOrder.notes : "",
+          typeof notes === "string" ? notes : "",
+        );
     }
 
     const result = await coll.updateOne(
@@ -28133,7 +28181,9 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
     await invalidateOrdersAdminCache("chat-update");
-    triggerOrderUpdateNotification(orderId, { source: "admin_chat" });
+    if (shouldNotifyOrderUpdate) {
+      triggerOrderUpdateNotification(orderId, { source: "admin_chat" });
+    }
 
     // Emit socket event
     try {
@@ -33727,13 +33777,6 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("orders");
     const objectIds = validIds.map((id) => new ObjectId(id));
-    const ordersBeforeStatusUpdate = await coll
-      .find({ _id: { $in: objectIds } })
-      .project({ _id: 1, status: 1 })
-      .toArray();
-    const changedObjectIds = ordersBeforeStatusUpdate
-      .filter((order) => order.status !== status)
-      .map((order) => order._id);
 
     const result = await coll.updateMany(
       { _id: { $in: objectIds } },
@@ -33747,11 +33790,6 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
         { multiple: true },
       );
       await invalidateOrdersAdminCache("bulk-status");
-      changedObjectIds.forEach((objectId) => {
-        triggerOrderUpdateNotification(objectId.toString(), {
-          source: "orders_bulk_status",
-        });
-      });
     }
 
     console.log(`[Orders] อัปเดตสถานะ ${result.modifiedCount} ออเดอร์เป็น ${status}`);
@@ -33914,9 +33952,6 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     const mirroredOrder = await coll.findOne({ _id: new ObjectId(orderId) });
     await maybeMirrorAppDocumentFromCollection("orders", mirroredOrder);
     await invalidateOrdersAdminCache("status");
-    if (status !== previousStatus) {
-      triggerOrderUpdateNotification(orderId, { source: "orders_status" });
-    }
 
     res.json({
       success: true,
