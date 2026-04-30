@@ -9,6 +9,10 @@ const {
 
 const DEFAULT_AI2_MODEL = "gpt-5.5";
 const DEFAULT_AI2_THINKING = "medium";
+const AI2_OPENAI_TIMEOUT_MS = Math.max(
+  600000,
+  Number(process.env.AI2_OPENAI_TIMEOUT_MS) || 24 * 60 * 60 * 1000,
+);
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024, files: 10 },
@@ -652,7 +656,7 @@ function createInstructionAI2Router(deps = {}) {
         finish();
         return;
       }
-      const openai = buildLLMClientFromKey(apiKeyToUse);
+      const openai = buildLLMClientFromKey({ ...apiKeyToUse, timeout: AI2_OPENAI_TIMEOUT_MS });
       if (!openai?.responses?.create) {
         updateState({ status: "error", error: "ไม่สามารถสร้าง Responses API client ได้" });
         sendEvent("error", { error: "ไม่สามารถสร้าง Responses API client ได้" });

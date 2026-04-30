@@ -441,6 +441,11 @@ function parseNonNegativeInteger(value, fallback = null) {
   return normalized >= 0 ? normalized : fallback;
 }
 
+function parsePositiveInteger(value, fallback = null) {
+  const parsed = parseNonNegativeInteger(value, fallback);
+  return parsed > 0 ? parsed : fallback;
+}
+
 function resolveRowRange(options = {}, totalRows = 0) {
   const total = Math.max(0, Number(totalRows) || 0);
   const rowNumberStart = parseNonNegativeInteger(options.rowNumberStart, null);
@@ -1315,10 +1320,10 @@ class InstructionAI2Service {
       { type: "function", name: "get_rows", description: "ดึงแถวจาก table data item ตามช่วงที่ต้องการ พร้อม totalRows; ใช้ rowNumberStart/rowNumberEnd สำหรับเลขแถวที่คนเห็น หรือ startRow/endRow สำหรับ rowIndex", parameters: obj({ itemId: { type: "string" }, startRow: { type: "number" }, endRow: { type: "number" }, rowNumberStart: { type: "number" }, rowNumberEnd: { type: "number" }, limit: { type: "number" }, columns: { type: "array", items: { type: "string" } } }, ["itemId"]) },
       { type: "function", name: "search_instruction_content", description: "ค้นหาข้อความหรือ row ใน instruction", parameters: obj({ query: { type: "string" }, limit: { type: "number" } }, ["query"]) },
       { type: "function", name: "validate_instruction_profile", description: "ตรวจ warning ตาม active profile/template เช่น image token, catalog/scenario mapping", parameters: obj() },
-      { type: "function", name: "list_products", description: "ดู logical catalog/product rows จาก semantic mapping ไม่ยึดชื่อ item", parameters: obj({ limit: { type: "number" } }) },
+      { type: "function", name: "list_products", description: "ดู logical catalog/product rows จาก semantic mapping ไม่ยึดชื่อ item พร้อม totalRows และเลือกช่วงได้", parameters: obj({ limit: { type: "number" }, startRow: { type: "number" }, endRow: { type: "number" }, rowNumberStart: { type: "number" }, rowNumberEnd: { type: "number" } }) },
       { type: "function", name: "search_products", description: "ค้นหา product/service/package rows จาก catalog ที่ map ได้", parameters: obj({ query: { type: "string" }, limit: { type: "number" } }, ["query"]) },
       { type: "function", name: "get_product_detail", description: "ดูรายละเอียด product row ด้วย rowId หรือ itemId+rowIndex", parameters: obj({ rowId: { type: "string" }, itemId: { type: "string" }, rowIndex: { type: "number" } }) },
-      { type: "function", name: "list_scenarios", description: "ดู logical FAQ/scenario/policy rows จาก semantic mapping", parameters: obj({ limit: { type: "number" } }) },
+      { type: "function", name: "list_scenarios", description: "ดู logical FAQ/scenario/policy rows จาก semantic mapping พร้อม totalRows และเลือกช่วงได้", parameters: obj({ limit: { type: "number" }, startRow: { type: "number" }, endRow: { type: "number" }, rowNumberStart: { type: "number" }, rowNumberEnd: { type: "number" } }) },
       { type: "function", name: "search_scenarios", description: "ค้นหา FAQ/scenario/policy rows ที่ map ได้", parameters: obj({ query: { type: "string" }, limit: { type: "number" } }, ["query"]) },
       { type: "function", name: "list_available_pages", description: "ดู page/bot ที่ bind instruction ได้", parameters: obj() },
       { type: "function", name: "list_image_assets", description: "ดูรูปภาพใน instruction_assets และสถานะชื่อซ้ำ", parameters: obj() },
@@ -1575,11 +1580,11 @@ class InstructionAI2Service {
     };
   }
 
-  async searchInstructionContent(instructionId, { query, limit = 20 }) {
+  async searchInstructionContent(instructionId, { query, limit = null }) {
     const inst = await this.loadInstruction(instructionId);
     if (!inst) return { error: "ไม่พบ Instruction" };
     const q = normalizeText(query).toLowerCase();
-    const capped = Math.min(50, Math.max(1, Number(limit) || 20));
+    const maxMatches = parsePositiveInteger(limit, null);
     const matches = [];
     for (const item of inst.dataItems) {
       if (item.type === "text") {
@@ -1595,10 +1600,16 @@ class InstructionAI2Service {
           });
         });
       }
-      if (matches.length >= capped) break;
+      if (maxMatches && matches.length >= maxMatches) break;
     }
     this.readTrace.push({ type: "search", query: q });
-    return { success: true, query, matches: matches.slice(0, capped) };
+    return {
+      success: true,
+      query,
+      matches: maxMatches ? matches.slice(0, maxMatches) : matches,
+      returnedMatches: maxMatches ? Math.min(matches.length, maxMatches) : matches.length,
+      limited: !!maxMatches && matches.length >= maxMatches,
+    };
   }
 
   buildLogicalRows(inst, roleName = "catalog") {
@@ -1641,25 +1652,26 @@ class InstructionAI2Service {
     return rows;
   }
 
-  async listLogicalCatalogRows(instructionId, { limit = 50 } = {}) {
+  async listLogicalCatalogRows(instructionId, { limit = null, startRow = 0, endRow = null, rowNumberStart = null, rowNumberEnd = null } = {}) {
     const inst = await this.loadInstruction(instructionId);
     if (!inst) return { error: "ไม่พบ Instruction" };
-    const capped = Math.min(200, Math.max(1, Number(limit) || 50));
-    const products = this.buildLogicalRows(inst, "catalog").slice(0, capped);
-    this.readTrace.push({ type: "products", limit: capped });
-    return { success: true, products, totalRows: this.buildLogicalRows(inst, "catalog").length };
+    const allProducts = this.buildLogicalRows(inst, "catalog");
+    const range = resolveRowRange({ startRow, endRow, rowNumberStart, rowNumberEnd, limit }, allProducts.length);
+    const products = allProducts.slice(range.startRow, range.endRow == null ? range.startRow : range.endRow + 1);
+    this.readTrace.push({ type: "products", startRow: range.startRow, endRow: range.endRow, returnedRows: range.returnedRows, totalRows: range.totalRows });
+    return { success: true, products, totalRows: range.totalRows, returnedRows: range.returnedRows, startRow: range.startRow, endRow: range.endRow, rowNumberStart: range.rowNumberStart, rowNumberEnd: range.rowNumberEnd, hasMore: range.hasMore, nextStartRow: range.nextStartRow, nextRowNumberStart: range.nextRowNumberStart };
   }
 
-  async searchLogicalCatalogRows(instructionId, { query, limit = 20 } = {}) {
+  async searchLogicalCatalogRows(instructionId, { query, limit = null } = {}) {
     const inst = await this.loadInstruction(instructionId);
     if (!inst) return { error: "ไม่พบ Instruction" };
     const q = normalizeText(query).toLowerCase();
-    const capped = Math.min(100, Math.max(1, Number(limit) || 20));
+    const maxMatches = parsePositiveInteger(limit, null);
     const products = this.buildLogicalRows(inst, "catalog")
       .filter((row) => stableStringify(row.data).toLowerCase().includes(q) || normalizeText(row.name).toLowerCase().includes(q))
-      .slice(0, capped);
-    this.readTrace.push({ type: "product_search", query: q, limit: capped });
-    return { success: true, query, products };
+      .slice(0, maxMatches || undefined);
+    this.readTrace.push({ type: "product_search", query: q, limit: maxMatches, returnedRows: products.length });
+    return { success: true, query, products, returnedRows: products.length, limited: !!maxMatches };
   }
 
   async getLogicalCatalogRowDetail(instructionId, { rowId = "", itemId = "", rowIndex = null } = {}) {
@@ -1681,25 +1693,25 @@ class InstructionAI2Service {
     return { success: true, product };
   }
 
-  async listLogicalScenarioRows(instructionId, { limit = 50 } = {}) {
+  async listLogicalScenarioRows(instructionId, { limit = null, startRow = 0, endRow = null, rowNumberStart = null, rowNumberEnd = null } = {}) {
     const inst = await this.loadInstruction(instructionId);
     if (!inst) return { error: "ไม่พบ Instruction" };
-    const capped = Math.min(200, Math.max(1, Number(limit) || 50));
     const scenarios = this.buildLogicalRows(inst, "scenario");
-    this.readTrace.push({ type: "scenarios", limit: capped });
-    return { success: true, scenarios: scenarios.slice(0, capped), totalRows: scenarios.length };
+    const range = resolveRowRange({ startRow, endRow, rowNumberStart, rowNumberEnd, limit }, scenarios.length);
+    this.readTrace.push({ type: "scenarios", startRow: range.startRow, endRow: range.endRow, returnedRows: range.returnedRows, totalRows: range.totalRows });
+    return { success: true, scenarios: scenarios.slice(range.startRow, range.endRow == null ? range.startRow : range.endRow + 1), totalRows: range.totalRows, returnedRows: range.returnedRows, startRow: range.startRow, endRow: range.endRow, rowNumberStart: range.rowNumberStart, rowNumberEnd: range.rowNumberEnd, hasMore: range.hasMore, nextStartRow: range.nextStartRow, nextRowNumberStart: range.nextRowNumberStart };
   }
 
-  async searchLogicalScenarioRows(instructionId, { query, limit = 20 } = {}) {
+  async searchLogicalScenarioRows(instructionId, { query, limit = null } = {}) {
     const inst = await this.loadInstruction(instructionId);
     if (!inst) return { error: "ไม่พบ Instruction" };
     const q = normalizeText(query).toLowerCase();
-    const capped = Math.min(100, Math.max(1, Number(limit) || 20));
+    const maxMatches = parsePositiveInteger(limit, null);
     const scenarios = this.buildLogicalRows(inst, "scenario")
       .filter((row) => stableStringify(row.data).toLowerCase().includes(q) || normalizeText(row.situation).toLowerCase().includes(q))
-      .slice(0, capped);
-    this.readTrace.push({ type: "scenario_search", query: q, limit: capped });
-    return { success: true, query, scenarios };
+      .slice(0, maxMatches || undefined);
+    this.readTrace.push({ type: "scenario_search", query: q, limit: maxMatches, returnedRows: scenarios.length });
+    return { success: true, query, scenarios, returnedRows: scenarios.length, limited: !!maxMatches };
   }
 
   async validateInstructionProfile(instructionId) {

@@ -202,6 +202,10 @@ function buildLLMClientFromKey(keyPayload = {}) {
 
   const providerConfig = resolveProviderConfig(normalizedPayload.provider);
   const clientOptions = { apiKey };
+  const timeout = Number(normalizedPayload.timeout);
+  if (Number.isFinite(timeout) && timeout > 0) {
+    clientOptions.timeout = Math.floor(timeout);
+  }
   if (providerConfig.baseURL) {
     clientOptions.baseURL = providerConfig.baseURL;
   }
