@@ -149,6 +149,14 @@ function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function isObjectContainer(value) {
+  return !!value && typeof value === "object";
+}
+
+function isArrayIndexPathPart(part) {
+  return /^\d+$/.test(String(part || ""));
+}
+
 function isOperatorObject(value) {
   return isPlainObject(value) && Object.keys(value).some((key) => key.startsWith("$"));
 }
@@ -262,7 +270,10 @@ function setPath(target, path, value) {
   let current = target;
   for (let index = 0; index < parts.length - 1; index += 1) {
     const part = parts[index];
-    if (!isPlainObject(current[part])) current[part] = {};
+    const nextPart = parts[index + 1];
+    if (!isObjectContainer(current[part])) {
+      current[part] = isArrayIndexPathPart(nextPart) ? [] : {};
+    }
     current = current[part];
   }
   current[parts[parts.length - 1]] = value;
@@ -273,7 +284,7 @@ function unsetPath(target, path) {
   let current = target;
   for (let index = 0; index < parts.length - 1; index += 1) {
     current = current?.[parts[index]];
-    if (!isPlainObject(current)) return;
+    if (!isObjectContainer(current)) return;
   }
   delete current[parts[parts.length - 1]];
 }
