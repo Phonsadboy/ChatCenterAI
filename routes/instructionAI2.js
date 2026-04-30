@@ -102,6 +102,7 @@ function buildInventorySummary(inventory) {
   const warnings = (inventory.warnings || []).map((warning) => `- ${warning.type}: ${warning.message}`).join("\n");
   return [
     `Data items:\n${items || "- none"}`,
+    "Inventory preview is not complete data. Before editing data items, read the target with get_instruction_data_snapshot/get_data_item_detail/get_rows.",
     `Linked pages: ${pages || "none"}`,
     `Image collections: ${(inventory.imageCollections || []).length}`,
     warnings ? `Warnings:\n${warnings}` : "",

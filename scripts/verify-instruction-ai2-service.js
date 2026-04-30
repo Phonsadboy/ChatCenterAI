@@ -216,12 +216,40 @@ async function run() {
   assert.ok(inventory.sections.eval.suite.success);
   assert.ok(inventory.sections.eval.suite.cases.length >= 15);
   assert.ok(inventory.sections.toolRegistry.tools.some((tool) => tool.name === "propose_update_semantic_mapping"));
+  assert.ok(inventory.sections.toolRegistry.tools.some((tool) => tool.name === "get_instruction_data_snapshot"));
   assert.strictEqual(inventory.sections.starter.enabled, true);
   assert.ok(Array.isArray(inventory.sections.model.catalog));
   assert.deepStrictEqual(inventory.sections.model.default, { model: "gpt-5.5", reasoningEffort: "medium" });
   assert.strictEqual(inventory.sections.model.catalog.find((item) => item.model === "gpt-5.5")?.recommended, true);
   assert.strictEqual(inventory.sections.model.catalog.filter((item) => item.recommended).length, 1);
   assert.ok(service.readTrace.some((entry) => entry.type === "inventory"));
+
+  const dataSnapshot = await service.executeTool("507f1f77bcf86cd799439011", "get_instruction_data_snapshot", {
+    itemIds: [template[1].itemId],
+    limitRowsPerItem: 1000,
+  });
+  assert.strictEqual(dataSnapshot.success, true);
+  assert.strictEqual(dataSnapshot.complete, true);
+  assert.strictEqual(dataSnapshot.dataItems.length, 1);
+  assert.strictEqual(dataSnapshot.dataItems[0].returnedRows, template[1].data.rows.length);
+  assert.ok(service.readTrace.some((entry) => entry.type === "instruction_data_snapshot"));
+
+  const guardedService = new InstructionAI2Service(fakeDb);
+  await guardedService.buildInventory("507f1f77bcf86cd799439011");
+  const blockedProposal = await guardedService.executeTool("507f1f77bcf86cd799439011", "propose_add_row", {
+    itemId: template[1].itemId,
+    rowData: { [template[1].data.columns[0]]: "ทดสอบ" },
+  });
+  assert.strictEqual(blockedProposal.code, "read_before_write_required");
+  await guardedService.executeTool("507f1f77bcf86cd799439011", "get_instruction_data_snapshot", {
+    itemIds: [template[1].itemId],
+    limitRowsPerItem: 1000,
+  });
+  const allowedProposal = await guardedService.executeTool("507f1f77bcf86cd799439011", "propose_add_row", {
+    itemId: template[1].itemId,
+    rowData: { [template[1].data.columns[0]]: "ทดสอบ" },
+  });
+  assert.strictEqual(allowedProposal.success, true);
 
   const evalSuite = buildRetailEvalSuite(fakeDb.collection("instructions_v2").rows[0], template);
   assert.strictEqual(evalSuite.success, true);
