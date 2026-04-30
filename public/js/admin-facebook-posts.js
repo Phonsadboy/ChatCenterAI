@@ -31,7 +31,7 @@
   const defaultTemplateGroup = document.getElementById("defaultTemplateGroup");
   const defaultAiGroup = document.getElementById("defaultAiGroup");
 
-  const LIMIT = 100;
+  const LIMIT = 200;
 
   function ensureToastContainer() {
     if (toastContainer) return toastContainer;
@@ -415,7 +415,7 @@
       const res = await fetch("/api/facebook-posts/fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botId: currentBotId }),
+        body: JSON.stringify({ botId: currentBotId, limit: LIMIT }),
       });
 
       const data = await res.json();

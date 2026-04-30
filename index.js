@@ -9946,6 +9946,8 @@ async function handleLineEvent(event, queueOptions = {}) {
 
 const FACEBOOK_POST_FIELDS =
   "id,from,message,permalink_url,created_time,full_picture,status_type,attachments{media_type,type,url,media}";
+const FACEBOOK_POST_SYNC_LIMIT = 200;
+const FACEBOOK_POST_SYNC_MAX_LIMIT = 500;
 
 function buildDefaultReplyProfile() {
   return {
@@ -10321,6 +10323,10 @@ async function handleFacebookComment(
   }
 
   const botId = normalizeBotIdValue(bot);
+  const botIdForChat =
+    bot?._id && typeof bot._id.toString === "function"
+      ? bot._id.toString()
+      : String(botId || "");
   const baseEvent = {
     commentId,
     postId,
@@ -10390,7 +10396,7 @@ async function handleFacebookComment(
       commentText,
       policy.systemPrompt,
       policy.aiModel,
-      botId
+      botIdForChat,
     );
   }
   replyMessage = (replyMessage || "").trim();
@@ -10452,7 +10458,7 @@ async function handleFacebookComment(
         const existingChat = await chatColl.findOne(
           buildChatHistoryUserQuery(commenterId, {
             platform: "facebook",
-            botId: botId,
+            botId: botIdForChat,
           }),
         );
 
@@ -10464,7 +10470,7 @@ async function handleFacebookComment(
             timestamp: new Date(),
             source: "comment_pull",
             platform: "facebook",
-            botId: botId,
+            botId: botIdForChat,
           };
           const welcomeInsert = await chatColl.insertOne(welcomeDoc);
           if (welcomeInsert?.insertedId) {
@@ -20596,17 +20602,33 @@ app.get("/api/facebook-posts", requireAdmin, async (req, res) => {
   }
 });
 
-async function fetchPagePostsFromFB(pageId, accessToken, limit = 20) {
+async function fetchPagePostsFromFB(pageId, accessToken, limit = FACEBOOK_POST_SYNC_LIMIT) {
+  const targetLimit = Math.min(
+    Math.max(Number(limit) || FACEBOOK_POST_SYNC_LIMIT, 1),
+    FACEBOOK_POST_SYNC_MAX_LIMIT,
+  );
+  const pageSize = Math.min(targetLimit, 100);
+  const posts = [];
+  let nextUrl = null;
+
   try {
-    const url = `https://graph.facebook.com/v18.0/${pageId}/feed`;
-    const response = await axios.get(url, {
-      params: {
-        access_token: accessToken,
-        fields: FACEBOOK_POST_FIELDS,
-        limit: limit,
-      },
-    });
-    return response.data?.data || [];
+    do {
+      const response = nextUrl
+        ? await axios.get(nextUrl)
+        : await axios.get(`https://graph.facebook.com/v18.0/${pageId}/feed`, {
+            params: {
+              access_token: accessToken,
+              fields: FACEBOOK_POST_FIELDS,
+              limit: pageSize,
+            },
+          });
+
+      const batch = Array.isArray(response.data?.data) ? response.data.data : [];
+      posts.push(...batch);
+      nextUrl = response.data?.paging?.next || null;
+    } while (nextUrl && posts.length < targetLimit);
+
+    return posts.slice(0, targetLimit);
   } catch (error) {
     console.error(
       `[Facebook API] Error fetching posts for page ${pageId}:`,
@@ -20618,7 +20640,7 @@ async function fetchPagePostsFromFB(pageId, accessToken, limit = 20) {
 
 app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
   try {
-    const { botId } = req.body;
+    const { botId, limit } = req.body;
     if (!botId) {
       return res.status(400).json({ error: "Bot ID is required" });
     }
@@ -20643,7 +20665,7 @@ app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
     }
 
     console.log(`[Facebook Fetch] Fetching posts for bot ${bot.name} (${pageId})`);
-    const posts = await fetchPagePostsFromFB(pageId, accessToken, 50);
+    const posts = await fetchPagePostsFromFB(pageId, accessToken, limit);
     console.log(`[Facebook Fetch] Found ${posts.length} posts`);
 
     let upsertCount = 0;
