@@ -9,11 +9,13 @@
   };
   const roleBadgeLabel = signedInUser ? (roleLabels[signedInUser.role] || 'ผู้ดูแลระบบ') : '';
   const userPermissions = Array.isArray(signedInUser?.permissions) ? signedInUser.permissions : [];
+  const pendingExternalAccess = !!(signedInUser && signedInUser.authProvider && signedInUser.authProvider !== 'local' && signedInUser.accessStatus === 'pending_permissions' && userPermissions.length === 0);
   const canAccess = (permission) => {
     if (Array.isArray(permission)) return permission.some((entry) => canAccess(entry));
     if (!permission) return true;
     if (!signedInUser) return true;
     if (signedInUser.role === 'superadmin') return true;
+    if (pendingExternalAccess && permission === 'menu:dashboard') return true;
     return userPermissions.includes(permission);
   };
 
@@ -84,7 +86,7 @@
   const visibleNavGroups = navGroups
     .map((group) => ({ ...group, items: group.items.filter((item) => canAccess(item.permission)) }))
     .filter((group) => group.items.length > 0);
-  const homeHref = visibleNavGroups[0]?.items?.[0]?.href || '/admin/chat';
+  const homeHref = visibleNavGroups[0]?.items?.[0]?.href || '/admin/dashboard';
 %>
 
 <!-- Layout CSS/JS -->

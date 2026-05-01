@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('adminLoginForm');
+  const usernameInput = document.getElementById('adminUsername');
+  const passwordInput = document.getElementById('adminPassword');
   const passcodeInput = document.getElementById('adminPasscode');
   const submitBtn = document.getElementById('loginSubmitBtn');
   const errorBox = document.getElementById('loginErrorBox');
@@ -37,10 +39,18 @@ document.addEventListener('DOMContentLoaded', () => {
     event.preventDefault();
     clearError();
 
-    const passcode = (passcodeInput.value || '').trim();
-    if (!passcode) {
-      showError('กรุณากรอกรหัสผ่าน');
-      passcodeInput.focus();
+    const username = (usernameInput?.value || '').trim();
+    const password = passwordInput?.value || '';
+    const passcode = (passcodeInput?.value || '').trim();
+    const useVoxtronLogin = username || password;
+    if (useVoxtronLogin && (!username || !password)) {
+      showError('กรุณากรอก Username และ Password Voxtron ให้ครบ');
+      (username ? passwordInput : usernameInput)?.focus();
+      return;
+    }
+    if (!useVoxtronLogin && !passcode) {
+      showError('กรุณากรอก Username/Password Voxtron หรือรหัสแอดมิน');
+      usernameInput?.focus();
       return;
     }
 
@@ -52,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ passcode }),
+        body: JSON.stringify(useVoxtronLogin ? { username, password } : { passcode }),
       });
 
       if (!response.ok) {
@@ -63,8 +73,9 @@ document.addEventListener('DOMContentLoaded', () => {
             : 'ไม่สามารถเข้าสู่ระบบได้ กรุณาลองใหม่';
         showError(message);
         setLoadingState(false);
-        passcodeInput.focus();
-        passcodeInput.select();
+        const focusTarget = useVoxtronLogin ? passwordInput : passcodeInput;
+        focusTarget?.focus();
+        focusTarget?.select();
         return;
       }
 

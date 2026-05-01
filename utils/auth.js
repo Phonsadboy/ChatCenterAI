@@ -526,7 +526,20 @@ function mapPasscodeDoc(doc) {
     updatedBy: doc.updatedBy || null,
     lastUsedAt: doc.lastUsedAt || null,
     usageCount: typeof doc.usageCount === "number" ? doc.usageCount : 0,
+    authProvider: doc.authProvider || "local",
+    externalUsername: doc.externalUsername || null,
+    externalUserId: doc.externalUserId || null,
+    accessStatus: doc.accessStatus || "active",
   };
+}
+
+function normalizeExternalUsername(username) {
+  if (typeof username !== "string") return "";
+  return username.trim();
+}
+
+function buildExternalIdentityKey(provider, username) {
+  return `${String(provider || "").trim().toLowerCase()}:${normalizeExternalUsername(username).toLowerCase()}`;
 }
 
 async function createPasscode(db, {
@@ -584,6 +597,83 @@ async function listPasscodes(db) {
   return docs.map(mapPasscodeDoc);
 }
 
+async function upsertExternalAdminUser(db, {
+  provider,
+  username,
+  externalUserId,
+  displayName,
+  ipAddress,
+}) {
+  const normalizedProvider = String(provider || "voxtron").trim().toLowerCase() || "voxtron";
+  const normalizedUsername = normalizeExternalUsername(username);
+  if (!normalizedUsername) {
+    throw new Error("ไม่พบ username จากระบบภายนอก");
+  }
+
+  const coll = db.collection(PASSCODE_COLLECTION);
+  const now = new Date();
+  const externalIdentityKey = buildExternalIdentityKey(normalizedProvider, normalizedUsername);
+  const existing = await coll.findOne({
+    authProvider: normalizedProvider,
+    externalIdentityKey,
+  });
+
+  if (existing) {
+    const update = {
+      externalUsername: normalizedUsername,
+      externalUserId: externalUserId ? String(externalUserId) : existing.externalUserId || null,
+      lastExternalLoginAt: now,
+      lastUsedAt: now,
+      lastUsedFrom: ipAddress || null,
+      updatedAt: now,
+    };
+    if (!existing.label && displayName) {
+      update.label = displayName;
+    }
+    await coll.updateOne(
+      { _id: existing._id },
+      {
+        $set: update,
+        $inc: { usageCount: 1 },
+      },
+    );
+    return coll.findOne({ _id: existing._id });
+  }
+
+  const accessConfig = normalizePasscodeAccessConfig(
+    {
+      role: "agent",
+      permissions: [],
+      instructionAccess: { mode: "selected", instructionIds: [] },
+      inboxAccess: { mode: "selected", inboxKeys: [] },
+      chatLayout: { mode: "custom", allowedTabs: [] },
+    },
+    { fallbackRole: "agent" },
+  );
+  const doc = {
+    label: displayName || normalizedUsername,
+    codeHash: null,
+    authProvider: normalizedProvider,
+    externalIdentityKey,
+    externalUsername: normalizedUsername,
+    externalUserId: externalUserId ? String(externalUserId) : null,
+    accessStatus: "pending_permissions",
+    ...accessConfig,
+    permissionsVersion: ADMIN_PERMISSIONS_VERSION,
+    isActive: true,
+    createdAt: now,
+    createdBy: `${normalizedProvider}:login`,
+    updatedAt: now,
+    updatedBy: `${normalizedProvider}:login`,
+    lastExternalLoginAt: now,
+    lastUsedAt: now,
+    lastUsedFrom: ipAddress || null,
+    usageCount: 1,
+  };
+  const { insertedId } = await coll.insertOne(doc);
+  return { ...doc, _id: insertedId };
+}
+
 async function updatePasscode(db, id, payload = {}, updatedBy = null) {
   if (!ObjectId.isValid(id)) {
     throw new Error("รหัสรหัสผ่านไม่ถูกต้อง");
@@ -636,6 +726,9 @@ async function updatePasscode(db, id, payload = {}, updatedBy = null) {
       fallbackRole: accessInput.role || existing.role || "admin",
     }),
   );
+  if (existing.authProvider && existing.authProvider !== "local") {
+    update.accessStatus = update.permissions.length > 0 ? "active" : "pending_permissions";
+  }
   update.permissionsVersion = ADMIN_PERMISSIONS_VERSION;
 
   const { value } = await coll.findOneAndUpdate(
@@ -688,6 +781,7 @@ async function findActivePasscode(db, passcode) {
   // แต่ตอนนี้ยังไม่จำเป็น
   const docs = await cursor.toArray();
   for (const doc of docs) {
+    if (!doc.codeHash) continue;
     const matched = await comparePasscode(passcode, doc.codeHash);
     if (matched) {
       return doc;
@@ -714,6 +808,16 @@ async function ensurePasscodeIndexes(db) {
     const coll = db.collection(PASSCODE_COLLECTION);
     await coll.createIndex({ isActive: 1 });
     await coll.createIndex({ createdAt: -1 });
+    await coll.createIndex(
+      { authProvider: 1, externalIdentityKey: 1 },
+      {
+        unique: true,
+        partialFilterExpression: {
+          authProvider: { $exists: true },
+          externalIdentityKey: { $exists: true },
+        },
+      },
+    );
   } catch (err) {
     console.warn("[Auth] cannot ensure passcode indexes:", err?.message || err);
   }
@@ -768,6 +872,7 @@ module.exports = {
   normalizePasscodeAccessConfig,
   buildAdminAccessContext,
   createPasscode,
+  upsertExternalAdminUser,
   listPasscodes,
   updatePasscode,
   togglePasscode,

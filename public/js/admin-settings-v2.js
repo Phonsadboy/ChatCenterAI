@@ -3899,6 +3899,9 @@ function renderPasscodeTable() {
         const roleClass = getRoleClass(passcode.role);
         const layoutSummary = summarizeChatLayout(passcode.chatLayout);
         const instructionSummary = summarizeInstructionAccess(passcode.instructionAccess);
+        const providerLabel = passcode.authProvider && passcode.authProvider !== 'local'
+            ? `Voxtron${passcode.accessStatus === 'pending_permissions' ? ' · รอเพิ่มสิทธิ์' : ''}`
+            : '';
 
         return `
             <tr class="${passcode.isActive ? '' : 'is-disabled'}">
@@ -3908,6 +3911,7 @@ function renderPasscodeTable() {
                         <div>
                             <strong>${escapeHtml(passcode.label)}</strong>
                             <small>${escapeHtml(passcode.id || '')}</small>
+                            ${providerLabel ? `<small class="passcode-cell-note">${escapeHtml(providerLabel)}</small>` : ''}
                         </div>
                     </div>
                 </td>

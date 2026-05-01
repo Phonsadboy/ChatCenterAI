@@ -13,6 +13,7 @@ const axios = require("axios");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const https = require("https");
 const socketIo = require("socket.io");
 const InstructionDataService = require("./services/instructionDataService");
 const ConversationThreadService = require("./services/conversationThreadService");
@@ -74,6 +75,11 @@ const OPENROUTER_HTTP_REFERER =
   process.env.OPENROUTER_HTTP_REFERER ||
   (PUBLIC_BASE_URL ? PUBLIC_BASE_URL : "");
 const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || "ChatCenterAI";
+const VOXTRON_LOGIN_URL =
+  process.env.VOXTRON_LOGIN_URL || "https://demosila.callincloud.com:3333/login";
+const voxtronLoginHttpsAgent = new https.Agent({
+  rejectUnauthorized: process.env.VOXTRON_LOGIN_REJECT_UNAUTHORIZED === "true",
+});
 const runtimeConfig = buildRuntimeConfig(process.env);
 const postgresRuntime = createPostgresRuntime(runtimeConfig.postgres);
 const projectBucket = createProjectBucket(runtimeConfig.bucket);
@@ -277,6 +283,7 @@ const {
   ensurePasscodeIndexes,
   verifyPasscode,
   createPasscode,
+  upsertExternalAdminUser,
   listPasscodes,
   updatePasscode,
   togglePasscode,
@@ -4263,6 +4270,10 @@ function registerAdminSession(req, { role, passcodeDoc }) {
     role: access.role,
     codeId: passcodeDoc ? String(passcodeDoc._id) : null,
     label: passcodeDoc?.label || null,
+    authProvider: passcodeDoc?.authProvider || "local",
+    externalUsername: passcodeDoc?.externalUsername || null,
+    externalUserId: passcodeDoc?.externalUserId || null,
+    accessStatus: passcodeDoc?.accessStatus || "active",
     permissionsVersion: access.permissionsVersion,
     permissions: access.permissions,
     instructionAccess: access.instructionAccess,
@@ -4296,6 +4307,10 @@ function getAdminUserContext(req) {
     instructionAccess,
     inboxAccess,
     chatLayout,
+    authProvider,
+    externalUsername,
+    externalUserId,
+    accessStatus,
   } = req.session.adminUser;
   const access = buildAdminAccessContext({
     role,
@@ -4312,6 +4327,10 @@ function getAdminUserContext(req) {
     role: access.role,
     codeId,
     label,
+    authProvider: authProvider || "local",
+    externalUsername: externalUsername || null,
+    externalUserId: externalUserId || null,
+    accessStatus: accessStatus || "active",
     permissions: access.permissions,
     permissionsVersion: access.permissionsVersion,
     instructionAccess: access.instructionAccess,
@@ -4459,6 +4478,93 @@ function requireAnyPermission(permissions = []) {
     }
     return getPermissionDeniedResponse(req, res);
   };
+}
+
+function isPendingExternalAdmin(adminUser = null) {
+  return Boolean(
+    adminUser &&
+      adminUser.authProvider &&
+      adminUser.authProvider !== "local" &&
+      adminUser.accessStatus === "pending_permissions" &&
+      (!Array.isArray(adminUser.permissions) || adminUser.permissions.length === 0),
+  );
+}
+
+function requireDashboardAccess(req, res, next) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+    return next();
+  }
+  if (!isAdminAuthenticated(req)) {
+    const wantsHTML =
+      req.headers.accept && req.headers.accept.includes("text/html");
+    if (wantsHTML) {
+      return res.redirect("/admin/login");
+    }
+    return res.status(401).json({
+      success: false,
+      error: "กรุณาล็อกอินก่อนใช้งาน",
+    });
+  }
+  const adminUser = getAdminUserContext(req);
+  if (
+    hasAdminPermission(adminUser, "menu:dashboard") ||
+    isPendingExternalAdmin(adminUser)
+  ) {
+    return next();
+  }
+  return getPermissionDeniedResponse(req, res);
+}
+
+function sanitizeVoxtronUsername(username) {
+  return typeof username === "string" ? username.trim() : "";
+}
+
+async function verifyVoxtronLogin(username, password) {
+  const normalizedUsername = sanitizeVoxtronUsername(username);
+  const normalizedPassword = typeof password === "string" ? password : "";
+  if (!normalizedUsername || !normalizedPassword) {
+    return { valid: false, reason: "missing_credentials" };
+  }
+
+  try {
+    const response = await axios.post(
+      VOXTRON_LOGIN_URL,
+      {
+        username: normalizedUsername,
+        password: normalizedPassword,
+      },
+      {
+        timeout: 15000,
+        httpsAgent: voxtronLoginHttpsAgent,
+        validateStatus: () => true,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    const data = response.data && typeof response.data === "object"
+      ? response.data
+      : {};
+    if (response.status === 200 && data.success === true && data.user) {
+      return {
+        valid: true,
+        username: normalizedUsername,
+        externalUserId: data.user.id,
+        message: data.message || "",
+      };
+    }
+    return {
+      valid: false,
+      reason: response.status === 401 ? "invalid_credentials" : "voxtron_rejected",
+      status: response.status,
+      message: data.message || "",
+    };
+  } catch (err) {
+    console.warn("[Auth] Voxtron login error:", err?.message || err);
+    return {
+      valid: false,
+      reason: "voxtron_unavailable",
+      error: err?.message || "Voxtron login unavailable",
+    };
+  }
 }
 
 function getAdminActorIdentity(req) {
@@ -20041,15 +20147,62 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
       });
     }
 
-    const { passcode } = req.body;
+    const { passcode, username, password } = req.body || {};
     const client = await connectDB();
     const db = client.db("chatbot");
-    const verifyResult = await verifyPasscode({
-      db,
-      passcode,
-      masterPasscode: ADMIN_MASTER_PASSCODE,
-      ipAddress: req.ip,
-    });
+    const hasVoxtronCredentials =
+      sanitizeVoxtronUsername(username) || typeof password === "string";
+    let verifyResult = null;
+
+    if (hasVoxtronCredentials) {
+      const voxtronResult = await verifyVoxtronLogin(username, password);
+      if (!voxtronResult.valid) {
+        queueCrEvent("auth.login_failed", {
+          ipAddress: req.ip,
+          userAgent: req.headers?.["user-agent"] || "",
+          reason: voxtronResult.reason || "invalid_voxtron_credentials",
+          username: sanitizeVoxtronUsername(username),
+          provider: "voxtron",
+          status: voxtronResult.status || null,
+        }, {
+          entityType: "admin_session",
+          entityId: "",
+        });
+        const statusCode = voxtronResult.reason === "voxtron_unavailable" ? 502 : 401;
+        return res.status(statusCode).json({
+          success: false,
+          error: statusCode === 502
+            ? "ไม่สามารถเชื่อมต่อระบบ Voxtron ได้ กรุณาลองใหม่อีกครั้ง"
+            : "Username หรือ Password ไม่ถูกต้อง",
+        });
+      }
+
+      const passcodeDoc = await upsertExternalAdminUser(db, {
+        provider: "voxtron",
+        username: voxtronResult.username,
+        externalUserId: voxtronResult.externalUserId,
+        displayName: voxtronResult.username,
+        ipAddress: req.ip,
+      });
+      if (!passcodeDoc || passcodeDoc.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          error: "ผู้ใช้นี้ถูกปิดใช้งาน กรุณาติดต่อแอดมินใหญ่",
+        });
+      }
+      verifyResult = {
+        valid: true,
+        role: passcodeDoc.role || "agent",
+        passcodeDoc,
+      };
+    } else {
+      verifyResult = await verifyPasscode({
+        db,
+        passcode,
+        masterPasscode: ADMIN_MASTER_PASSCODE,
+        ipAddress: req.ip,
+      });
+    }
 
     if (!verifyResult.valid) {
       queueCrEvent("auth.login_failed", {
@@ -26015,15 +26168,20 @@ app.get(
 );
 
 // Dashboard (V2 - New Instruction System)
-app.get("/admin/dashboard", requirePermission("menu:dashboard"), async (req, res) => {
+app.get("/admin/dashboard", requireDashboardAccess, async (req, res) => {
   try {
-    const instructions = filterInstructionsForAdmin(req, await getInstructionsV2());
-    const aiEnabled = await getAiEnabled();
-    res.render("admin-dashboard-v2", { instructions, aiEnabled });
+    const adminUser = getAdminUserContext(req);
+    const pendingAccess = isPendingExternalAdmin(adminUser);
+    const instructions = pendingAccess
+      ? []
+      : filterInstructionsForAdmin(req, await getInstructionsV2());
+    const aiEnabled = pendingAccess ? false : await getAiEnabled();
+    res.render("admin-dashboard-v2", { instructions, aiEnabled, pendingAccess });
   } catch (err) {
     res.render("admin-dashboard-v2", {
       instructions: [],
       aiEnabled: false,
+      pendingAccess: isPendingExternalAdmin(getAdminUserContext(req)),
       error: err.message,
     });
   }

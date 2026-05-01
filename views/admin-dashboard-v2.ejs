@@ -13,7 +13,7 @@
   <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
   <div class="app-content">
-    <% const safeInstructions = Array.isArray(instructions) ? instructions : []; const getDataItems = (instruction) => Array.isArray(instruction && instruction.dataItems) ? instruction.dataItems : []; const instructionCount = safeInstructions.length; const dataItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).length, 0); const textItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'text').length, 0); const tableItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'table').length, 0); const lastUpdated = safeInstructions.reduce((latest, ins) => { const val = ins.updatedAt || ins.createdAt; if (!val) return latest; return !latest || new Date(val) > new Date(latest) ? val : latest; }, null); %>
+    <% const safeInstructions = Array.isArray(instructions) ? instructions : []; const dashboardReadOnly = typeof pendingAccess !== 'undefined' && pendingAccess; const dashboardUserPermissions = Array.isArray(adminUser?.permissions) ? adminUser.permissions : []; const canCreateInstruction = !dashboardReadOnly && (adminUser?.role === 'superadmin' || dashboardUserPermissions.includes('instructions:create') || dashboardUserPermissions.includes('instructions:manage')); const getDataItems = (instruction) => Array.isArray(instruction && instruction.dataItems) ? instruction.dataItems : []; const instructionCount = safeInstructions.length; const dataItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).length, 0); const textItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'text').length, 0); const tableItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'table').length, 0); const lastUpdated = safeInstructions.reduce((latest, ins) => { const val = ins.updatedAt || ins.createdAt; if (!val) return latest; return !latest || new Date(val) > new Date(latest) ? val : latest; }, null); %>
 
     <% if (typeof error !== 'undefined' && error) { %>
       <div class="alert alert-danger alert-dismissible fade show" role="alert">
@@ -26,11 +26,15 @@
       <div class="empty-state-card">
         <div class="app-empty">
           <div class="app-empty__icon"><i class="fas fa-book-open"></i></div>
-          <div class="app-empty__title">ยังไม่มี Instruction</div>
-          <div class="app-empty__desc">เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</div>
-          <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
-            <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
-          </button>
+          <div class="app-empty__title"><%= dashboardReadOnly ? 'รอแอดมินใหญ่กำหนดสิทธิ์' : 'ยังไม่มี Instruction' %></div>
+          <div class="app-empty__desc"><%= dashboardReadOnly ? 'บัญชีนี้ล็อกอินผ่าน Voxtron ได้แล้ว แต่ยังไม่ได้รับสิทธิ์ใช้งานข้อมูลในระบบ Chatdee' : 'เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า' %></div>
+          <% if (canCreateInstruction) { %>
+            <button class="btn btn-primary mt-2" id="createInstructionBtn" type="button">
+              <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
+            </button>
+          <% } else { %>
+            <button class="d-none" id="createInstructionBtn" type="button" disabled></button>
+          <% } %>
         </div>
       </div>
     <% } else { %>
@@ -78,7 +82,11 @@
             <% }) %>
           </div>
           <div class="ws-sidebar-footer">
-            <button class="btn btn-primary w-100" id="createInstructionBtn"><i class="fas fa-plus me-1"></i> สร้าง Instruction</button>
+            <% if (canCreateInstruction) { %>
+              <button class="btn btn-primary w-100" id="createInstructionBtn"><i class="fas fa-plus me-1"></i> สร้าง Instruction</button>
+            <% } else { %>
+              <button class="d-none" id="createInstructionBtn" type="button" disabled></button>
+            <% } %>
           </div>
         </div>
 

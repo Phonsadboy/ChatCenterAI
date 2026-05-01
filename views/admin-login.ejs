@@ -21,27 +21,53 @@
         <div class="logo">
           <i class="fas fa-lock icon-logo"></i>
           <h1>เข้าสู่ระบบผู้ดูแล</h1>
-          <p>กรอกรหัสผ่านที่ได้รับจากแอดมินใหญ่เพื่อใช้งานระบบ</p>
+          <p>ใช้บัญชี Voxtron หรือรหัสผ่านที่ได้รับจากแอดมินใหญ่</p>
         </div>
         <form id="adminLoginForm" autocomplete="off">
           <div class="mb-3">
-            <label for="adminPasscode" class="form-label"
-              >รหัสผ่านสำหรับเข้าใช้งาน</label
+            <label for="adminUsername" class="form-label">Username Voxtron</label>
+            <input
+              type="text"
+              id="adminUsername"
+              name="username"
+              class="form-control"
+              placeholder="เช่น Agent8"
+              autocomplete="username"
+              autofocus
+            >
+          </div>
+          <div class="mb-3">
+            <label for="adminPassword" class="form-label"
+              >Password Voxtron</label
             >
             <input
               type="password"
-              id="adminPasscode"
-              name="passcode"
+              id="adminPassword"
+              name="password"
               class="form-control"
-              placeholder="เช่น A8K9-TEAM หรือ 123456"
-              minlength="4"
-              required
-              autofocus
+              placeholder="Password จาก Voxtron"
+              autocomplete="current-password"
             >
             <div class="form-text">
-              ระบบจะจำสถานะล็อกอินไว้จนกว่าจะออกจากระบบหรือหมดเวลา
+              ผู้ใช้ Voxtron ที่ยังไม่ได้รับสิทธิ์จะเข้าได้เฉพาะแดชบอร์ดว่าง
             </div>
           </div>
+          <details class="mb-3">
+            <summary class="small text-muted">เข้าสู่ระบบด้วยรหัสแอดมินเดิม</summary>
+            <div class="mt-2">
+              <label for="adminPasscode" class="form-label"
+                >รหัสผ่านสำหรับเข้าใช้งาน</label
+              >
+              <input
+                type="password"
+                id="adminPasscode"
+                name="passcode"
+                class="form-control"
+                placeholder="เช่น A8K9-TEAM หรือ 123456"
+                minlength="4"
+              >
+            </div>
+          </details>
           <div
             class="alert alert-danger d-none"
             role="alert"
